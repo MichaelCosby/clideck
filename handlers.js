@@ -18,8 +18,8 @@ function clientPresets() {
   return presets.filter(isPresetEnabled);
 }
 function filterClientCommands(commands) {
-  const allowedPresetIds = new Set(clientPresets().map(p => p.presetId));
-  return (commands || []).filter(cmd => !cmd.presetId || allowedPresetIds.has(cmd.presetId));
+  const disabledPresetIds = new Set(presets.filter(p => !isPresetEnabled(p)).map(p => p.presetId));
+  return (commands || []).filter(cmd => !cmd.presetId || !disabledPresetIds.has(cmd.presetId));
 }
 const transcript = require('./transcript');
 const plugins = require('./plugin-loader');

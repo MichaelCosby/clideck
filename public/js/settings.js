@@ -284,6 +284,7 @@ function openPresetMenu(anchorEl) {
       const p = presets.find(x => x.presetId === presetId);
       if (p) state.cfg.commands.push({
         id: crypto.randomUUID(), label: p.name, icon: p.icon, command: p.command,
+        presetId: p.presetId,
         enabled: true, defaultPath: '', isAgent: p.isAgent, canResume: p.canResume,
         resumeCommand: p.resumeCommand, sessionIdPattern: p.sessionIdPattern,
         outputMarker: p.outputMarker || null,
@@ -516,6 +517,7 @@ function saveConfig() {
       label: card.querySelector('.agent-name').value.trim() || 'Untitled',
       icon: existing.icon || 'terminal',
       command,
+      presetId: existing.presetId || null,
       enabled: card.querySelector('.agent-enabled').checked,
       defaultPath: existing.defaultPath || '',
       isAgent: card.querySelector('.agent-is-agent').checked,

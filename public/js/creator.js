@@ -45,61 +45,105 @@ function isPresetOutdated(p) {
   return p.available !== false && p.versionOk === false;
 }
 
-// True if preset binary exists but telemetry/hooks are not configured yet
-function isPresetUnpatched(p) {
-  if (p.available === false || p.versionOk === false || !p.telemetryAutoSetup) return false;
-  const cmd = findCommandForPreset(p);
-  return !cmd || !cmd.telemetryStatus?.ok;
+// True if a specific entry needs telemetry setup
+function isEntryUnpatched(preset, cmd) {
+  if (!preset || preset.available === false || preset.versionOk === false || !preset.telemetryAutoSetup) return false;
+  return !cmd?.telemetryStatus?.ok;
 }
 
 function renderPresetButtons() {
-  return sortedPresets().map(p => {
-    if (isPresetMissing(p)) {
+  return sortedEntries().map(({ preset, cmd }) => {
+    const icon = cmd?.icon || preset?.icon;
+    const name = esc(cmd?.label || preset?.name);
+
+    if (!preset) {
+      // Standalone custom command with no matching preset
+      return `
+      <button class="preset-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-slate-700/70 text-sm transition-colors text-left text-slate-300" data-command="${cmd.id}">
+        <span>${agentIcon(icon, 24)}</span>
+        <span class="flex-1 min-w-0">${name}</span>
+      </button>`;
+    }
+    if (isPresetMissing(preset)) {
       return `
       <div class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left text-slate-500">
-        <span class="opacity-40">${agentIcon(p.icon, 24)}</span>
-        <span class="flex-1 min-w-0">${esc(p.name)}</span>
-        <button class="install-btn px-2.5 py-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 rounded-md transition-colors" data-preset="${p.presetId}">Add</button>
+        <span class="opacity-40">${agentIcon(icon, 24)}</span>
+        <span class="flex-1 min-w-0">${name}</span>
+        <button class="install-btn px-2.5 py-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 rounded-md transition-colors" data-preset="${preset.presetId}">Add</button>
       </div>`;
     }
-    if (isPresetOutdated(p)) {
+    if (isPresetOutdated(preset)) {
       return `
       <div class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left text-slate-500">
-        <span class="opacity-40">${agentIcon(p.icon, 24)}</span>
-        <span class="flex-1 min-w-0">${esc(p.name)}</span>
-        <button class="install-btn px-2.5 py-1 text-[11px] font-medium text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 rounded-md transition-colors" data-preset="${p.presetId}">Update</button>
+        <span class="opacity-40">${agentIcon(icon, 24)}</span>
+        <span class="flex-1 min-w-0">${name}</span>
+        <button class="install-btn px-2.5 py-1 text-[11px] font-medium text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 rounded-md transition-colors" data-preset="${preset.presetId}">Update</button>
       </div>`;
     }
-    if (isPresetUnpatched(p)) {
+    if (isEntryUnpatched(preset, cmd)) {
       return `
       <div class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left text-slate-500">
-        <span class="opacity-40">${agentIcon(p.icon, 24)}</span>
-        <span class="flex-1 min-w-0">${esc(p.name)}</span>
-        <button class="setup-btn px-2.5 py-1 text-[11px] font-medium text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-md transition-colors" data-preset="${p.presetId}">Setup</button>
+        <span class="opacity-40">${agentIcon(icon, 24)}</span>
+        <span class="flex-1 min-w-0">${name}</span>
+        <button class="setup-btn px-2.5 py-1 text-[11px] font-medium text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-md transition-colors" data-preset="${preset.presetId}"${cmd ? ` data-command="${cmd.id}"` : ''}>Setup</button>
       </div>`;
     }
     return `
-      <button class="preset-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-slate-700/70 text-sm transition-colors text-left text-slate-300" data-preset="${p.presetId}">
-        <span>${agentIcon(p.icon, 24)}</span>
-        <span class="flex-1 min-w-0">${esc(p.name)}</span>
+      <button class="preset-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-slate-700/70 text-sm transition-colors text-left text-slate-300" data-preset="${preset.presetId}"${cmd ? ` data-command="${cmd.id}"` : ''}>
+        <span>${agentIcon(icon, 24)}</span>
+        <span class="flex-1 min-w-0">${name}</span>
       </button>`;
   }).join('');
 }
 
-function sortedPresets() {
-  const all = [...state.presets].filter(p => {
-    if (isPresetMissing(p)) return true;
-    const cmd = findCommandForPreset(p);
-    return !cmd || cmd.enabled !== false;
-  });
-  const shell = all.filter(p => !p.isAgent);
-  const agents = all.filter(p => p.isAgent);
+// Returns { preset, cmd } entries for the provider picker.
+// Handles multiple commands per preset and standalone custom commands.
+function sortedEntries() {
+  const entries = [];
+  const coveredCmdIds = new Set();
+
+  for (const p of state.presets) {
+    if (isPresetMissing(p) || isPresetOutdated(p)) {
+      entries.push({ preset: p, cmd: null });
+      continue;
+    }
+    const matchingCmds = state.cfg.commands.filter(c =>
+      c.enabled !== false &&
+      ((c.presetId && c.presetId === p.presetId) || binName(c.command) === binName(p.command))
+    );
+    if (matchingCmds.length === 0) {
+      // No configured command — show preset only if not explicitly disabled
+      const anyCmd = state.cfg.commands.find(c =>
+        (c.presetId && c.presetId === p.presetId) || binName(c.command) === binName(p.command)
+      );
+      if (!anyCmd) entries.push({ preset: p, cmd: null });
+    } else {
+      for (const cmd of matchingCmds) {
+        coveredCmdIds.add(cmd.id);
+        entries.push({ preset: p, cmd });
+      }
+    }
+  }
+
+  // Add isAgent commands not covered by any preset entry
+  for (const cmd of state.cfg.commands) {
+    if (!cmd.isAgent || cmd.enabled === false || coveredCmdIds.has(cmd.id)) continue;
+    entries.push({ preset: null, cmd });
+  }
+
+  const agents = entries.filter(e => e.preset ? e.preset.isAgent : true);
+  const shells = entries.filter(e => e.preset && !e.preset.isAgent);
+
+  // Most-recently-used: stored as cmd.id (preferred) or preset.presetId fallback
   const lastId = localStorage.getItem(MRU_KEY);
   if (lastId) {
-    const idx = agents.findIndex(p => p.presetId === lastId);
+    const idx = agents.findIndex(e =>
+      (e.cmd && e.cmd.id === lastId) || (!e.cmd && e.preset && e.preset.presetId === lastId)
+    );
     if (idx > 0) agents.unshift(...agents.splice(idx, 1));
   }
-  return [...agents, ...shell];
+
+  return [...agents, ...shells];
 }
 
 function createFromPreset(preset, sessionName, cwd, projectId) {
@@ -179,7 +223,6 @@ export function openCreator() {
   if (!state.presets.length) return;
 
   const fallbackName = randomName();
-  const presets = sortedPresets();
   const defaultPath = state.cfg.defaultPath || '';
 
   const card = document.createElement('div');
@@ -310,14 +353,14 @@ export function openCreator() {
     if (setupBtn) {
       const preset = state.presets.find(p => p.presetId === setupBtn.dataset.preset);
       if (!preset) return;
-      const cmd = ensureCommandForPreset(preset);
+      const cmd = setupBtn.dataset.command
+        ? state.cfg.commands.find(c => c.id === setupBtn.dataset.command) || ensureCommandForPreset(preset)
+        : ensureCommandForPreset(preset);
       document.dispatchEvent(new CustomEvent('clideck:setup', { detail: { commandId: cmd.id } }));
       return;
     }
     const btn = e.target.closest('.preset-btn');
     if (!btn) return;
-    const preset = state.presets.find(p => p.presetId === btn.dataset.preset);
-    if (!preset) return;
     if (projTrigger && !projHidden.value) {
       showToast('Choose a project or select `None (outside project hierarchy)`.', { title: 'Choose Project', type: 'warn' });
       projTrigger.focus();
@@ -326,6 +369,28 @@ export function openCreator() {
     const name = nameInput.value.trim() || fallbackName;
     const cwd = cwdInput.value.trim() || undefined;
     const projectId = projHidden?.value && projHidden.value !== NO_PROJECT_VALUE ? projHidden.value : undefined;
+    const presetId = btn.dataset.preset;
+    const commandId = btn.dataset.command;
+    if (!presetId && commandId) {
+      // Standalone custom command
+      const cmd = state.cfg.commands.find(c => c.id === commandId);
+      if (!cmd) return;
+      send({ type: 'create', commandId: cmd.id, name, cwd, projectId: projectId || undefined, ...estimateSize() });
+      localStorage.setItem(MRU_KEY, cmd.id);
+      closeCreator();
+      return;
+    }
+    const preset = state.presets.find(p => p.presetId === presetId);
+    if (!preset) return;
+    if (commandId) {
+      const cmd = state.cfg.commands.find(c => c.id === commandId);
+      if (cmd) {
+        send({ type: 'create', commandId: cmd.id, name, cwd, projectId: projectId || undefined, ...estimateSize() });
+        localStorage.setItem(MRU_KEY, cmd.id);
+        closeCreator();
+        return;
+      }
+    }
     createFromPreset(preset, name, cwd, projectId);
     closeCreator();
   });
