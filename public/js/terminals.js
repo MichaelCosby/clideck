@@ -383,10 +383,17 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     minimumContrastRatio: MIN_CONTRAST_RATIO,
     cursorBlink: true,
     scrollback: 10000,
+    allowProposedApi: true,
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.onData(data => send({ type: 'input', id, data }));
+  term.parser.registerOscHandler(52, data => {
+    const b64 = data.split(';')[1];
+    if (!b64 || b64 === '?') return false;
+    try { navigator.clipboard.writeText(atob(b64)); } catch {}
+    return true;
+  });
 
   // [TRANSCRIPT-CAPTURE] initial settled capture plus one delayed idle save
   let _captureTimer = null, _renderSilent = false, _lastTyping = 0, _initialCaptureDone = false, _idleSaveTimer = null;
