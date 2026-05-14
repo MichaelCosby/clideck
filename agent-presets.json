@@ -43,7 +43,7 @@
       "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:{{port}}",
       "OTEL_LOGS_EXPORT_INTERVAL": "2000"
     },
-    "telemetrySetup": "For best experience, add to ~/.codex/config.toml:\n\n[otel]\nexporter = { otlp-http = { endpoint = \"http://localhost:{{port}}\", protocol = \"json\" } }",
+    "telemetrySetup": "Required for working/idle status, Autopilot, notifications, mobile remote, and resume. CliDeck will add OpenTelemetry config plus 2 silent Codex hooks. If Codex shows \"2 hooks need review\", open /hooks in Codex and approve the CliDeck hooks once.",
     "telemetryAutoSetup": {
       "label": "Configure automatically"
     }
@@ -90,6 +90,7 @@
     "name": "Clideck Agent",
     "icon": "/img/clideck-agent.svg",
     "command": "clideck-agent",
+    "enabledIfEnv": "CLIDECK_ENABLE_CLIDECK_AGENT",
     "isAgent": true,
     "canResume": true,
     "resumeCommand": "clideck-agent --resume {{sessionId}}",

@@ -137,7 +137,6 @@ const server = http.createServer((req, res) => {
           if (sess && threadId && !sess.sessionToken) sess.sessionToken = threadId;
           const telemetry = require('./telemetry-receiver');
           if (route === 'start') telemetry.markCodexStart(matchedId, 'hook');
-          else if (route === 'stop' && payload.source === 'hook') telemetry.markCodexIdle(matchedId, 'hook');
           else if (route === 'stop') telemetry.armCodexStop(matchedId);
         }
         // if (!matchedId) console.log(`[codex] hook ${route} no match clideck=${clideckId ? clideckId.slice(0,8) : 'none'} thread=${threadId ? threadId.slice(0,8) : 'none'}`);

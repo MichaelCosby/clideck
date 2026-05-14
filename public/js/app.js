@@ -216,13 +216,23 @@ function connect() {
           const sid = (toast.dataset.sessionId && toast.dataset.sessionId !== 'null' && toast.dataset.sessionId !== 'undefined')
             ? toast.dataset.sessionId
             : '';
+          const reviewNote = msg.presetId === 'codex'
+            ? `<div class="w-full px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-400/20 text-[11px] leading-relaxed text-amber-200/90">
+              Codex may show <span class="font-semibold text-amber-100">2 hooks need review</span>. Open <code class="px-1 py-0.5 rounded bg-slate-950/50 text-amber-100">/hooks</code> in Codex and approve the CliDeck hooks once.
+            </div>`
+            : '';
+          actionsEl.className = 'setup-actions px-4 pb-3.5 flex flex-col gap-2';
           actionsEl.innerHTML = `
-            <div class="flex-1 flex items-center gap-1.5 text-xs text-emerald-400">
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
-              Configured
+            ${reviewNote}
+            <div class="w-full flex items-center gap-2">
+              <div class="flex-1 flex items-center gap-1.5 text-xs text-emerald-400">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>
+                Configured
+              </div>
+              ${sid ? `<button class="restart-btn px-3 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">Restart Session</button>` : ''}
+              <button class="dismiss-btn px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">Dismiss</button>
             </div>
-            ${sid ? `<button class="restart-btn px-3 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">Restart Session</button>` : ''}
-            <button class="dismiss-btn px-3 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">Dismiss</button>`;
+          `;
           actionsEl.querySelector('.dismiss-btn').onclick = () => toast.remove();
           if (sid) actionsEl.querySelector('.restart-btn').onclick = () => {
             const entry = state.terms.get(sid);

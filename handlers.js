@@ -700,7 +700,7 @@ function applyTelemetryConfig(preset) {
       mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, nextContent);
       installCodexHooks(home, process.execPath.replace(/\\/g, '/'), codexHookPath, port);
-      return { success: true, message: 'Added otel + silent hooks to ~/.codex' };
+      return { success: true, message: 'Configured. If Codex shows "2 hooks need review", open /hooks and approve the CliDeck hooks once.' };
     }
 
     if (preset.presetId === 'gemini-cli') {
