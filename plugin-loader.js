@@ -461,6 +461,7 @@ function getInfo() {
     hasClient: existsSync(join(p.dir, 'client.js')),
     bundled: BUNDLED_IDS.has(p.manifest.id),
     installed: true,
+    source: cfg?.pluginSource?.[p.manifest.id] || null,
   }));
   const pending = [...uninstalledPlugins.values()].map(u => ({
     id: u.manifest.id,
@@ -579,10 +580,52 @@ function removePlugin(pluginId) {
   return { success: true };
 }
 
+// Unload a plugin from runtime without touching the filesystem.
+// Used before an update so the plugin directory can be replaced on disk.
+function unloadPlugin(pluginId) {
+  const state = plugins.get(pluginId);
+  if (!state) return;
+  for (const fn of state.shutdownFns) { try { fn(); } catch {} }
+  removeHooks(pluginId);
+  plugins.delete(pluginId);
+  try { delete require.cache[require.resolve(join(state.dir, 'index.js'))]; } catch {}
+}
+
+// Load a plugin from an arbitrary directory on disk (used after a GitHub install/update).
+// Runs npm install if the manifest declares it and node_modules is absent.
+function loadFromDir(dir, callback) {
+  const name = require('path').basename(dir);
+  const manifest = readManifest(dir, name);
+  if (!manifest) return callback(new Error('Invalid or missing clideck-plugin.json'));
+  if (!manifest.id) return callback(new Error('Plugin manifest is missing an id field'));
+  if (plugins.has(manifest.id)) return callback(new Error(`Plugin "${manifest.id}" is already loaded`));
+
+  const finish = () => {
+    const cfg = getConfigFn?.();
+    if (cfg && manifest.install) {
+      if (!cfg.pluginInstalled) cfg.pluginInstalled = {};
+      cfg.pluginInstalled[manifest.id] = true;
+      saveConfigFn?.(cfg);
+    }
+    loadPlugin(manifest, dir);
+    if (!plugins.has(manifest.id)) return callback(new Error('Plugin failed to initialize'));
+    callback(null, manifest.id);
+  };
+
+  if (manifest.install === 'npm' && !existsSync(join(dir, 'node_modules'))) {
+    npmExec(['install', '--production'], { cwd: dir, timeout: 120000 }, (err) => {
+      if (err) return callback(new Error(`npm install failed: ${err.message}`));
+      finish();
+    });
+  } else {
+    finish();
+  }
+}
+
 module.exports = {
   PLUGINS_DIR, BUNDLED_IDS,
   init, shutdown,
   transformInput, notifyOutput, notifyStatus, notifyTranscript, notifyMenu, notifyConfig, clearStatus, isWorking, shouldAutoApproveMenu,
-  handleMessage, handlePluginRoute, updateSetting, getInfo, resolveFile, installPlugin, removePlugin,
+  handleMessage, handlePluginRoute, updateSetting, getInfo, resolveFile, installPlugin, removePlugin, unloadPlugin, loadFromDir,
   getPills, getPillLogs,
 };

@@ -289,6 +289,36 @@ function connect() {
       case 'plugin.delete.error':
         showToast(`Failed to remove plugin: ${msg.error}`, { duration: 4000 });
         break;
+      case 'plugin.github.progress': {
+        const status = document.getElementById('plugin-github-status');
+        if (status) { status.textContent = msg.label; status.className = 'text-[11px] mt-1.5 text-slate-400'; }
+        break;
+      }
+      case 'plugin.github.result': {
+        const btn = document.getElementById('plugin-github-btn');
+        const input = document.getElementById('plugin-github-input');
+        const status = document.getElementById('plugin-github-status');
+        if (msg.success) {
+          if (input) input.value = '';
+          if (status) { status.textContent = `✓ ${msg.name} installed`; status.className = 'text-[11px] mt-1.5 text-emerald-400'; }
+          if (btn) { btn.textContent = 'Install'; btn.disabled = false; btn.className = btn.className.replace('bg-slate-700 cursor-wait', 'bg-blue-600 hover:bg-blue-500'); }
+        } else {
+          if (status) { status.textContent = msg.error; status.className = 'text-[11px] mt-1.5 text-red-400'; }
+          if (btn) { btn.textContent = 'Install'; btn.disabled = false; btn.className = btn.className.replace('bg-slate-700 cursor-wait', 'bg-blue-600 hover:bg-blue-500'); }
+        }
+        break;
+      }
+      case 'plugin.github.update.result': {
+        const updateBtn = document.querySelector(`.plugin-update-btn[data-plugin-id="${msg.pluginId}"]`);
+        if (msg.progress) {
+          if (updateBtn) updateBtn.title = msg.label;
+          break;
+        }
+        if (updateBtn) { updateBtn.disabled = false; updateBtn.title = 'Pull update from GitHub'; updateBtn.classList.remove('opacity-50', 'cursor-wait'); }
+        if (msg.success) showToast(`${msg.name} updated`, { duration: 3000 });
+        else showToast(`Update failed: ${msg.error}`, { type: 'error', duration: 5000 });
+        break;
+      }
       case 'remote.status':
         handleRemoteStatus(msg);
         break;
@@ -814,8 +844,10 @@ function renderPluginsPanel(list) {
   container.innerHTML = list.map((p, i) => {
     const open = !!expanded[p.id];
     const icon = p.icon || defaultIcon;
+    const pullSvg = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>`;
     const deleteBtn = p.bundled ? '' : `<div class="plugin-delete flex items-center justify-center w-6 h-6 rounded text-slate-600 hover:text-red-400 hover:bg-slate-700/50 cursor-pointer transition-colors flex-shrink-0" data-plugin-id="${esc(p.id)}" data-plugin-name="${esc(p.name)}" title="Remove plugin">${trashSvg}</div>`;
-    const hasFooter = p.author || !p.bundled;
+    const updateBtn = p.source ? `<button class="plugin-update-btn flex items-center justify-center w-6 h-6 rounded text-slate-600 hover:text-blue-400 hover:bg-slate-700/50 transition-colors flex-shrink-0" data-plugin-id="${esc(p.id)}" title="Pull update from GitHub">${pullSvg}</button>` : '';
+    const hasFooter = p.author || !p.bundled || p.source;
 
     if (!p.installed) {
       return `
@@ -842,7 +874,7 @@ function renderPluginsPanel(list) {
           <svg class="plugin-chevron w-4 h-4 text-slate-500 transition-transform duration-200 flex-shrink-0 ${open ? '' : 'collapsed'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>
         </div>
         ${p.description ? `<p class="text-[11px] text-slate-500 mt-0.5 leading-snug">${esc(p.description)}</p>` : ''}
-        ${hasFooter ? `<div class="flex items-center justify-end gap-2 mt-1">${p.author ? `<span class="text-[10px] text-slate-600">${esc(p.author)}</span>` : ''}${deleteBtn}</div>` : ''}
+        ${hasFooter ? `<div class="flex items-center justify-end gap-2 mt-1">${p.author ? `<span class="text-[10px] text-slate-600">${esc(p.author)}</span>` : ''}${updateBtn}${deleteBtn}</div>` : ''}
       </div>
       <div class="plugin-body ${open ? '' : 'hidden'}">
         <div class="px-4 pb-3">
@@ -854,7 +886,7 @@ function renderPluginsPanel(list) {
 
   container.querySelectorAll('.plugin-toggle').forEach(el => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.plugin-delete')) return;
+      if (e.target.closest('.plugin-delete') || e.target.closest('.plugin-update-btn')) return;
       const id = el.dataset.pluginId;
       const card = el.closest('.plugin-card');
       const body = card.querySelector('.plugin-body');
@@ -883,6 +915,34 @@ function renderPluginsPanel(list) {
       send({ type: 'plugin.install', pluginId: el.dataset.pluginId });
     });
   });
+
+  container.querySelectorAll('.plugin-update-btn').forEach(el => {
+    el.addEventListener('click', () => {
+      el.disabled = true;
+      el.title = 'Pulling update…';
+      el.classList.add('opacity-50', 'cursor-wait');
+      send({ type: 'plugin.github.update', pluginId: el.dataset.pluginId });
+    });
+  });
+
+  // GitHub install form (lives outside the list container, wire up once per render)
+  const ghBtn = document.getElementById('plugin-github-btn');
+  const ghInput = document.getElementById('plugin-github-input');
+  const ghStatus = document.getElementById('plugin-github-status');
+  if (ghBtn && !ghBtn._wired) {
+    ghBtn._wired = true;
+    ghBtn.addEventListener('click', () => {
+      const source = ghInput.value.trim();
+      if (!source) return;
+      ghBtn.textContent = 'Installing…';
+      ghBtn.disabled = true;
+      ghBtn.className = ghBtn.className.replace('bg-blue-600 hover:bg-blue-500', 'bg-slate-700 cursor-wait');
+      ghStatus.textContent = '';
+      ghStatus.className = 'text-[11px] mt-1.5 hidden';
+      send({ type: 'plugin.github.install', source });
+    });
+    ghInput.addEventListener('keydown', e => { if (e.key === 'Enter') ghBtn.click(); });
+  }
 
   container.querySelectorAll('[data-setting]').forEach(el => {
     const pluginId = el.dataset.plugin;

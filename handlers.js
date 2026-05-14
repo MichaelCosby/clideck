@@ -1,6 +1,7 @@
-const { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, unlinkSync } = require('fs');
+const { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, unlinkSync, rmSync, cpSync } = require('fs');
 const { join, dirname } = require('path');
-const { execFileSync, execFile } = require('child_process');
+const { execFileSync, execFile, spawn } = require('child_process');
+const https = require('https');
 const os = require('os');
 const config = require('./config');
 const sessions = require('./sessions');
@@ -511,6 +512,74 @@ function onConnection(ws) {
         break;
       }
 
+      case 'plugin.github.install': {
+        const parsed = parseGithubSource(msg.source);
+        if (!parsed) {
+          ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: 'Invalid GitHub source — use owner/repo or owner/repo/path' }));
+          break;
+        }
+        ws.send(JSON.stringify({ type: 'plugin.github.progress', label: `Downloading ${parsed.owner}/${parsed.repo}…` }));
+        downloadGithubPlugin(parsed, (err, result) => {
+          if (err) return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: err.message }));
+          const { manifest, srcDir, tmpDir, cleanup } = result;
+          const destDir = join(plugins.PLUGINS_DIR, manifest.id);
+          if (existsSync(destDir)) {
+            cleanup();
+            return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: `Plugin "${manifest.id}" is already installed — use the update button to refresh it` }));
+          }
+          try { cpSync(srcDir, destDir, { recursive: true }); } catch (e) {
+            cleanup();
+            return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: `Failed to copy plugin files: ${e.message}` }));
+          }
+          cleanup();
+          cfg.pluginSource = cfg.pluginSource || {};
+          cfg.pluginSource[manifest.id] = (msg.source || '').trim();
+          config.save(cfg);
+          ws.send(JSON.stringify({ type: 'plugin.github.progress', label: `Loading ${manifest.name}…` }));
+          plugins.loadFromDir(destDir, (err) => {
+            if (err) return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: err.message }));
+            sessions.broadcast({ type: 'plugins', list: plugins.getInfo() });
+            ws.send(JSON.stringify({ type: 'plugin.github.result', success: true, pluginId: manifest.id, name: manifest.name }));
+          });
+        });
+        break;
+      }
+
+      case 'plugin.github.update': {
+        const source = cfg.pluginSource?.[msg.pluginId];
+        if (!source) {
+          ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: 'No GitHub source recorded for this plugin' }));
+          break;
+        }
+        const parsed = parseGithubSource(source);
+        if (!parsed) {
+          ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: 'Stored source URL is invalid' }));
+          break;
+        }
+        ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, progress: true, label: `Downloading ${parsed.owner}/${parsed.repo}…` }));
+        downloadGithubPlugin(parsed, (err, result) => {
+          if (err) return ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: err.message }));
+          const { manifest, srcDir, tmpDir, cleanup } = result;
+          const destDir = join(plugins.PLUGINS_DIR, msg.pluginId);
+          plugins.unloadPlugin(msg.pluginId);
+          try {
+            if (existsSync(destDir)) rmSync(destDir, { recursive: true, force: true });
+            cpSync(srcDir, destDir, { recursive: true });
+          } catch (e) {
+            cleanup();
+            return ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: `Failed to replace plugin files: ${e.message}` }));
+          }
+          cleanup();
+          ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, progress: true, label: `Reloading ${manifest.name}…` }));
+          plugins.loadFromDir(destDir, (err) => {
+            if (err) return ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: err.message }));
+            sessions.broadcast({ type: 'plugins', list: plugins.getInfo() });
+            ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: true, name: manifest.name }));
+          });
+        });
+        break;
+      }
+
       case 'pill.getLogs':
         ws.send(JSON.stringify({ type: 'pill.logs', id: msg.id, logs: plugins.getPillLogs(msg.id) }));
         break;
@@ -747,5 +816,64 @@ function removeTelemetryConfig(preset) {
 }
 
 function getConfig() { return cfg; }
+
+// --- GitHub plugin install helpers ---
+
+function parseGithubSource(input) {
+  const s = (input || '').trim().replace(/\.git$/, '');
+  // Full GitHub URL, optionally with /tree/<branch>/subpath
+  const urlMatch = s.match(/github\.com\/([^/]+)\/([^/]+)(?:\/tree\/[^/]+\/(.+))?/);
+  if (urlMatch) return { owner: urlMatch[1], repo: urlMatch[2], subpath: urlMatch[3] || '' };
+  // Shorthand: owner/repo or owner/repo/subpath
+  const parts = s.replace(/^github:\/\/|^github:/, '').split('/').filter(Boolean);
+  if (parts.length >= 2) return { owner: parts[0], repo: parts[1], subpath: parts.slice(2).join('/') };
+  return null;
+}
+
+function httpsGetFollow(url, cb, hops = 0) {
+  if (hops > 5) return cb(new Error('Too many redirects'));
+  const req = https.get(url, { headers: { 'User-Agent': 'clideck', 'Accept': 'application/vnd.github+json' } }, res => {
+    if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) {
+      res.resume();
+      return httpsGetFollow(res.headers.location, cb, hops + 1);
+    }
+    cb(null, res);
+  });
+  req.on('error', cb);
+}
+
+function downloadGithubPlugin({ owner, repo, subpath }, callback) {
+  const tarUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/tarball/HEAD`;
+  const tmpDir = join(os.tmpdir(), `clideck-gh-${Date.now()}`);
+  mkdirSync(tmpDir, { recursive: true });
+  const cleanup = () => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch {} };
+
+  httpsGetFollow(tarUrl, (err, res) => {
+    if (err) { cleanup(); return callback(err); }
+    if (res.statusCode !== 200) {
+      res.resume(); cleanup();
+      return callback(new Error(`GitHub returned HTTP ${res.statusCode} for ${owner}/${repo}`));
+    }
+    const tar = spawn('tar', ['xz', '--strip-components=1', '-C', tmpDir]);
+    res.pipe(tar.stdin);
+    res.on('error', e => tar.stdin.destroy(e));
+    tar.on('close', code => {
+      if (code !== 0) { cleanup(); return callback(new Error('Failed to extract plugin archive')); }
+      const srcDir = subpath ? join(tmpDir, ...subpath.split('/')) : tmpDir;
+      const manifestPath = join(srcDir, 'clideck-plugin.json');
+      if (!existsSync(manifestPath)) {
+        cleanup();
+        return callback(new Error(subpath
+          ? `No clideck-plugin.json at "${subpath}" in ${owner}/${repo}`
+          : `No clideck-plugin.json found in ${owner}/${repo}`));
+      }
+      let manifest;
+      try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')); }
+      catch { cleanup(); return callback(new Error('clideck-plugin.json is not valid JSON')); }
+      if (!manifest.id) { cleanup(); return callback(new Error('Plugin manifest is missing an id field')); }
+      callback(null, { manifest, srcDir, tmpDir, cleanup });
+    });
+  });
+}
 
 module.exports = { onConnection, getConfig };
