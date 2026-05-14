@@ -238,6 +238,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Plugin-registered HTTP routes
+  if (plugins.handlePluginRoute(req, res)) return;
+
   // DEBUG: log any POST (agents might use /v1/traces, /v1/metrics, or other paths)
   if (req.method === 'POST') {
     // console.log(`OTLP: received POST ${req.url} (not handled)`);

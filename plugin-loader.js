@@ -55,6 +55,7 @@ const statusHooks = [];
 const transcriptHooks = [];
 const menuHooks = [];
 const configHooks = [];
+const pluginRoutes = []; // { pluginId, method, path, fn }
 const sessionStatus = new Map(); // sessionId → boolean (dedup multi-client reports)
 const autoApproveMenus = new Set(); // sessionIds where menus should be auto-approved
 const frontendHandlers = new Map();
@@ -69,7 +70,7 @@ const settingsChangeHandlers = new Map(); // pluginId → [fn]
 const sessionPills = new Map(); // pillId → { pluginId, id, title, projectId, working, statusText, icon, logs[] }
 
 function removeHooks(pluginId) {
-  for (const arr of [inputHooks, outputHooks, statusHooks, transcriptHooks, menuHooks, configHooks]) {
+  for (const arr of [inputHooks, outputHooks, statusHooks, transcriptHooks, menuHooks, configHooks, pluginRoutes]) {
     for (let i = arr.length - 1; i >= 0; i--) {
       if (arr[i].pluginId === pluginId) arr.splice(i, 1);
     }
@@ -195,6 +196,7 @@ function buildApi(pluginId, pluginDir, state) {
     onTranscriptEntry(fn) { transcriptHooks.push({ pluginId, fn }); },
     onMenuDetected(fn) { menuHooks.push({ pluginId, fn }); },
     onConfigChange(fn) { configHooks.push({ pluginId, fn }); },
+    addRoute(method, path, fn) { pluginRoutes.push({ pluginId, method: method.toUpperCase(), path, fn }); },
 
     sendToFrontend(event, data = {}) {
       broadcastFn?.({ ...data, type: `plugin.${pluginId}.${event}` });
@@ -424,6 +426,25 @@ function handleMessage(msg) {
   return true;
 }
 
+function handlePluginRoute(req, res) {
+  const method = req.method.toUpperCase();
+  const urlPath = req.url.split('?')[0];
+  const handler = pluginRoutes.find(r => r.method === method && r.path === urlPath);
+  if (!handler) return false;
+  let body = '';
+  req.on('data', chunk => { body += chunk; if (body.length > 1e5) req.destroy(); });
+  req.on('end', () => {
+    let parsed = null;
+    try { parsed = body ? JSON.parse(body) : null; } catch {}
+    try { handler.fn(req, res, parsed); }
+    catch (e) {
+      console.error(`[plugin:${handler.pluginId}] route error: ${e.message}`);
+      if (!res.headersSent) res.writeHead(500).end('{}');
+    }
+  });
+  return true;
+}
+
 function getInfo() {
   const cfg = getConfigFn?.();
   const installed = [...plugins.values()].map(p => ({
@@ -562,6 +583,6 @@ module.exports = {
   PLUGINS_DIR, BUNDLED_IDS,
   init, shutdown,
   transformInput, notifyOutput, notifyStatus, notifyTranscript, notifyMenu, notifyConfig, clearStatus, isWorking, shouldAutoApproveMenu,
-  handleMessage, updateSetting, getInfo, resolveFile, installPlugin, removePlugin,
+  handleMessage, handlePluginRoute, updateSetting, getInfo, resolveFile, installPlugin, removePlugin,
   getPills, getPillLogs,
 };
