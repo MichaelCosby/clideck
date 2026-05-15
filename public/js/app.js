@@ -110,7 +110,8 @@ function connect() {
       case 'session.history': {
         const entry = state.terms.get(msg.id);
         if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) break;
-        if (entry && !entry.queue(msg.text + '\n')) entry.term.write(msg.text + '\n');
+        const histText = (msg.text + '\n').replace(/(?<!\r)\n/g, '\r\n');
+        if (entry && !entry.queue(histText)) entry.term.write(histText);
         updatePreview(msg.id);
         break;
       }
