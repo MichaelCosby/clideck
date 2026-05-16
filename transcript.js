@@ -230,6 +230,7 @@ function getCache() { return { ...cache }; }
 function getReplayText(id, presetId) {
   const entries = builder.compactEntries(entriesById[id], presetId);
   if (!entries?.length) return '';
+  if (!entries.some(e => e.role === 'agent')) return '';
   const marks = {
     'claude-code': { user: '❯', agent: '⏺' },
     codex: { user: '›', agent: '•' },
