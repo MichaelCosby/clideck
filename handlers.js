@@ -284,7 +284,11 @@ function onConnection(ws) {
             // if (sess.presetId === 'claude-code') {
             //   console.log(`[claude] terminal.buffer finalize session=${msg.id.slice(0,8)} lines=${msg.lines?.length || 0}`);
             // }
-            transcript.commitAgentCandidate(msg.id, sess.presetId);
+            const committed = transcript.commitAgentCandidate(msg.id, sess.presetId);
+            if (committed) {
+              const updatedText = transcript.getReplayText(msg.id, sess.presetId);
+              if (updatedText) sessions.broadcast({ type: 'session.history', id: msg.id, text: updatedText, replace: true });
+            }
           }
           let choices = require('./transcript').detectMenu(msg.lines, sess.presetId);
           // Codex: only trust menu detection if last OTEL event was response.completed
