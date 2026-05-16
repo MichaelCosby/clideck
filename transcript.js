@@ -171,12 +171,13 @@ function updateAgentCandidate(id, presetId, lines) {
 }
 
 function commitAgentCandidate(id, presetId) {
-  if (!finalizePreset[id]) return;
+  if (!finalizePreset[id]) return false;
   const text = candidate.get(id);
-  if (!text) { tlog(id, 'candidate commit skip empty'); clog(id, 'candidate commit skip empty'); return; }
-  if (text === lastAgentText[id]) { tlog(id, 'candidate commit skip duplicate'); clog(id, 'candidate commit skip duplicate'); return; }
+  if (!text) { tlog(id, 'candidate commit skip empty'); clog(id, 'candidate commit skip empty'); return false; }
+  if (text === lastAgentText[id]) { tlog(id, 'candidate commit skip duplicate'); clog(id, 'candidate commit skip duplicate'); return false; }
   lastAgentText[id] = text;
   store(id, 'agent', text);
+  return true;
 }
 
 function clearAgentCandidate(id) {
