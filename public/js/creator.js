@@ -356,7 +356,7 @@ export function openCreator() {
       const cmd = setupBtn.dataset.command
         ? state.cfg.commands.find(c => c.id === setupBtn.dataset.command) || ensureCommandForPreset(preset)
         : ensureCommandForPreset(preset);
-      document.dispatchEvent(new CustomEvent('clideck:setup', { detail: { commandId: cmd.id } }));
+      document.dispatchEvent(new CustomEvent('clideck:setup', { detail: { commandId: cmd.id, presetId: preset.presetId } }));
       return;
     }
     const btn = e.target.closest('.preset-btn');

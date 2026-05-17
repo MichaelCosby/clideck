@@ -495,14 +495,17 @@ document.querySelectorAll('.filter-tab').forEach(btn => {
 
 // Telemetry setup notification — shown once per agent type
 const shownSetup = new Set();
-document.addEventListener('clideck:setup', (e) => showTelemetrySetup(e.detail.commandId, null));
-function showTelemetrySetup(commandId, sessionId) {
+document.addEventListener('clideck:setup', (e) => showTelemetrySetup(e.detail.commandId, null, e.detail.presetId));
+function showTelemetrySetup(commandId, sessionId, presetId) {
   const cmd = state.cfg.commands.find(c => c.id === commandId);
   if (!cmd) return;
   // Skip if telemetry is already configured via settings
   if (cmd.telemetryEnabled && cmd.telemetryStatus?.ok) return;
   const bin = binName(cmd.command);
-  const preset = state.presets.find(p => binName(p.command) === bin);
+  const preset = presetId
+    ? state.presets.find(p => p.presetId === presetId)
+    : state.presets.find(p => binName(p.command) === bin);
+  if (!preset) return;
   const setupRaw = preset.telemetrySetup || preset.pluginSetup;
   if (!setupRaw || shownSetup.has(preset.presetId)) return;
   shownSetup.add(preset.presetId);
