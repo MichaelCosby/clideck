@@ -10,7 +10,7 @@ const opencodeBridge = require('./opencode-bridge');
 const plugins = require('./plugin-loader');
 
 const THEMES = require('./themes');
-const MAX_BUFFER = 200 * 1024;
+const MAX_BUFFER = 1024 * 1024;
 const { PORT, localUrl } = require('./runtime');
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\)|\x1b./g;
 const PRESETS = JSON.parse(require('fs').readFileSync(join(__dirname, 'agent-presets.json'), 'utf8'));
