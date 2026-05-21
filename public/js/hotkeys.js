@@ -88,6 +88,18 @@ export function unregisterAllForPlugin(pluginId) {
 // Prompt autocomplete (// trigger) runs first, then hotkey dispatch.
 export function attachToTerminal(term, presetId) {
   term.attachCustomKeyEventHandler((e) => {
+    if (e.type === 'keydown'
+      && e.ctrlKey
+      && !e.metaKey
+      && !e.altKey
+      && !e.shiftKey
+      && e.code === 'KeyC'
+      && term.hasSelection()) {
+      e.preventDefault();
+      navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+      return false;
+    }
+
     // Claude Code uses Shift+Enter for multiline input, but xterm emits the
     // same "\r" as plain Enter. Scope CSI-u translation to Claude only so
     // other terminals keep their existing Enter behavior unchanged.

@@ -26,7 +26,7 @@ the main problem with using multiple agents is not starting them. it is managing
 
 Terminal multiplexers are great at panes. clideck is about conversations.
 
-A pane grid is flat. agent work usually is not. projects, roles, previews, timestamps, notifications, resume, and sometimes a bit of routing between specialists all fit more naturally into a chat app layout. it also maps naturally to mobile, so the same mental model works on desktop and phone.
+A pane grid is flat. agent work usually is not. projects, previews, timestamps, notifications, resume, and sometimes a bit of routing between specialists all fit more naturally into a chat app layout. it also maps naturally to mobile, so the same mental model works on desktop and phone.
 
 ## Quick start
 

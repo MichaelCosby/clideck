@@ -32,46 +32,6 @@ list your fidings please.`,
   },
 ];
 
-const STARTER_ROLES = [
-  {
-    id: 'starter-role-programmer',
-    name: 'Programmer',
-    instructions: `You are the main programmer of this project.
-Do you not apply workarounds or bandaids, prefer pure solutions.
-NEVER use plan tool/mode, start to build immediatly and ask questions along the way if any.
-Check if any external findings are valid before applying changes, the reviewer doesnt always updated with the full scope.
-When you done with changes, list concisely what you did.
-
-Learn the project quickly if exist. Go over the structure, code and functionality.
-Let me know when you are ready.`,
-  },
-  {
-    id: 'starter-role-reviewer',
-    name: 'Reviewer',
-    instructions: `You are the code reviewer in this project.
-Your task is check the coder output and list critical / logical design flow issues, ugly workarounds or functionalty you just dont understand why its there. Do not waste time and list insignificunt findings.
-
-If you didnt find anything, response with no findings.
-
-You never write code!.
-
-Quickly learn the project if exist. Go over the structure, code and functionality and let me know when you are ready.`,
-  },
-  {
-    id: 'starter-role-product-manager',
-    name: 'Product manager',
-    instructions: `You are the product manager of this project, you should understand why we do what we do and what is the best way to do it. You dont care about technical limitations or directions, the only thing matter to you is the user UI/UX and how this agents team will ship a top notch, professional deliveries.
-Do not allow the team to round angles and skip small stuff that will basly impact the user.
-
-You never write code!
-You dont use your plan tool/mode - instead you are planning immediatly as you go.
-
-Go over the project if exist and understand from the code, documentations and readme what is it and why we do it.
-
-Let me know when you are ready`,
-  },
-];
-
 const DEFAULTS = {
   defaultPath: join(os.homedir(), 'Documents'),
   commands: [
@@ -88,7 +48,6 @@ const DEFAULTS = {
   defaultTheme: 'catppuccin-mocha',
   defaultShell,
   prompts: [],
-  roles: [],
   projects: [],
 };
 
@@ -185,7 +144,6 @@ function migrate(cfg) {
     }
   }
   if (!cfg.projects) cfg.projects = [];
-  if (!cfg.roles) cfg.roles = [];
   return cfg;
 }
 
@@ -194,7 +152,6 @@ function load() {
     return {
       ...deepCopy(DEFAULTS),
       prompts: deepCopy(STARTER_PROMPTS),
-      roles: deepCopy(STARTER_ROLES),
     };
   }
   try {

@@ -209,13 +209,13 @@ function buildApi(pluginId, pluginDir, state) {
       const s = sessionsFn?.()?.get(id);
       if (!s) return null;
       const state = sessionStatus.get(id) || '';
-      return { id, name: s.name, cwd: s.cwd, commandId: s.commandId, presetId: s.presetId || 'shell', themeId: s.themeId, projectId: s.projectId, roleName: s.roleName || null, working: state.startsWith('1:') };
+      return { id, name: s.name, cwd: s.cwd, commandId: s.commandId, presetId: s.presetId || 'shell', themeId: s.themeId, projectId: s.projectId, working: state.startsWith('1:') };
     },
     getSessions() {
       const sessions = sessionsFn?.();
       if (!sessions) return [];
       return [...sessions].map(([id, s]) => ({
-        id, name: s.name, cwd: s.cwd, commandId: s.commandId, presetId: s.presetId || 'shell', themeId: s.themeId, projectId: s.projectId, roleName: s.roleName || null, working: (sessionStatus.get(id) || '').startsWith('1:'),
+        id, name: s.name, cwd: s.cwd, commandId: s.commandId, presetId: s.presetId || 'shell', themeId: s.themeId, projectId: s.projectId, working: (sessionStatus.get(id) || '').startsWith('1:'),
       }));
     },
 
@@ -234,7 +234,6 @@ function buildApi(pluginId, pluginDir, state) {
     inputToSession(id, data) { inputFn?.({ id, data }); },
     setAutoApproveMenu(id, enabled) { enabled ? autoApproveMenus.add(id) : autoApproveMenus.delete(id); },
 
-    getRoles() { return JSON.parse(JSON.stringify(getConfigFn?.()?.roles || [])); },
     getProjects() { return JSON.parse(JSON.stringify(getConfigFn?.()?.projects || [])); },
     getTranscript(id, n, order) { return transcript.getTurns(id, n || 20, order || 'end'); },
     detectMenu(lines, presetId) { return transcript.detectMenu(lines, presetId); },

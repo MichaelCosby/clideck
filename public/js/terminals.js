@@ -40,6 +40,50 @@ const MIN_CONTRAST_RATIO = 4.5;
 const DARK_BALLS = ['#00e5ff', '#5df0d6', '#9b8cff'];
 const LIGHT_BALLS = ['#0891b2', '#059669', '#7c3aed'];
 
+const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
+
+function cleanUrlMatch(text, index) {
+  let url = text;
+  while (/[),.;:!?\\\]}]+$/.test(url)) url = url.slice(0, -1);
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  } catch {
+    return null;
+  }
+  return { text: url, index };
+}
+
+function openTerminalLink(url) {
+  const win = window.open(url, '_blank', 'noopener,noreferrer');
+  if (win) win.opener = null;
+}
+
+function addLinkProvider(term) {
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const line = term.buffer.active.getLine(y - 1);
+      if (!line) return callback(undefined);
+      const text = line.translateToString(true);
+      const links = [];
+      for (const match of text.matchAll(URL_RE)) {
+        const cleaned = cleanUrlMatch(match[0], match.index || 0);
+        if (!cleaned) continue;
+        links.push({
+          text: cleaned.text,
+          range: {
+            start: { x: cleaned.index + 1, y },
+            end: { x: cleaned.index + cleaned.text.length, y },
+          },
+          activate: (_event, linkText) => openTerminalLink(linkText),
+        });
+      }
+      callback(links.length ? links : undefined);
+    },
+  });
+}
+
 function startBounce(container) {
   const isDark = !document.documentElement.classList.contains('light');
   const colors = isDark ? DARK_BALLS : LIGHT_BALLS;
@@ -394,6 +438,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
+  addLinkProvider(term);
   term.onData(data => send({ type: 'input', id, data }));
   term.parser.registerOscHandler(52, data => {
     const b64 = data.split(';')[1];
