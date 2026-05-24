@@ -171,13 +171,12 @@ function updateAgentCandidate(id, presetId, lines) {
 }
 
 function commitAgentCandidate(id, presetId) {
-  if (!finalizePreset[id]) return false;
+  if (!finalizePreset[id]) return;
   const text = candidate.get(id);
-  if (!text) { tlog(id, 'candidate commit skip empty'); clog(id, 'candidate commit skip empty'); return false; }
-  if (text === lastAgentText[id]) { tlog(id, 'candidate commit skip duplicate'); clog(id, 'candidate commit skip duplicate'); return false; }
+  if (!text) { tlog(id, 'candidate commit skip empty'); clog(id, 'candidate commit skip empty'); return; }
+  if (text === lastAgentText[id]) { tlog(id, 'candidate commit skip duplicate'); clog(id, 'candidate commit skip duplicate'); return; }
   lastAgentText[id] = text;
   store(id, 'agent', text);
-  return true;
 }
 
 function clearAgentCandidate(id) {
@@ -227,10 +226,13 @@ function getTurns(id, n, order) {
 
 function getCache() { return { ...cache }; }
 
+function hasSettledReplay(entries) {
+  return entries?.some(e => e.role === 'agent') && entries[entries.length - 1]?.role === 'agent';
+}
+
 function getReplayText(id, presetId) {
   const entries = builder.compactEntries(entriesById[id], presetId);
-  if (!entries?.length) return '';
-  if (!entries.some(e => e.role === 'agent')) return '';
+  if (!hasSettledReplay(entries)) return '';
   const marks = {
     'claude-code': { user: '❯', agent: '⏺' },
     codex: { user: '›', agent: '•' },

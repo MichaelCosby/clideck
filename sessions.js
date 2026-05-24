@@ -10,7 +10,7 @@ const opencodeBridge = require('./opencode-bridge');
 const plugins = require('./plugin-loader');
 
 const THEMES = require('./themes');
-const MAX_BUFFER = 1024 * 1024;
+const MAX_BUFFER = 2 * 1024 * 1024;
 const { PORT, localUrl } = require('./runtime');
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\)|\x1b./g;
 const PRESETS = JSON.parse(require('fs').readFileSync(join(__dirname, 'agent-presets.json'), 'utf8'));
@@ -59,10 +59,26 @@ function broadcast(msg) {
 
 // --- Spawn a PTY and wire up a session ---
 
+function presetForCommand(cmd) {
+  if (cmd?.presetId) {
+    const preset = PRESETS.find(p => p.presetId === cmd.presetId);
+    if (preset) return preset;
+  }
+  const bin = binName(cmd?.command);
+  return PRESETS.find(p => binName(p.command) === bin);
+}
+
+function commandEnv(cmd) {
+  const env = {};
+  if (!cmd?.env || typeof cmd.env !== 'object' || Array.isArray(cmd.env)) return env;
+  for (const [key, value] of Object.entries(cmd.env)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) env[key] = String(value ?? '');
+  }
+  return env;
+}
+
 function buildTelemetryEnv(id, cmd) {
-  const bin = binName(cmd.command);
-  const preset = (cmd.presetId && PRESETS.find(p => p.presetId === cmd.presetId))
-    || PRESETS.find(p => binName(p.command) === bin);
+  const preset = presetForCommand(cmd);
   const telemetryEnabled = cmd.telemetryEnabled ?? (preset?.presetId === 'claude-code');
   const env = { CLIDECK_SESSION_ID: id, CLIDECK_PORT: String(PORT), CLIDECK_URL: localUrl() };
   if (!preset?.telemetryEnv || !telemetryEnabled) return env;
@@ -86,20 +102,19 @@ function isLightTheme(themeId) {
 function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken, projectId, cols, rows) {
   const telemetryEnv = buildTelemetryEnv(id, cmd);
   const colorEnv = isLightTheme(themeId) ? { COLORFGBG: '0;15' } : { COLORFGBG: '15;0' };
+  const extraEnv = commandEnv(cmd);
   let term;
   try {
     term = pty.spawn(parts[0], parts.slice(1), {
       name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd,
-      env: { ...process.env, ...telemetryEnv, ...colorEnv },
+      env: { ...process.env, ...extraEnv, ...telemetryEnv, ...colorEnv },
     });
   } catch (e) {
     return e;
   }
 
   const sessionIdRe = cmd.sessionIdPattern ? new RegExp(cmd.sessionIdPattern, 'i') : null;
-  const bin = binName(cmd.command);
-  const preset = (cmd.presetId && PRESETS.find(p => p.presetId === cmd.presetId))
-    || PRESETS.find(p => binName(p.command) === bin);
+  const preset = presetForCommand(cmd);
   const session = { name, themeId, commandId, cwd, pty: term, chunks: [], chunksSize: 0, sessionToken: savedToken || null, projectId: projectId || null, presetId: preset?.presetId || 'shell', working: undefined };
   sessions.set(id, session);
   transcript.setFinalizeOnIdle(id, ['claude-code', 'codex', 'gemini-cli', 'opencode', 'clideck-agent'].includes(session.presetId) ? session.presetId : null);
@@ -107,7 +122,7 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
   // Always watch telemetry-backed agents so OTLP fallback matching can attach
   // early events to this session even when the agent omits clideck.session_id.
   // The receiver itself decides whether to surface a setup prompt.
-  if (preset?.telemetryEnv) telemetry.watchSession(id, bin);
+  if (preset?.telemetryEnv) telemetry.watchSession(id, binName(cmd.command));
   if (preset?.bridge === 'opencode') opencodeBridge.watchSession(id, cwd);
 
   term.onData((data) => {
@@ -181,13 +196,12 @@ function create(msg, ws, cfg) {
     return;
   }
 
-  const createdPresetId = PRESETS.find(p => binName(p.command) === binName(cmd.command))?.presetId || 'shell';
+  const createdPresetId = presetForCommand(cmd)?.presetId || 'shell';
   const installId = msg.installId || undefined;
   broadcast({ type: 'created', id, name, themeId, commandId: cmd.id, presetId: createdPresetId, projectId, installId });
 
   // Immediate setup notification if config not detected
-  const bin = binName(cmd.command);
-  const preset = PRESETS.find(p => binName(p.command) === bin);
+  const preset = presetForCommand(cmd);
   if (preset && (preset.telemetrySetup || preset.bridge) && !(cmd.telemetryEnabled && cmd.telemetryStatus?.ok)) {
     broadcast({ type: 'session.needsSetup', id });
   }
@@ -214,7 +228,7 @@ function createProgrammatic(opts, cfg) {
   const s = sessions.get(id);
   if (s && opts.ephemeral) s.ephemeral = true;
 
-  const presetId = PRESETS.find(p => binName(p.command) === binName(cmd.command))?.presetId || 'shell';
+  const presetId = presetForCommand(cmd)?.presetId || 'shell';
   broadcast({ type: 'created', id, name, themeId, commandId: cmd.id, presetId, projectId });
   return { id };
 }
@@ -264,7 +278,7 @@ function resume(msg, ws, cfg) {
   resumable = resumable.filter(s => s.id !== id);
   broadcast({ type: 'sessions.resumable', list: getResumable(cfg) });
 
-  const resumePresetId = PRESETS.find(p => binName(p.command) === binName(cmd.command))?.presetId || saved.presetId || 'shell';
+  const resumePresetId = presetForCommand(cmd)?.presetId || saved.presetId || 'shell';
   broadcast({ type: 'created', id, name: saved.name, themeId: saved.themeId || saved.profileId || 'default', commandId: saved.commandId, presetId: resumePresetId, projectId: saved.projectId || null, muted: !!saved.muted, resumed: true, lastPreview: saved.lastPreview || '' });
 }
 
@@ -408,23 +422,24 @@ function getResumable(cfg) {
     if (s.presetId) return s;
     const cmd = (cfg.commands || []).find(c => c.id === s.commandId);
     if (!cmd) return { ...s, presetId: 'shell' };
-    const preset = PRESETS.find(p => binName(p.command) === binName(cmd.command));
+    const preset = presetForCommand(cmd);
     return { ...s, presetId: preset?.presetId || 'shell' };
   });
 }
 
 function sendBuffers(ws) {
   for (const [id, s] of sessions) {
+    if (s.chunks.length) {
+      const data = s.chunks.join('');
+      ws.send(JSON.stringify({ type: 'output', id, data, replay: true }));
+      continue;
+    }
     if (['claude-code', 'codex', 'gemini-cli', 'opencode', 'clideck-agent'].includes(s.presetId) && !s.working) {
       const text = transcript.getReplayText(id, s.presetId);
       if (text) {
         ws.send(JSON.stringify({ type: 'session.history', id, text, replay: true }));
         continue;
       }
-    }
-    if (s.chunks.length) {
-      const data = s.chunks.join('');
-      ws.send(JSON.stringify({ type: 'output', id, data, replay: true }));
     }
   }
 }

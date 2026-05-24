@@ -19,8 +19,9 @@ function clientPresets() {
   return presets.filter(isPresetEnabled);
 }
 function filterClientCommands(commands) {
-  const disabledPresetIds = new Set(presets.filter(p => !isPresetEnabled(p)).map(p => p.presetId));
-  return (commands || []).filter(cmd => !cmd.presetId || !disabledPresetIds.has(cmd.presetId));
+  const allowedPresetIds = new Set(clientPresets().map(p => p.presetId));
+  const knownPresetIds = new Set(presets.map(p => p.presetId));
+  return (commands || []).filter(cmd => !cmd.presetId || allowedPresetIds.has(cmd.presetId) || !knownPresetIds.has(cmd.presetId));
 }
 const transcript = require('./transcript');
 const plugins = require('./plugin-loader');
@@ -69,6 +70,35 @@ function getInstalledVersion(bin) {
   try { return parseVersion(execFileSync(bin, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })); } catch {}
   try { return parseVersion(execFileSync(bin, ['-v'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })); } catch {}
   return '';
+}
+
+function presetForCommand(cmd) {
+  if (cmd?.presetId) {
+    const preset = presets.find(p => p.presetId === cmd.presetId);
+    if (preset) return preset;
+  }
+  const bin = binName(cmd?.command);
+  return presets.find(p => binName(p.command) === bin);
+}
+
+function commandEnv(cmd) {
+  return cmd?.env && typeof cmd.env === 'object' && !Array.isArray(cmd.env) ? cmd.env : {};
+}
+
+function expandHomePath(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text === '~') return os.homedir();
+  if (text.startsWith('~/') || text.startsWith('~\\')) return join(os.homedir(), text.slice(2));
+  return text;
+}
+
+function configRootFor(preset, cmd) {
+  const env = commandEnv(cmd);
+  if (preset?.presetId === 'claude-code') return expandHomePath(env.CLAUDE_CONFIG_DIR) || join(os.homedir(), '.claude');
+  if (preset?.presetId === 'codex') return expandHomePath(env.CODEX_HOME) || join(os.homedir(), '.codex');
+  if (preset?.presetId === 'gemini-cli') return join(expandHomePath(env.GEMINI_CLI_HOME) || os.homedir(), '.gemini');
+  return os.homedir();
 }
 
 function checkRemoteUpdate(ws) {
@@ -155,11 +185,11 @@ function codexHooksFeatureEnabled(content) {
   return false;
 }
 
-function codexConfigLooksHealthy(content, port) {
+function codexConfigLooksHealthy(content, port, codexHome) {
   if (!content.includes('[otel]') || !content.includes(`localhost:${port}`)) return false;
   const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
   if (!codexHooksFeatureEnabled(content)) return false;
-  if (!codexHooksHealthy(os.homedir(), codexHookPath, port)) return false;
+  if (!codexHooksHealthy(codexHome, codexHookPath, port)) return false;
   const notifyLine = content.match(/^\s*notify\s*=\s*\[(.+)\]\s*$/m)?.[1] || '';
   if (!notifyLine.includes('notify-helper')) return false;
   const quoted = [...notifyLine.matchAll(/"([^"]+)"/g)].map(m => m[1]);
@@ -168,7 +198,6 @@ function codexConfigLooksHealthy(content, port) {
 }
 
 function detectTelemetryConfig(c) {
-  const home = os.homedir();
   const port = String(PORT);
   let changed = false;
   const attemptedRepairs = new Set();
@@ -176,14 +205,13 @@ function detectTelemetryConfig(c) {
   for (let pass = 0; pass < 2; pass++) {
     let repairedAny = false;
     for (const cmd of c.commands || []) {
-      const bin = binName(cmd.command);
-      const preset = presets.find(p => binName(p.command) === bin);
+      const preset = presetForCommand(cmd);
       if (!preset) continue;
       let detected = false;
       let reason = '';
       if (preset.presetId === 'claude-code') {
         try {
-          const s = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8'));
+          const s = JSON.parse(readFileSync(join(configRootFor(preset, cmd), 'settings.json'), 'utf8'));
           const hooks = s.hooks || {};
           detected = hasExistingHook(hooks.UserPromptSubmit, 'claude-hook.js', 'start')
                   && hasExistingHook(hooks.Stop, 'claude-hook.js', 'stop')
@@ -194,13 +222,14 @@ function detectTelemetryConfig(c) {
         } catch {}
       } else if (preset.presetId === 'codex') {
         try {
-          const content = readFileSync(join(home, '.codex', 'config.toml'), 'utf8');
-          detected = codexConfigLooksHealthy(content, port);
+          const codexHome = configRootFor(preset, cmd);
+          const content = readFileSync(join(codexHome, 'config.toml'), 'utf8');
+          detected = codexConfigLooksHealthy(content, port, codexHome);
           if (!detected) reason = 'Needs re-patch';
         } catch {}
       } else if (preset.presetId === 'gemini-cli') {
         try {
-          const s = JSON.parse(readFileSync(join(home, '.gemini', 'settings.json'), 'utf8'));
+          const s = JSON.parse(readFileSync(join(configRootFor(preset, cmd), 'settings.json'), 'utf8'));
           const hooks = s.hooks || {};
           detected = hasExistingHook(hooks.BeforeAgent, 'gemini-hook.js', 'start')
                   && hasExistingHook(hooks.AfterAgent, 'gemini-hook.js', 'stop')
@@ -215,9 +244,9 @@ function detectTelemetryConfig(c) {
       if (preset.available && preset.minVersion && !preset.versionOk) {
         detected = false;
         reason = `Update required (${preset.minVersion}+)`;
-      } else if (!detected && cmd.telemetryEnabled && preset.telemetryAutoSetup && preset.available && preset.versionOk && !attemptedRepairs.has(preset.presetId)) {
-        attemptedRepairs.add(preset.presetId);
-        const repaired = applyTelemetryConfig(preset);
+      } else if (!detected && cmd.telemetryEnabled && preset.telemetryAutoSetup && preset.available && preset.versionOk && !attemptedRepairs.has(cmd.id || preset.presetId)) {
+        attemptedRepairs.add(cmd.id || preset.presetId);
+        const repaired = applyTelemetryConfig(preset, cmd);
         if (repaired.success) {
           repairedAny = true;
           continue;
@@ -285,11 +314,7 @@ function onConnection(ws) {
             // if (sess.presetId === 'claude-code') {
             //   console.log(`[claude] terminal.buffer finalize session=${msg.id.slice(0,8)} lines=${msg.lines?.length || 0}`);
             // }
-            const committed = transcript.commitAgentCandidate(msg.id, sess.presetId);
-            if (committed) {
-              const updatedText = transcript.getReplayText(msg.id, sess.presetId);
-              if (updatedText) sessions.broadcast({ type: 'session.history', id: msg.id, text: updatedText, replace: true });
-            }
+            transcript.commitAgentCandidate(msg.id, sess.presetId);
           }
           let choices = require('./transcript').detectMenu(msg.lines, sess.presetId);
           // Codex: only trust menu detection if last OTEL event was response.completed
@@ -365,11 +390,12 @@ function onConnection(ws) {
       }
 
       case 'telemetry.autosetup': {
-        const preset = presets.find(p => p.presetId === msg.presetId);
+        const targetCmd = msg.commandId ? cfg.commands.find(c => c.id === msg.commandId) : null;
+        const preset = targetCmd ? presetForCommand(targetCmd) : presets.find(p => p.presetId === msg.presetId);
         if (!preset?.telemetryAutoSetup) break;
-        const result = applyTelemetryConfig(preset);
+        const result = applyTelemetryConfig(preset, targetCmd);
         for (const cmd of cfg.commands) {
-          if (binName(cmd.command) === binName(preset.command)) {
+          if (targetCmd ? cmd.id === targetCmd.id : presetForCommand(cmd)?.presetId === preset.presetId) {
             cmd.telemetryEnabled = result.success;
             cmd.telemetryStatus = result.success ? { ok: true } : { ok: false, error: result.message };
             // Enable the agent when setup succeeds, disable if it fails
@@ -380,7 +406,8 @@ function onConnection(ws) {
         sessions.broadcast({ type: 'config', config: configForClient() });
         ws.send(JSON.stringify({
           type: 'telemetry.autosetup.result',
-          presetId: msg.presetId,
+          presetId: preset.presetId,
+          commandId: msg.commandId || null,
           success: result.success,
           output: result.message,
         }));
@@ -388,18 +415,19 @@ function onConnection(ws) {
       }
 
       case 'telemetry.configure': {
-        const preset = presets.find(p => p.presetId === msg.presetId);
+        const targetCmd = msg.commandId ? cfg.commands.find(c => c.id === msg.commandId) : null;
+        const preset = targetCmd ? presetForCommand(targetCmd) : presets.find(p => p.presetId === msg.presetId);
         if (!preset) break;
         const enable = !!msg.enable;
         let result;
         if (enable) {
-          result = applyTelemetryConfig(preset);
+          result = applyTelemetryConfig(preset, targetCmd);
         } else {
-          result = removeTelemetryConfig(preset);
+          result = removeTelemetryConfig(preset, targetCmd);
         }
         // Update all matching commands in config
         for (const cmd of cfg.commands) {
-          if (binName(cmd.command) === binName(preset.command)) {
+          if (targetCmd ? cmd.id === targetCmd.id : presetForCommand(cmd)?.presetId === preset.presetId) {
             cmd.telemetryEnabled = enable && result.success;
             cmd.telemetryStatus = enable
               ? (result.success ? { ok: true } : { ok: false, error: result.message })
@@ -649,13 +677,12 @@ function onConnection(ws) {
 }
 
 // Deterministic telemetry config writers per agent — no AI, no YOLO
-function applyTelemetryConfig(preset) {
+function applyTelemetryConfig(preset, cmd = null) {
   const port = String(PORT);
-  const home = os.homedir();
 
   try {
     if (preset.presetId === 'claude-code') {
-      const configPath = join(home, '.claude', 'settings.json');
+      const configPath = join(configRootFor(preset, cmd), 'settings.json');
       let settings = {};
       if (existsSync(configPath)) {
         try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
@@ -681,11 +708,12 @@ function applyTelemetryConfig(preset) {
       settings.hooks = hooks;
       mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
-      return { success: true, message: 'Added hooks to ~/.claude/settings.json — Claude will ask for one-time approval' };
+      return { success: true, message: `Added hooks to ${configPath} — Claude will ask for one-time approval` };
     }
 
     if (preset.presetId === 'codex') {
-      const configPath = join(home, '.codex', 'config.toml');
+      const codexHome = configRootFor(preset, cmd);
+      const configPath = join(codexHome, 'config.toml');
       let content = '';
       if (existsSync(configPath)) content = readFileSync(configPath, 'utf8');
       const hasOtel = content.includes('[otel]');
@@ -693,7 +721,7 @@ function applyTelemetryConfig(preset) {
       const hasNotify = /^\s*notify\s*=.*notify-helper/m.test(content);
       const hasWrongOtel = content.includes(`endpoint = "http://localhost:${port}/v1/logs"`);
       const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
-      const hasHooks = codexHooksFeatureEnabled(content) && codexHooksHealthy(home, codexHookPath, port);
+      const hasHooks = codexHooksFeatureEnabled(content) && codexHooksHealthy(codexHome, codexHookPath, port);
       if (hasOtel && hasCurrentOtel && hasNotify && !hasWrongOtel && hasHooks) {
         return { success: true, message: 'Already configured' };
       }
@@ -703,12 +731,12 @@ function applyTelemetryConfig(preset) {
       if (!valid.ok) return { success: false, message: valid.error };
       mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, nextContent);
-      installCodexHooks(home, process.execPath.replace(/\\/g, '/'), codexHookPath, port);
+      installCodexHooks(codexHome, process.execPath.replace(/\\/g, '/'), codexHookPath, port);
       return { success: true, message: 'Configured. If Codex shows "2 hooks need review", open /hooks and approve the CliDeck hooks once.' };
     }
 
     if (preset.presetId === 'gemini-cli') {
-      const configPath = join(home, '.gemini', 'settings.json');
+      const configPath = join(configRootFor(preset, cmd), 'settings.json');
       let settings = {};
       if (existsSync(configPath)) {
         try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
@@ -738,7 +766,7 @@ function applyTelemetryConfig(preset) {
       if (settings.telemetry?.target === 'local' && /localhost:\d+/.test(String(settings.telemetry?.otlpEndpoint || ''))) delete settings.telemetry;
       mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
-      return { success: true, message: 'Added CliDeck hooks to ~/.gemini/settings.json' };
+      return { success: true, message: `Added CliDeck hooks to ${configPath}` };
     }
 
     if (preset.presetId === 'opencode') {
@@ -757,12 +785,10 @@ function applyTelemetryConfig(preset) {
   }
 }
 
-function removeTelemetryConfig(preset) {
-  const home = os.homedir();
-
+function removeTelemetryConfig(preset, cmd = null) {
   try {
     if (preset.presetId === 'claude-code') {
-      const configPath = join(home, '.claude', 'settings.json');
+      const configPath = join(configRootFor(preset, cmd), 'settings.json');
       if (!existsSync(configPath)) return { success: true, message: 'No config file to clean' };
       let settings = {};
       try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
@@ -775,23 +801,24 @@ function removeTelemetryConfig(preset) {
       }
       if (!Object.keys(settings.hooks).length) delete settings.hooks;
       writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
-      return { success: true, message: 'Removed CliDeck hooks from ~/.claude/settings.json' };
+      return { success: true, message: `Removed CliDeck hooks from ${configPath}` };
     }
 
     if (preset.presetId === 'codex') {
-      const configPath = join(home, '.codex', 'config.toml');
+      const codexHome = configRootFor(preset, cmd);
+      const configPath = join(codexHome, 'config.toml');
       if (!existsSync(configPath)) return { success: true, message: 'No config file to clean' };
       let content = readFileSync(configPath, 'utf8');
       content = content.replace(/\n?\[otel\][^\[]*/, '');
       content = content.replace(/\n?notify\s*=\s*\[.*?notify-helper.*?\]\s*/g, '');
       content = content.replace(/\n?codex_hooks\s*=\s*(true|false)\s*/g, '\n');
       writeFileSync(configPath, content.trimEnd() + '\n');
-      removeCodexHooks(home);
-      return { success: true, message: 'Removed otel + CliDeck hooks from ~/.codex config' };
+      removeCodexHooks(codexHome);
+      return { success: true, message: `Removed otel + CliDeck hooks from ${configPath}` };
     }
 
     if (preset.presetId === 'gemini-cli') {
-      const configPath = join(home, '.gemini', 'settings.json');
+      const configPath = join(configRootFor(preset, cmd), 'settings.json');
       if (!existsSync(configPath)) return { success: true, message: 'No config file to clean' };
       let settings = {};
       try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
@@ -804,7 +831,7 @@ function removeTelemetryConfig(preset) {
       if (settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks;
       if (settings.telemetry?.target === 'local' && /localhost:\d+/.test(String(settings.telemetry?.otlpEndpoint || ''))) delete settings.telemetry;
       writeFileSync(configPath, JSON.stringify(settings, null, 2) + '\n');
-      return { success: true, message: 'Removed CliDeck hooks from ~/.gemini/settings.json' };
+      return { success: true, message: `Removed CliDeck hooks from ${configPath}` };
     }
 
     if (preset.presetId === 'opencode') {

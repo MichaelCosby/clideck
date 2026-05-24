@@ -16,6 +16,19 @@ import { renderPrompts } from './prompts.js';
 const shownAgentHealthToasts = new Set();
 let reconnectReplaySkip = null;
 
+function normalizeTerminalHistoryText(text) {
+  return `${text || ''}\n`.replace(/\r?\n/g, '\r\n');
+}
+
+function presetForCommand(cmd) {
+  if (cmd?.presetId) {
+    const byId = state.presets.find(p => p.presetId === cmd.presetId);
+    if (byId) return byId;
+  }
+  const bin = binName(cmd?.command);
+  return state.presets.find(p => binName(p.command) === bin);
+}
+
 function connect() {
   const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   state.ws = new WebSocket(`${wsProtocol}//${location.host}`);
@@ -67,7 +80,9 @@ function connect() {
           }
           msg.list.forEach(s => addTerminal(s.id, s.name, s.themeId, s.commandId, s.projectId, s.muted, s.lastPreview, s.presetId));
           if (!state.active || !state.terms.has(state.active)) {
-            if (msg.list.length) select(msg.list[0].id);
+            const savedActive = localStorage.getItem('clideck.activeSessionId');
+            const nextId = savedActive && liveIds.has(savedActive) ? savedActive : msg.list[0]?.id;
+            if (nextId) select(nextId);
           }
         }
         break;
@@ -110,12 +125,8 @@ function connect() {
       case 'session.history': {
         const entry = state.terms.get(msg.id);
         if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) break;
-        // replace:true is sent after idle-finalization commits a cleaner transcript. Skip
-        // the reset+replay for live sessions — resetting xterm while the PTY is still alive
-        // desyncs the display from the PTY's cursor state, garbling subsequent output.
-        if (msg.replace) { updatePreview(msg.id); break; }
-        const histText = (msg.text + '\n').replace(/(?<!\r)\n/g, '\r\n');
-        if (entry && !entry.queue(histText)) entry.term.write(histText);
+        const historyText = normalizeTerminalHistoryText(msg.text);
+        if (entry && !entry.queue(historyText)) entry.term.write(historyText);
         updatePreview(msg.id);
         break;
       }
@@ -214,7 +225,7 @@ function connect() {
         break;
       }
       case 'telemetry.autosetup.result': {
-        const toast = document.querySelector(`[data-setup-preset="${msg.presetId}"]`);
+        const toast = document.querySelector(msg.commandId ? `[data-command-id="${msg.commandId}"]` : `[data-setup-preset="${msg.presetId}"]`);
         if (!toast) break;
         const actionsEl = toast.querySelector('.setup-actions');
         if (msg.success) {
@@ -245,7 +256,7 @@ function connect() {
             toast.remove();
           };
         } else {
-          shownSetup.delete(msg.presetId);
+          shownSetup.delete(msg.commandId || msg.presetId);
           const btn = toast.querySelector('.auto-setup-btn');
           btn.textContent = 'Failed — configure manually';
           btn.className = 'auto-setup-btn flex-1 px-3 py-2 text-xs font-medium bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg cursor-default';
@@ -498,20 +509,18 @@ document.querySelectorAll('.filter-tab').forEach(btn => {
 
 // Telemetry setup notification — shown once per agent type
 const shownSetup = new Set();
-document.addEventListener('clideck:setup', (e) => showTelemetrySetup(e.detail.commandId, null, e.detail.presetId));
-function showTelemetrySetup(commandId, sessionId, presetId) {
+document.addEventListener('clideck:setup', (e) => showTelemetrySetup(e.detail.commandId, null));
+function showTelemetrySetup(commandId, sessionId) {
   const cmd = state.cfg.commands.find(c => c.id === commandId);
   if (!cmd) return;
   // Skip if telemetry is already configured via settings
   if (cmd.telemetryEnabled && cmd.telemetryStatus?.ok) return;
-  const bin = binName(cmd.command);
-  const preset = presetId
-    ? state.presets.find(p => p.presetId === presetId)
-    : state.presets.find(p => binName(p.command) === bin);
+  const preset = presetForCommand(cmd);
   if (!preset) return;
   const setupRaw = preset.telemetrySetup || preset.pluginSetup;
-  if (!setupRaw || shownSetup.has(preset.presetId)) return;
-  shownSetup.add(preset.presetId);
+  const setupKey = commandId || preset.presetId;
+  if (!setupRaw || shownSetup.has(setupKey)) return;
+  shownSetup.add(setupKey);
 
   const port = location.port || '4000';
   const setupText = setupRaw.replace(/\{\{port\}\}/g, port);
@@ -550,7 +559,7 @@ function showTelemetrySetup(commandId, sessionId, presetId) {
     </div>`;
 
   toast.querySelectorAll('.dismiss-btn').forEach(b => b.onclick = () => {
-    shownSetup.delete(preset.presetId);
+    shownSetup.delete(setupKey);
     toast.remove();
   });
 
@@ -560,7 +569,7 @@ function showTelemetrySetup(commandId, sessionId, presetId) {
       autoBtn.disabled = true;
       autoBtn.innerHTML = `<svg class="w-3.5 h-3.5 inline animate-spin -mt-px mr-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a10 10 0 0 1 10 10"/></svg>Configuring…`;
       autoBtn.className = 'auto-setup-btn flex-1 px-3 py-2 text-xs font-medium bg-slate-700 text-slate-300 rounded-lg cursor-wait';
-      send({ type: 'telemetry.autosetup', presetId: preset.presetId });
+      send({ type: 'telemetry.autosetup', presetId: preset.presetId, commandId });
     };
   }
 
@@ -862,8 +871,8 @@ function renderPluginsPanel(list) {
   container.innerHTML = list.map((p, i) => {
     const open = !!expanded[p.id];
     const icon = p.icon || defaultIcon;
-    const pullSvg = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>`;
     const deleteBtn = p.bundled ? '' : `<div class="plugin-delete flex items-center justify-center w-6 h-6 rounded text-slate-600 hover:text-red-400 hover:bg-slate-700/50 cursor-pointer transition-colors flex-shrink-0" data-plugin-id="${esc(p.id)}" data-plugin-name="${esc(p.name)}" title="Remove plugin">${trashSvg}</div>`;
+    const pullSvg = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>`;
     const updateBtn = p.source ? `<button class="plugin-update-btn flex items-center justify-center w-6 h-6 rounded text-slate-600 hover:text-blue-400 hover:bg-slate-700/50 transition-colors flex-shrink-0" data-plugin-id="${esc(p.id)}" title="Pull update from GitHub">${pullSvg}</button>` : '';
     const hasFooter = p.author || !p.bundled || p.source;
 
