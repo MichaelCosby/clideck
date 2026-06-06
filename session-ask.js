@@ -3,6 +3,8 @@ const transcript = require('./transcript');
 const MAX_BODY = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TIMEOUT_MS = 60 * 60 * 1000;
+const BRACKETED_PASTE_START = '\x1b[200~';
+const BRACKETED_PASTE_END = '\x1b[201~';
 
 function sendJson(res, status, payload) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -78,6 +80,39 @@ function latestAgentTextSince(sessionId, sinceTs) {
   return entries.length ? entries[entries.length - 1].text : '';
 }
 
+function previewTextSince(session, sinceTs) {
+  const text = String(session?.lastPreview || '').trim();
+  if (!text) return '';
+  const ts = Date.parse(session.lastActivityAt || '');
+  return Number.isFinite(ts) && ts >= sinceTs ? text : '';
+}
+
+function latestAnswerTextSince(sessions, sessionId, sinceTs) {
+  return latestAgentTextSince(sessionId, sinceTs)
+    || previewTextSince(sessions.get(sessionId), sinceTs);
+}
+
+function askSubmitDelay(message) {
+  const len = String(message || '').length;
+  return Math.min(2500, Math.max(500, 300 + Math.ceil(len / 80) * 100));
+}
+
+function submitAskInput(sessionsApi, targetId, message) {
+  const sessions = sessionsApi.getSessions();
+  const timers = [];
+
+  const payload = `\n\n${message}`;
+  sessionsApi.input({ id: targetId, data: `${BRACKETED_PASTE_START}${payload}${BRACKETED_PASTE_END}` });
+  const delay = askSubmitDelay(message);
+  timers.push(setTimeout(() => sessionsApi.input({ id: targetId, data: '\r' }), delay));
+  timers.push(setTimeout(() => {
+    const target = sessions.get(targetId);
+    if (target && !target.working) sessionsApi.input({ id: targetId, data: '\r' });
+  }, delay + 1500));
+
+  return () => timers.forEach(clearTimeout);
+}
+
 function waitForAnswer({ sessionsApi, targetId, sinceTs, timeoutMs }) {
   const sessions = sessionsApi.getSessions();
   const target = sessions.get(targetId);
@@ -95,7 +130,7 @@ function waitForAnswer({ sessionsApi, targetId, sinceTs, timeoutMs }) {
     };
     const finish = () => {
       if (settled) return;
-      const response = latestAgentTextSince(targetId, sinceTs);
+      const response = latestAnswerTextSince(sessions, targetId, sinceTs);
       if (!response) return;
       settled = true;
       cleanup();
@@ -139,7 +174,9 @@ async function askSession(payload, sessionsApi) {
   if (!caller) throw jsonError('Caller session is not active', 404);
 
   const [targetId, target] = findTarget(sessions, callerId, caller, payload.target);
-  if (target.working) throw jsonError(`Target session "${target.name}" is already working`, 409);
+  if (target.working) {
+    throw jsonError(`Target session "${target.name}" is busy. CliDeck ask only sends to idle sessions. Try again later, choose another idle session, or ask the user how to proceed.`, 409);
+  }
 
   const message = String(payload.message || '').trim();
   if (!message) throw jsonError('Message is required');
@@ -149,10 +186,9 @@ async function askSession(payload, sessionsApi) {
   const injected = `[CliDeck ask from ${caller.name || callerId.slice(0, 8)}]\n\n${message}`;
 
   console.log(`[ask] ${caller.name || callerId.slice(0, 8)} -> ${target.name || targetId.slice(0, 8)} (${timeoutMs}ms timeout)`);
-  sessionsApi.input({ id: targetId, data: injected });
-  setTimeout(() => sessionsApi.input({ id: targetId, data: '\r' }), 150);
+  const cancelSubmit = submitAskInput(sessionsApi, targetId, injected);
 
-  const response = await waitForAnswer({ sessionsApi, targetId, sinceTs, timeoutMs });
+  const response = await waitForAnswer({ sessionsApi, targetId, sinceTs, timeoutMs }).finally(cancelSubmit);
   console.log(`[ask] completed ${target.name || targetId.slice(0, 8)} -> ${caller.name || callerId.slice(0, 8)}`);
   return { targetSessionId: targetId, targetName: target.name, response };
 }
@@ -168,4 +204,4 @@ async function handleHttp(req, res, sessionsApi) {
   }
 }
 
-module.exports = { handleHttp, askSession };
+module.exports = { handleHttp, askSession, askSubmitDelay };

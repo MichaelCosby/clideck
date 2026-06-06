@@ -41,6 +41,8 @@ const DARK_BALLS = ['#00e5ff', '#5df0d6', '#9b8cff'];
 const LIGHT_BALLS = ['#0891b2', '#059669', '#7c3aed'];
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
+const JUMP_LATEST_THRESHOLD_ROWS = 3;
+const JUMP_LATEST_VISIBLE_CLASS = 'is-visible';
 
 function cleanUrlMatch(text, index) {
   let url = text;
@@ -82,6 +84,41 @@ function addLinkProvider(term) {
       callback(links.length ? links : undefined);
     },
   });
+}
+
+function shouldShowJumpLatest(term) {
+  const buf = term.buffer.active;
+  const maxViewportY = Math.max(buf.baseY || 0, (buf.length || 0) - term.rows);
+  return (maxViewportY - buf.viewportY) > JUMP_LATEST_THRESHOLD_ROWS;
+}
+
+function createJumpLatestButton(term) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tmx-jump-latest';
+  btn.title = 'Jump to latest';
+  btn.setAttribute('aria-label', 'Jump to latest output');
+  btn.innerHTML = `
+    <span class="tmx-jump-latest-glow"></span>
+    <span class="tmx-jump-latest-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 5v14"/>
+        <path d="m6.5 13.5 5.5 5.5 5.5-5.5"/>
+      </svg>
+    </span>`;
+  btn.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    btn.classList.add('settling');
+    term.scrollToBottom();
+    term.focus();
+    setTimeout(() => btn.classList.remove('settling'), 260);
+  });
+  return btn;
+}
+
+function updateJumpLatestButton(term, btn) {
+  btn.classList.toggle(JUMP_LATEST_VISIBLE_CLASS, shouldShowJumpLatest(term));
 }
 
 function startBounce(container) {
@@ -428,6 +465,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     cursorBlink: true,
     scrollback: 10000,
     allowProposedApi: true,
+    smoothScrollDuration: 180,
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -516,6 +554,11 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   }, 0);
 
   term.open(el);
+  const jumpLatestBtn = createJumpLatestButton(term);
+  el.appendChild(jumpLatestBtn);
+  const refreshJumpLatest = () => updateJumpLatestButton(term, jumpLatestBtn);
+  term.onScroll(refreshJumpLatest);
+  term.onWriteParsed(refreshJumpLatest);
   attachToTerminal(term, presetId);
   const onContextMenu = (e) => {
     if (e.shiftKey) return;
@@ -544,6 +587,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
       for (const chunk of pending) term.write(chunk);
       pending = null;
       updatePreview(id);
+      refreshJumpLatest();
       return;
     }
     if (fitRaf) return;
@@ -566,6 +610,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
       for (const chunk of pending) term.write(chunk);
       pending = null;
       updatePreview(id);
+      refreshJumpLatest();
     }
   }, 500);
   const cancelFitRaf = () => { if (fitRaf) { cancelAnimationFrame(fitRaf); fitRaf = 0; } };

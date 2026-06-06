@@ -1,5 +1,5 @@
 import { state, send } from './state.js';
-import { esc, debounce, agentIcon, binName } from './utils.js';
+import { esc, debounce, agentIcon, binName, randomUUID } from './utils.js';
 import { openFolderPicker } from './folder-picker.js';
 
 // ── Category navigation ──
@@ -17,6 +17,8 @@ function switchCategory(catId) {
   document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
   const panel = document.getElementById(`settings-${catId}`);
   if (panel) panel.classList.remove('hidden');
+  const overlay = document.getElementById('settings-overlay');
+  if (overlay) overlay.scrollTop = 0;
 }
 
 document.getElementById('settings-nav').addEventListener('click', (e) => {
@@ -157,8 +159,7 @@ function openIconPicker(triggerEl, cardIdx) {
 }
 
 function telemetryPreset(cmd) {
-  const bin = binName(cmd.command);
-  return (state.presets || []).find(p => binName(p.command) === bin);
+  return presetForCommand(cmd);
 }
 
 function presetForCommand(existing, command) {
@@ -169,6 +170,24 @@ function presetForCommand(existing, command) {
   }
   const bin = binName(command || existing?.command || '');
   return presets.find(p => binName(p.command) === bin) || null;
+}
+
+function envToText(env) {
+  return Object.entries(env || {}).map(([k, v]) => `${k}=${v ?? ''}`).join('\n');
+}
+
+function parseEnvText(text) {
+  const env = {};
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    env[key] = line.slice(idx + 1).trim();
+  }
+  return env;
 }
 
 function telemetryEnabledForCommand(existing, command) {
@@ -193,9 +212,24 @@ function integrationSection(c) {
     </div>`;
 }
 
+function deleteProviderButtonHTML() {
+  return `
+    <button class="agent-del w-8 h-8 flex items-center justify-center rounded-lg border border-slate-700/60 bg-slate-900/50 text-slate-500 hover:text-rose-300 hover:border-rose-400/40 hover:bg-rose-500/10 transition-colors" title="Remove provider" aria-label="Remove provider">
+      <svg class="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 6 6 18M6 6l12 12"/>
+      </svg>
+    </button>`;
+}
+
 function renderAgentList() {
   document.getElementById('agent-list').innerHTML = state.cfg.commands.map((c, i) => {
-    const isBuiltIn = !!telemetryPreset(c);
+    const preset = presetForCommand(c);
+    const isPrimaryPresetCommand = !!preset && state.cfg.commands.findIndex(x => presetForCommand(x)?.presetId === preset.presetId) === i;
+    const canDelete = !!c.userAdded || !isPrimaryPresetCommand;
+    const presetOptions = [
+      '<option value="">Custom</option>',
+      ...(state.presets || []).map(p => `<option value="${esc(p.presetId)}" ${(c.presetId || preset?.presetId || '') === p.presetId ? 'selected' : ''}>${esc(p.name)}</option>`),
+    ].join('');
     return `
     <div class="agent-card p-4 bg-slate-800/50 border border-slate-700/50 rounded-lg" data-idx="${i}">
       <div class="flex items-center gap-3 mb-3">
@@ -207,11 +241,25 @@ function renderAgentList() {
           <input type="checkbox" ${c.enabled ? 'checked' : ''} class="agent-enabled accent-blue-500">
           On
         </label>
-        ${isBuiltIn ? '' : '<button class="agent-del text-slate-500 hover:text-red-400 px-1 text-lg transition-colors" title="Remove">&times;</button>'}
+        <div class="agent-delete-slot flex items-center justify-end min-w-[34px]">
+          ${canDelete ? deleteProviderButtonHTML() : ''}
+        </div>
       </div>
       <div class="mb-3">
         <label class="block text-xs text-slate-500 mb-1">Command</label>
         <input type="text" value="${esc(c.command)}" class="agent-command w-full px-2 py-1.5 text-sm bg-slate-900 border border-slate-700 rounded text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500 transition-colors font-mono" placeholder="e.g. claude, codex, gemini">
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Agent type</label>
+          <select class="agent-preset w-full px-2 py-1.5 text-sm bg-slate-900 border border-slate-700 rounded text-slate-200 outline-none focus:border-blue-500 transition-colors">
+            ${presetOptions}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Environment <span class="text-slate-600">optional</span></label>
+          <textarea rows="1" class="agent-env w-full px-2 py-1.5 text-sm bg-slate-900 border border-slate-700 rounded text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500 transition-colors font-mono resize-y" placeholder="CODEX_HOME=~/.codex-work">${esc(envToText(c.env))}</textarea>
+        </div>
       </div>
       <div class="mb-3">
         <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
@@ -275,22 +323,23 @@ function openPresetMenu(anchorEl) {
     const presetId = item.dataset.preset;
     if (presetId === 'custom') {
       state.cfg.commands.push({
-        id: crypto.randomUUID(), label: '', icon: 'terminal', command: '',
+        id: randomUUID(), label: '', icon: 'terminal', command: '',
         enabled: true, defaultPath: '', isAgent: false, canResume: false,
         resumeCommand: null, sessionIdPattern: null,
-        telemetryEnabled: false, telemetryStatus: null,
+        telemetryEnabled: false, telemetryStatus: null, env: {}, userAdded: true,
       });
     } else {
       const p = presets.find(x => x.presetId === presetId);
       if (p) state.cfg.commands.push({
-        id: crypto.randomUUID(), label: p.name, icon: p.icon, command: p.command,
-        presetId: p.presetId,
+        id: randomUUID(), presetId: p.presetId, label: p.name, icon: p.icon, command: p.command,
         enabled: true, defaultPath: '', isAgent: p.isAgent, canResume: p.canResume,
         resumeCommand: p.resumeCommand, sessionIdPattern: p.sessionIdPattern,
         outputMarker: p.outputMarker || null,
         telemetryEnabled: telemetryEnabledForCommand({ presetId: p.presetId, command: p.command }, p.command),
         telemetryStatus: null,
         bridge: p.bridge,
+        env: {},
+        userAdded: true,
       });
     }
     renderAgentList();
@@ -325,6 +374,20 @@ agentList.addEventListener('click', (e) => {
     return;
   }
   if (e.target.classList.contains('agent-del')) {
+    const slot = e.target.closest('.agent-delete-slot');
+    slot.innerHTML = `
+      <div class="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-rose-400/30 bg-rose-500/10 text-[11px]">
+        <span class="text-rose-200/90 whitespace-nowrap">Delete?</span>
+        <button class="agent-del-confirm px-1.5 py-0.5 rounded text-rose-100 hover:bg-rose-400/20 transition-colors">Yes</button>
+        <button class="agent-del-cancel px-1.5 py-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors">No</button>
+      </div>`;
+    return;
+  }
+  if (e.target.classList.contains('agent-del-cancel')) {
+    e.target.closest('.agent-delete-slot').innerHTML = deleteProviderButtonHTML();
+    return;
+  }
+  if (e.target.classList.contains('agent-del-confirm')) {
     const idx = +e.target.closest('.agent-card').dataset.idx;
     state.cfg.commands.splice(idx, 1);
     renderAgentList();
@@ -333,6 +396,27 @@ agentList.addEventListener('click', (e) => {
 });
 
 agentList.addEventListener('change', (e) => {
+  if (e.target.classList.contains('agent-preset')) {
+    const idx = +e.target.closest('.agent-card').dataset.idx;
+    const cmd = state.cfg.commands[idx];
+    const preset = (state.presets || []).find(p => p.presetId === e.target.value);
+    if (cmd && preset) {
+      Object.assign(cmd, {
+        presetId: preset.presetId,
+        icon: preset.icon,
+        isAgent: preset.isAgent,
+        canResume: preset.canResume,
+        resumeCommand: preset.resumeCommand,
+        sessionIdPattern: preset.sessionIdPattern,
+        outputMarker: preset.outputMarker || null,
+        bridge: preset.bridge,
+        telemetryEnabled: telemetryEnabledForCommand({ ...cmd, presetId: preset.presetId }, cmd.command),
+      });
+      renderAgentList();
+      saveConfig();
+      return;
+    }
+  }
   if (e.target.classList.contains('agent-is-agent')) {
     const card = e.target.closest('.agent-card');
     card.querySelector('.agent-resume-section').classList.toggle('hidden', !e.target.checked);
@@ -344,24 +428,25 @@ agentList.addEventListener('change', (e) => {
   // When enabling an agent that needs setup, trigger auto-setup
   if (e.target.classList.contains('agent-enabled') && e.target.checked) {
     const idx = +e.target.closest('.agent-card').dataset.idx;
-    const cmd = state.cfg.commands[idx];
-    const preset = telemetryPreset(cmd);
-    if (preset?.telemetryAutoSetup && !cmd.telemetryEnabled) {
-      send({ type: 'telemetry.autosetup', presetId: preset.presetId });
-      return; // config broadcast from server will re-render with enabled + telemetryEnabled
-    }
+      const cmd = state.cfg.commands[idx];
+      const preset = telemetryPreset(cmd);
+      if (preset?.telemetryAutoSetup && !cmd.telemetryEnabled) {
+        send({ type: 'telemetry.autosetup', presetId: preset.presetId, commandId: cmd.id });
+        return; // config broadcast from server will re-render with enabled + telemetryEnabled
+      }
   }
   // When disabling an agent that has setup, remove patches only if no other commands of the same agent are enabled
   if (e.target.classList.contains('agent-enabled') && !e.target.checked) {
     const idx = +e.target.closest('.agent-card').dataset.idx;
-    const cmd = state.cfg.commands[idx];
-    const preset = telemetryPreset(cmd);
-    if (preset && cmd.telemetryEnabled) {
-      const othersEnabled = state.cfg.commands.some((c, i) => i !== idx && c.enabled && telemetryPreset(c)?.presetId === preset.presetId);
-      if (!othersEnabled) {
-        send({ type: 'telemetry.configure', presetId: preset.presetId, enable: false });
+      const cmd = state.cfg.commands[idx];
+      const preset = telemetryPreset(cmd);
+      if (preset && cmd.telemetryEnabled) {
+        const hasCustomEnv = Object.keys(cmd.env || {}).length > 0;
+        const othersEnabled = state.cfg.commands.some((c, i) => i !== idx && c.enabled && telemetryPreset(c)?.presetId === preset.presetId && JSON.stringify(c.env || {}) === JSON.stringify(cmd.env || {}));
+        if (!othersEnabled) {
+          send({ type: 'telemetry.configure', presetId: preset.presetId, commandId: hasCustomEnv ? cmd.id : undefined, enable: false });
+        }
       }
-    }
   }
   saveConfig();
 });
@@ -512,10 +597,13 @@ function saveConfig() {
   state.cfg.commands = [...agentCards].map((card, i) => {
     const existing = state.cfg.commands[i] || {};
     const command = card.querySelector('.agent-command').value.trim() || state.cfg.defaultShell;
+    const presetId = card.querySelector('.agent-preset')?.value || null;
+    const preset = presetId ? state.presets.find(p => p.presetId === presetId) : null;
     return {
-      id: existing.id || crypto.randomUUID(),
+      id: existing.id || randomUUID(),
+      presetId,
       label: card.querySelector('.agent-name').value.trim() || 'Untitled',
-      icon: existing.icon || 'terminal',
+      icon: existing.icon || preset?.icon || 'terminal',
       command,
       presetId: existing.presetId || null,
       enabled: card.querySelector('.agent-enabled').checked,
@@ -523,11 +611,13 @@ function saveConfig() {
       isAgent: card.querySelector('.agent-is-agent').checked,
       canResume: card.querySelector('.agent-can-resume').checked,
       resumeCommand: card.querySelector('.agent-resume-cmd')?.value.trim() || null,
-      sessionIdPattern: existing.sessionIdPattern || null,
-      outputMarker: existing.outputMarker || null,
-      telemetryEnabled: telemetryEnabledForCommand(existing, command),
+      sessionIdPattern: existing.sessionIdPattern || preset?.sessionIdPattern || null,
+      outputMarker: existing.outputMarker || preset?.outputMarker || null,
+      env: parseEnvText(card.querySelector('.agent-env')?.value || ''),
+      telemetryEnabled: telemetryEnabledForCommand({ ...existing, presetId }, command),
       telemetryStatus: existing.telemetryStatus || null,
-      bridge: existing.bridge,
+      bridge: existing.bridge || preset?.bridge,
+      userAdded: !!existing.userAdded,
     };
   });
 

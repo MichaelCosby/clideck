@@ -1,5 +1,5 @@
-import { state, send } from './state.js';
-import { esc, binName, resolveIconPath } from './utils.js';
+import { state, send, flushQueuedSends } from './state.js';
+import { esc, binName, resolveIconPath, randomUUID } from './utils.js';
 import { addTerminal, removeTerminal, select, startRename, startProjectRename, setSessionTheme, openMenu, closeMenu, setStatus, updateMuteIndicator, updatePreview, markUnread, applyFilter, setTab, renderResumable, regroupSessions, toggleProjectCollapse, setSessionProject, estimateSize, restartComplete, positionMenu, addPill, updatePill, removePill, appendPillLog, setPillLogs, closePillLog } from './terminals.js';
 import { renderSettings, updateVersionFooter } from './settings.js';
 import { openCreator, closeCreator, refreshCreator } from './creator.js';
@@ -29,12 +29,23 @@ function presetForCommand(cmd) {
   return state.presets.find(p => binName(p.command) === bin);
 }
 
+function expandProjectForNewSession(projectId) {
+  if (!projectId) return;
+  const project = (state.cfg.projects || []).find(p => p.id === projectId);
+  if (!project?.collapsed) return;
+  project.collapsed = false;
+  send({ type: 'config.update', config: state.cfg });
+}
+
+
 function connect() {
   const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   state.ws = new WebSocket(`${wsProtocol}//${location.host}`);
 
   state.ws.onopen = () => {
     reconnectReplaySkip = new Set(state.terms.keys());
+    setServerConnectionState(true);
+    flushQueuedSends();
     send({ type: 'remote.status' });
   };
 
@@ -87,6 +98,7 @@ function connect() {
         }
         break;
       case 'created':
+        expandProjectForNewSession(msg.projectId);
         if (!state.terms.has(msg.id)) addTerminal(msg.id, msg.name, msg.themeId, msg.commandId, msg.projectId, msg.muted, msg.lastPreview, msg.presetId);
         select(msg.id);
         applyFilter();
@@ -264,7 +276,29 @@ function connect() {
         break;
       }
       case 'project.openPath.result':
-        if (!msg.success) showToast(msg.error || 'Failed to open project folder', { type: 'error' });
+        if (!msg.success) {
+          if (msg.headless && msg.path) {
+            const copied = (() => {
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(msg.path).catch(() => {});
+                return true;
+              }
+              try {
+                const ta = document.createElement('textarea');
+                ta.value = msg.path;
+                ta.style.cssText = 'position:fixed;opacity:0';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                ta.remove();
+                return ok;
+              } catch { return false; }
+            })();
+            showToast(msg.path, { title: copied ? 'Path copied to clipboard' : 'No file manager — project path', duration: copied ? 4000 : 8000 });
+          } else {
+            showToast(msg.error || 'Failed to open project folder', { type: 'error' });
+          }
+        }
         break;
       case 'sessions.saved':
         flashSaveIndicator();
@@ -376,7 +410,10 @@ function connect() {
     }
   };
 
-  state.ws.onclose = () => setTimeout(connect, 1000);
+  state.ws.onclose = () => {
+    setServerConnectionState(false);
+    setTimeout(connect, 1000);
+  };
 }
 
 // Mobile sidebar
@@ -786,7 +823,7 @@ function openProjectCreator() {
     if (!name) { nameInput.focus(); return; }
     const projects = state.cfg.projects || [];
     projects.push({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       name,
       path: path || undefined,
       color: PROJECT_COLORS[projects.length % PROJECT_COLORS.length],
@@ -1126,7 +1163,7 @@ function renderProjectActions() {
 let saveTimer = null;
 function flashSaveIndicator() {
   const el = document.getElementById('save-indicator');
-  if (!el) return;
+  if (!el || el.classList.contains('offline')) return;
   clearTimeout(saveTimer);
   el.classList.add('saving');
   el.classList.remove('saved');
@@ -1135,6 +1172,21 @@ function flashSaveIndicator() {
     el.classList.add('saved');
     saveTimer = setTimeout(() => el.classList.remove('saved'), 4000);
   }, 1500);
+}
+
+function setServerConnectionState(online) {
+  const el = document.getElementById('save-indicator');
+  if (!el) return;
+  el.classList.toggle('offline', !online);
+  if (!online) {
+    clearTimeout(saveTimer);
+    el.classList.remove('saving', 'saved');
+  }
+  el.title = online
+    ? 'Sessions saved'
+    : '';
+  if (online) el.removeAttribute('data-tooltip');
+  else el.dataset.tooltip = 'CliDeck server offline. Changes you make here will run when the server reconnects.';
 }
 
 function initSessionScrollbarVisibility() {

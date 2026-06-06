@@ -1,5 +1,5 @@
 import { state, send } from './state.js';
-import { esc, agentIcon, binName } from './utils.js';
+import { esc, agentIcon, binName, randomUUID } from './utils.js';
 import { openFolderPicker } from './folder-picker.js';
 import { estimateSize } from './terminals.js';
 import { showToast } from './toast.js';
@@ -25,6 +25,15 @@ function randomName() {
 function findCommandForPreset(p) {
   return state.cfg.commands.find(c => c.presetId === p.presetId)
     || state.cfg.commands.find(c => binName(c.command) === binName(p.command));
+}
+
+function presetForCommand(cmd) {
+  if (cmd?.presetId) {
+    const byId = state.presets.find(p => p.presetId === cmd.presetId);
+    if (byId) return byId;
+  }
+  const bin = binName(cmd?.command);
+  return state.presets.find(p => binName(p.command) === bin);
 }
 
 function telemetryEnabledForPreset(preset, existing) {
@@ -59,7 +68,7 @@ function renderPresetButtons() {
     if (!preset) {
       // Standalone custom command with no matching preset
       return `
-      <button class="preset-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-slate-700/70 text-sm transition-colors text-left text-slate-300" data-command="${cmd.id}">
+      <button class="preset-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-slate-700/70 text-sm transition-colors text-left text-slate-300" data-command-id="${cmd.id}">
         <span>${agentIcon(icon, 24)}</span>
         <span class="flex-1 min-w-0">${name}</span>
       </button>`;
@@ -85,11 +94,11 @@ function renderPresetButtons() {
       <div class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-left text-slate-500">
         <span class="opacity-40">${agentIcon(icon, 24)}</span>
         <span class="flex-1 min-w-0">${name}</span>
-        <button class="setup-btn px-2.5 py-1 text-[11px] font-medium text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-md transition-colors" data-preset="${preset.presetId}"${cmd ? ` data-command="${cmd.id}"` : ''}>Setup</button>
+        <button class="setup-btn px-2.5 py-1 text-[11px] font-medium text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-md transition-colors" data-preset="${preset.presetId}" data-command-id="${cmd?.id || ''}">Setup</button>
       </div>`;
     }
     return `
-      <button class="preset-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-slate-700/70 text-sm transition-colors text-left text-slate-300" data-preset="${preset.presetId}"${cmd ? ` data-command="${cmd.id}"` : ''}>
+      <button class="preset-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-md hover:bg-slate-700/70 text-sm transition-colors text-left text-slate-300" data-preset="${preset.presetId}" data-command-id="${cmd?.id || ''}">
         <span>${agentIcon(icon, 24)}</span>
         <span class="flex-1 min-w-0">${name}</span>
       </button>`;
@@ -146,6 +155,11 @@ function sortedEntries() {
   return [...agents, ...shells];
 }
 
+function createFromCommand(cmd, sessionName, cwd, projectId) {
+  send({ type: 'create', commandId: cmd.id, name: sessionName, cwd, projectId: projectId || undefined, ...estimateSize() });
+  localStorage.setItem(MRU_KEY, cmd.id);
+}
+
 function createFromPreset(preset, sessionName, cwd, projectId) {
   // Find existing command matching this preset
   const cmd = ensureCommandForPreset(preset);
@@ -157,7 +171,7 @@ function ensureCommandForPreset(preset) {
   let cmd = findCommandForPreset(preset);
   if (cmd) return cmd;
   cmd = {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     presetId: preset.presetId,
     label: preset.name,
     icon: preset.icon,
@@ -172,6 +186,7 @@ function ensureCommandForPreset(preset) {
     telemetryEnabled: telemetryEnabledForPreset(preset),
     telemetryStatus: null,
     bridge: preset.bridge,
+    env: {},
   };
   state.cfg.commands.push(cmd);
   send({ type: 'config.update', config: state.cfg });
@@ -192,7 +207,7 @@ function ensureShellCommand() {
   }
   if (!command) return null;
   cmd = {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     presetId: 'shell',
     label: 'Shell',
     icon: shellPreset?.icon || 'terminal',
@@ -206,6 +221,7 @@ function ensureShellCommand() {
     outputMarker: null,
     telemetryEnabled: false,
     telemetryStatus: null,
+    env: {},
   };
   state.cfg.commands.push(cmd);
   send({ type: 'config.update', config: state.cfg });
@@ -351,16 +367,17 @@ export function openCreator() {
     }
     const setupBtn = e.target.closest('.setup-btn');
     if (setupBtn) {
-      const preset = state.presets.find(p => p.presetId === setupBtn.dataset.preset);
-      if (!preset) return;
-      const cmd = setupBtn.dataset.command
-        ? state.cfg.commands.find(c => c.id === setupBtn.dataset.command) || ensureCommandForPreset(preset)
-        : ensureCommandForPreset(preset);
-      document.dispatchEvent(new CustomEvent('clideck:setup', { detail: { commandId: cmd.id, presetId: preset.presetId } }));
+      const cmd = state.cfg.commands.find(c => c.id === setupBtn.dataset.commandId);
+      const preset = cmd ? presetForCommand(cmd) : state.presets.find(p => p.presetId === setupBtn.dataset.preset);
+      if (!preset || !cmd) return;
+      document.dispatchEvent(new CustomEvent('clideck:setup', { detail: { commandId: cmd.id } }));
       return;
     }
     const btn = e.target.closest('.preset-btn');
     if (!btn) return;
+    const cmd = state.cfg.commands.find(c => c.id === btn.dataset.commandId);
+    const preset = cmd ? presetForCommand(cmd) : state.presets.find(p => p.presetId === btn.dataset.preset);
+    if (!cmd && !preset) return;
     if (projTrigger && !projHidden.value) {
       showToast('Choose a project or select `None (outside project hierarchy)`.', { title: 'Choose Project', type: 'warn' });
       projTrigger.focus();
@@ -369,29 +386,8 @@ export function openCreator() {
     const name = nameInput.value.trim() || fallbackName;
     const cwd = cwdInput.value.trim() || undefined;
     const projectId = projHidden?.value && projHidden.value !== NO_PROJECT_VALUE ? projHidden.value : undefined;
-    const presetId = btn.dataset.preset;
-    const commandId = btn.dataset.command;
-    if (!presetId && commandId) {
-      // Standalone custom command
-      const cmd = state.cfg.commands.find(c => c.id === commandId);
-      if (!cmd) return;
-      send({ type: 'create', commandId: cmd.id, name, cwd, projectId: projectId || undefined, ...estimateSize() });
-      localStorage.setItem(MRU_KEY, cmd.id);
-      closeCreator();
-      return;
-    }
-    const preset = state.presets.find(p => p.presetId === presetId);
-    if (!preset) return;
-    if (commandId) {
-      const cmd = state.cfg.commands.find(c => c.id === commandId);
-      if (cmd) {
-        send({ type: 'create', commandId: cmd.id, name, cwd, projectId: projectId || undefined, ...estimateSize() });
-        localStorage.setItem(MRU_KEY, cmd.id);
-        closeCreator();
-        return;
-      }
-    }
-    createFromPreset(preset, name, cwd, projectId);
+    if (cmd) createFromCommand(cmd, name, cwd, projectId);
+    else createFromPreset(preset, name, cwd, projectId);
     closeCreator();
   });
 }
@@ -452,7 +448,7 @@ function showInstallToast(preset) {
       showToast('Could not find a shell command to run the installer.', { type: 'error', title: 'Install Failed' });
       return;
     }
-    const installId = crypto.randomUUID();
+    const installId = randomUUID();
     send({ type: 'create', commandId: shellCmd.id, name: `Installing ${preset.name}`, installId, ...estimateSize() });
     const handler = (e) => {
       const msg = JSON.parse(e.data);

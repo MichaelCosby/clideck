@@ -476,6 +476,10 @@ function onConnection(ws) {
           ws.send(JSON.stringify({ type: 'project.openPath.result', id: msg.id, success: false, error: 'Project path is not set' }));
           break;
         }
+        if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+          ws.send(JSON.stringify({ type: 'project.openPath.result', id: msg.id, success: false, headless: true, path: proj.path }));
+          break;
+        }
         const cmd = process.platform === 'darwin'
           ? 'open'
           : process.platform === 'win32'

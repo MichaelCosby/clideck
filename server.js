@@ -49,6 +49,15 @@ function checkSelfUpdate() {
 
 checkSelfUpdate().then(() => {
 
+const { acquireServerLock, removeLockIfOwned } = require('./single-instance');
+const serverLock = acquireServerLock();
+if (!serverLock.ok) {
+  const url = serverLock.lock?.url || `http://127.0.0.1:${serverLock.lock?.port || PORT}`;
+  const hint = terminalLink(url);
+  console.log(`CliDeck is already running at ${hint}`);
+  process.exit(0);
+}
+
 const { onConnection } = require('./handlers');
 const sessions = require('./sessions');
 
@@ -237,6 +246,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Agent discovery bridge used by the `clideck agents` CLI command.
+  if (req.method === 'GET' && req.url.startsWith('/api/session/agents')) {
+    require('./session-agents').handleHttp(req, res, sessions);
+    return;
+  }
+
   // Plugin-registered HTTP routes
   if (plugins.handlePluginRoute(req, res)) return;
 
@@ -298,10 +313,12 @@ function onShutdown() {
   plugins.shutdown();
   activity.stop();
   sessions.shutdown(getConfig());
+  removeLockIfOwned();
   process.exit(0);
 }
 process.on('SIGINT', onShutdown);
 process.on('SIGTERM', onShutdown);
+process.on('exit', removeLockIfOwned);
 
 server.listen(PORT, HOST, () => {
   const v = require('./package.json').version;

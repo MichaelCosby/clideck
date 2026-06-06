@@ -18,7 +18,7 @@ function readHooksFile(path) {
   if (!existsSync(path)) return { hooks: {} };
   const parsed = JSON.parse(readFileSync(path, 'utf8'));
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Invalid ~/.codex/hooks.json shape');
+    throw new Error('Invalid Codex hooks.json shape');
   }
   if (!parsed.hooks || typeof parsed.hooks !== 'object' || Array.isArray(parsed.hooks)) parsed.hooks = {};
   return parsed;
@@ -33,8 +33,8 @@ function stripClideckHooks(groups) {
     .filter(group => group.hooks.length);
 }
 
-function installCodexHooks(home, nodePath, helperPath, port) {
-  const hooksPath = join(home, '.codex', 'hooks.json');
+function installCodexHooks(codexHome, nodePath, helperPath, port) {
+  const hooksPath = join(codexHome, 'hooks.json');
   const doc = readHooksFile(hooksPath);
 
   for (const [event, route] of Object.entries(EVENTS)) {
@@ -53,8 +53,8 @@ function installCodexHooks(home, nodePath, helperPath, port) {
   writeFileSync(hooksPath, JSON.stringify(doc, null, 2) + '\n');
 }
 
-function removeCodexHooks(home) {
-  const hooksPath = join(home, '.codex', 'hooks.json');
+function removeCodexHooks(codexHome) {
+  const hooksPath = join(codexHome, 'hooks.json');
   if (!existsSync(hooksPath)) return;
   const doc = readHooksFile(hooksPath);
 
@@ -73,9 +73,9 @@ function removeCodexHooks(home) {
   }
 }
 
-function codexHooksHealthy(home, helperPath, port) {
+function codexHooksHealthy(codexHome, helperPath, port) {
   try {
-    const doc = readHooksFile(join(home, '.codex', 'hooks.json'));
+    const doc = readHooksFile(join(codexHome, 'hooks.json'));
     for (const [event, route] of Object.entries(EVENTS)) {
       const groups = Array.isArray(doc.hooks?.[event]) ? doc.hooks[event] : [];
       const expected = commandFor(process.execPath.replace(/\\/g, '/'), helperPath, port, route);

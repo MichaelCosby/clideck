@@ -6,6 +6,19 @@ function usage() {
     'Usage:',
     '  clideck ask --session <name-or-id> --message <text> [--timeout 10m]',
     '  clideck ask <name-or-id> <message> [--timeout 10m]',
+    '  cat file.txt | clideck ask --session <name-or-id> [--timeout 10m]',
+    '',
+    'Use from inside a CliDeck session when this agent needs an answer from another active session.',
+    'Target lookup is limited to the same project as the caller session.',
+    'Run `clideck agents` first to discover available target sessions.',
+    '',
+    'Options:',
+    '  -s, --session <name-or-id>  Target session name or id.',
+    '  -m, --message <text>       Message to send. If omitted, stdin is used.',
+    '  -t, --timeout <duration>   Wait time. Examples: 30s, 10m, 1h. Default: 10m.',
+    '  --url <url>                CliDeck server URL. Default: CLIDECK_URL or local port.',
+    '  --no-progress              Do not print waiting hints to stderr.',
+    '  -h, --help                 Show this help.',
   ].join('\n');
 }
 
@@ -21,7 +34,7 @@ function parseDuration(value) {
 
 function parseArgs(args) {
   const port = process.env.CLIDECK_PORT || process.env.PORT || '4000';
-  const out = { timeoutMs: 10 * 60 * 1000, url: process.env.CLIDECK_URL || `http://127.0.0.1:${port}` };
+  const out = { timeoutMs: 10 * 60 * 1000, url: process.env.CLIDECK_URL || `http://127.0.0.1:${port}`, progress: true };
   const positional = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -32,6 +45,7 @@ function parseArgs(args) {
       if (!parsed) throw new Error('Invalid timeout value');
       out.timeoutMs = parsed;
     } else if (arg === '--url') out.url = args[++i];
+    else if (arg === '--no-progress') out.progress = false;
     else if (arg === '--help' || arg === '-h') out.help = true;
     else positional.push(arg);
   }
@@ -48,6 +62,101 @@ function readStdinIfAvailable() {
     process.stdin.on('data', chunk => { data += chunk; });
     process.stdin.on('end', () => resolve(data));
   });
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes ? `${hours}h ${restMinutes}m` : `${hours}h`;
+}
+
+function oneLine(text, max = 160) {
+  const compact = String(text || '').replace(/\s+/g, ' ').trim();
+  return compact.length > max ? compact.slice(0, max - 1) + '…' : compact;
+}
+
+function getJson(url, path, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(path, url);
+    const client = target.protocol === 'https:' ? https : http;
+    const req = client.get(target, { timeout: timeoutMs }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        let parsed = {};
+        try { parsed = data ? JSON.parse(data) : {}; } catch {}
+        if (res.statusCode >= 400) {
+          const err = new Error(parsed.error || `CliDeck request failed (${res.statusCode})`);
+          err.statusCode = res.statusCode;
+          return reject(err);
+        }
+        resolve(parsed);
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('CliDeck progress check timed out')));
+    req.on('error', reject);
+  });
+}
+
+function findAgent(agents, target) {
+  const text = String(target || '').trim();
+  if (!text) return null;
+  const byId = agents.filter(a => a.id === text);
+  if (byId.length === 1) return byId[0];
+  const exact = agents.filter(a => a.name === text);
+  if (exact.length === 1) return exact[0];
+  const lower = text.toLowerCase();
+  const insensitive = agents.filter(a => String(a.name || '').toLowerCase() === lower);
+  return insensitive.length === 1 ? insensitive[0] : null;
+}
+
+function startProgressHints(opts, callerSessionId) {
+  if (!opts.progress) return () => {};
+  const started = Date.now();
+  let stopped = false;
+  let lastLine = '';
+
+  const write = (line) => {
+    if (!line || line === lastLine) return;
+    lastLine = line;
+    process.stderr.write(`${line}\n`);
+  };
+
+  write(`[clideck ask] sent to "${opts.session}". waiting up to ${formatDuration(opts.timeoutMs)}. keep waiting until this command exits.`);
+
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      const path = `/api/session/agents?callerSessionId=${encodeURIComponent(callerSessionId)}`;
+      const res = await getJson(opts.url, path, 4000);
+      const agent = findAgent(res.agents || [], opts.session);
+      const elapsed = formatDuration(Date.now() - started);
+      if (!agent) {
+        write(`[clideck ask] still waiting for "${opts.session}" (${elapsed} elapsed).`);
+        return;
+      }
+      const status = agent.working ? 'working' : 'idle/capturing answer';
+      const preview = oneLine(agent.lastPreview);
+      write(`[clideck ask] "${agent.name}" is ${status} (${elapsed} elapsed).${preview ? ` latest: ${preview}` : ''}`);
+    } catch {
+      const elapsed = formatDuration(Date.now() - started);
+      write(`[clideck ask] still waiting for "${opts.session}" (${elapsed} elapsed).`);
+    }
+  };
+
+  const first = setTimeout(tick, 5000);
+  const interval = setInterval(tick, 15000);
+  return () => {
+    stopped = true;
+    clearTimeout(first);
+    clearInterval(interval);
+  };
 }
 
 function postJson(url, payload, timeoutMs) {
@@ -95,12 +204,13 @@ async function run(args) {
     const callerSessionId = process.env.CLIDECK_SESSION_ID || '';
     if (!callerSessionId) throw new Error('CLIDECK_SESSION_ID is missing. Run this from inside a CliDeck session.');
 
+    const stopProgress = startProgressHints(opts, callerSessionId);
     const res = await postJson(opts.url, {
       callerSessionId,
       target: opts.session,
       message: opts.message,
       timeoutMs: opts.timeoutMs,
-    }, opts.timeoutMs);
+    }, opts.timeoutMs).finally(stopProgress);
     process.stdout.write((res.response || '').trimEnd() + '\n');
   } catch (e) {
     process.stderr.write(`${e.message}\n`);

@@ -1,6 +1,6 @@
 // Prompt Library — manage saved prompts and // trigger autocomplete
 import { state, send } from './state.js';
-import { esc } from './utils.js';
+import { esc, randomUUID } from './utils.js';
 
 // --- Panel rendering ---
 
@@ -160,7 +160,7 @@ function openEditor(idx) {
     if (existing) {
       state.cfg.prompts[idx] = { ...existing, name, text };
     } else {
-      state.cfg.prompts.push({ id: crypto.randomUUID(), name, text });
+      state.cfg.prompts.push({ id: randomUUID(), name, text });
     }
     save();
     closeEditor();

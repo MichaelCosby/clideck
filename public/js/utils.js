@@ -1,3 +1,13 @@
+export function randomUUID() {
+  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  arr[6] = (arr[6] & 0x0f) | 0x40;
+  arr[8] = (arr[8] & 0x3f) | 0x80;
+  const h = [...arr].map(b => b.toString(16).padStart(2, '0'));
+  return `${h.slice(0,4).join('')}-${h.slice(4,6).join('')}-${h.slice(6,8).join('')}-${h.slice(8,10).join('')}-${h.slice(10,16).join('')}`;
+}
+
 export function binName(command) {
   const m = command.match(/^(['"])(.*?)\1/);
   const exec = m ? m[2] : command;
