@@ -8,6 +8,7 @@ const sessions = require('./sessions');
 const themes = require('./themes');
 const presets = JSON.parse(readFileSync(join(__dirname, 'agent-presets.json'), 'utf8'));
 const { listDirs, binName, defaultShell } = require('./utils');
+const { presetForCommand: findPresetForCommand } = require('./preset-utils');
 const { PORT } = require('./runtime');
 for (const p of presets) if (p.presetId === 'shell') p.command = defaultShell;
 function isPresetEnabled(preset) {
@@ -21,7 +22,11 @@ function clientPresets() {
 function filterClientCommands(commands) {
   const allowedPresetIds = new Set(clientPresets().map(p => p.presetId));
   const knownPresetIds = new Set(presets.map(p => p.presetId));
-  return (commands || []).filter(cmd => !cmd.presetId || allowedPresetIds.has(cmd.presetId) || !knownPresetIds.has(cmd.presetId));
+  return (commands || []).filter(cmd => {
+    if (cmd.presetId && !allowedPresetIds.has(cmd.presetId) && knownPresetIds.has(cmd.presetId)) return false;
+    const preset = cmd.presetId ? presets.find(p => p.presetId === cmd.presetId) : null;
+    return !(preset?.available === false && String(cmd.command || '').trim() === String(preset.command || '').trim());
+  });
 }
 const transcript = require('./transcript');
 const plugins = require('./plugin-loader');
@@ -73,15 +78,10 @@ function getInstalledVersion(bin) {
 }
 
 function presetForCommand(cmd) {
-  if (cmd?.presetId) {
-    const preset = presets.find(p => p.presetId === cmd.presetId);
-    if (preset) return preset;
-  }
-  const bin = binName(cmd?.command);
-  return presets.find(p => binName(p.command) === bin);
+  return findPresetForCommand(cmd, presets);
 }
 
-function commandEnv(cmd) {
+function rawCommandEnv(cmd) {
   return cmd?.env && typeof cmd.env === 'object' && !Array.isArray(cmd.env) ? cmd.env : {};
 }
 
@@ -94,16 +94,17 @@ function expandHomePath(value) {
 }
 
 function configRootFor(preset, cmd) {
-  const env = commandEnv(cmd);
+  const env = rawCommandEnv(cmd);
   if (preset?.presetId === 'claude-code') return expandHomePath(env.CLAUDE_CONFIG_DIR) || join(os.homedir(), '.claude');
   if (preset?.presetId === 'codex') return expandHomePath(env.CODEX_HOME) || join(os.homedir(), '.codex');
   if (preset?.presetId === 'gemini-cli') return join(expandHomePath(env.GEMINI_CLI_HOME) || os.homedir(), '.gemini');
+  if (preset?.presetId === 'pi') return expandHomePath(env.PI_CODING_AGENT_DIR) || join(os.homedir(), '.pi', 'agent');
   return os.homedir();
 }
 
-function checkRemoteUpdate(ws) {
+function checkRemoteUpdate(ws, force = false) {
   const now = Date.now();
-  if (remoteUpdateCache && now - remoteUpdateCheckedAt < REMOTE_UPDATE_INTERVAL) {
+  if (!force && remoteUpdateCache && now - remoteUpdateCheckedAt < REMOTE_UPDATE_INTERVAL) {
     ws.send(JSON.stringify({ type: 'remote.update', checked: true, ...remoteUpdateCache }));
     return;
   }
@@ -168,8 +169,22 @@ function hasExistingHook(arr, hookFile, route) {
   return !!arr?.some(h => h.hooks?.some(x => {
     if (!x.command?.includes(hookFile) || !x.command?.includes(` ${route}`)) return false;
     const hookPath = extractQuotedPath(x.command, hookFile);
-    return !!hookPath && existsSync(hookPath);
+    if (!hookPath || !existsSync(hookPath)) return false;
+    const command = String(x.command).replace(/\\/g, '/');
+    const normalizedPath = hookPath.replace(/\\/g, '/');
+    const quotedIdx = command.indexOf(`"${normalizedPath}"`);
+    if (quotedIdx < 0) return false;
+    const suffix = command.slice(quotedIdx + normalizedPath.length + 2).trim().split(/\s+/);
+    return suffix[0] === String(PORT) && suffix[1] === route;
   }));
+}
+
+function hasAnyExistingHook(hooks, hookFile) {
+  return Object.values(hooks || {}).some(arr => arr?.some(h => h.hooks?.some(x => {
+    if (!x.command?.includes(hookFile)) return false;
+    const hookPath = extractQuotedPath(x.command, hookFile);
+    return !!hookPath && existsSync(hookPath);
+  })));
 }
 
 function codexHooksFeatureEnabled(content) {
@@ -197,6 +212,36 @@ function codexConfigLooksHealthy(content, port, codexHome) {
   return !!helperPath && existsSync(helperPath);
 }
 
+function opencodeBridgeLooksHealthy() {
+  const bridgePath = join(opencodePluginDir, 'clideck-bridge.js');
+  if (!existsSync(bridgePath)) return false;
+  try {
+    const content = readFileSync(bridgePath, 'utf8');
+    return content.includes('/opencode-events')
+      && content.includes('CLIDECK_URL')
+      && content.includes('CLIDECK_PORT');
+  } catch {
+    return false;
+  }
+}
+
+function piBridgePath(cmd) {
+  return join(configRootFor({ presetId: 'pi' }, cmd), 'extensions', 'clideck-bridge.ts');
+}
+
+function piBridgeLooksHealthy(cmd) {
+  const bridgePath = piBridgePath(cmd);
+  if (!existsSync(bridgePath)) return false;
+  try {
+    const content = readFileSync(bridgePath, 'utf8');
+    return content.includes('/hook/pi')
+      && content.includes('CLIDECK_SESSION_ID')
+      && content.includes('sessionManager.getSessionId');
+  } catch {
+    return false;
+  }
+}
+
 function detectTelemetryConfig(c) {
   const port = String(PORT);
   let changed = false;
@@ -209,15 +254,23 @@ function detectTelemetryConfig(c) {
       if (!preset) continue;
       let detected = false;
       let reason = '';
+      let repairAllowed = cmd.telemetrySetupConsent === true;
       if (preset.presetId === 'claude-code') {
         try {
           const s = JSON.parse(readFileSync(join(configRootFor(preset, cmd), 'settings.json'), 'utf8'));
           const hooks = s.hooks || {};
+          repairAllowed = repairAllowed || hasAnyExistingHook(hooks, 'claude-hook.js');
           detected = hasExistingHook(hooks.UserPromptSubmit, 'claude-hook.js', 'start')
                   && hasExistingHook(hooks.Stop, 'claude-hook.js', 'stop')
                   && hasExistingHook(hooks.StopFailure, 'claude-hook.js', 'stop')
+                  && hasExistingHook(hooks.SessionStart, 'claude-hook.js', 'session-start')
+                  && hasExistingHook(hooks.SessionEnd, 'claude-hook.js', 'session-end')
                   && hasExistingHook(hooks.PreToolUse, 'claude-hook.js', 'menu')
                   && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && hasExistingHook([h], 'claude-hook.js', 'idle'));
+          if (detected && cmd.telemetrySetupConsent !== true) {
+            cmd.telemetrySetupConsent = true;
+            changed = true;
+          }
           if (!detected) reason = 'Needs re-patch';
         } catch {}
       } else if (preset.presetId === 'codex') {
@@ -238,13 +291,16 @@ function detectTelemetryConfig(c) {
           if (!detected) reason = 'Needs re-patch';
         } catch {}
       } else if (preset.presetId === 'opencode') {
-        detected = existsSync(join(opencodePluginDir, 'clideck-bridge.js')) || existsSync(join(opencodePluginDir, 'termix-bridge.js'));
+        detected = opencodeBridgeLooksHealthy();
+        if (!detected) reason = 'Needs re-patch';
+      } else if (preset.presetId === 'pi') {
+        detected = piBridgeLooksHealthy(cmd);
         if (!detected) reason = 'Needs re-patch';
       } else { continue; }
       if (preset.available && preset.minVersion && !preset.versionOk) {
         detected = false;
         reason = `Update required (${preset.minVersion}+)`;
-      } else if (!detected && cmd.telemetryEnabled && preset.telemetryAutoSetup && preset.available && preset.versionOk && !attemptedRepairs.has(cmd.id || preset.presetId)) {
+      } else if (!detected && cmd.telemetryEnabled && repairAllowed && preset.telemetryAutoSetup && preset.available && preset.versionOk && !attemptedRepairs.has(cmd.id || preset.presetId)) {
         attemptedRepairs.add(cmd.id || preset.presetId);
         const repaired = applyTelemetryConfig(preset, cmd);
         if (repaired.success) {
@@ -275,6 +331,13 @@ function configForClient() {
 
 function remoteCliEnv() {
   return { ...process.env, CLIDECK_PORT: String(PORT) };
+}
+
+function remoteVoiceCapabilityError() {
+  const voicePlugin = plugins.getInfo().find(p => p.id === 'voice-input' && p.installed);
+  return voicePlugin
+    ? 'Restart CliDeck so the Voice Input plugin update can finish loading.'
+    : 'Install the Voice Input plugin in CliDeck first.';
 }
 
 function onConnection(ws) {
@@ -308,27 +371,16 @@ function onConnection(ws) {
         const transcript = require('./transcript');
         const sess = sessions.getSessions().get(msg.id);
         if (sess) {
-          transcript.updateAgentCandidate(msg.id, sess.presetId, msg.lines);
-          if (!sess.working && sess._finalizeOnIdle) {
-            sess._finalizeOnIdle = false;
-            // if (sess.presetId === 'claude-code') {
-            //   console.log(`[claude] terminal.buffer finalize session=${msg.id.slice(0,8)} lines=${msg.lines?.length || 0}`);
-            // }
-            transcript.commitAgentCandidate(msg.id, sess.presetId);
-          }
-          let choices = require('./transcript').detectMenu(msg.lines, sess.presetId);
+          const rawChoices = transcript.detectMenu(msg.lines, sess.presetId);
+          let choices = rawChoices;
           // Codex: only trust menu detection if last OTEL event was response.completed
           if (choices && sess.presetId === 'codex') {
             const last = require('./telemetry-receiver').getLastEvent(msg.id);
             if (!last.startsWith('codex.sse_event:response.completed')) {
-              // console.log(`[codex] menu rejected — lastEvent=${last} session=${msg.id.slice(0,8)}`);
               choices = null;
-            } else {
-              // console.log(`[codex] menu accepted session=${msg.id.slice(0,8)}`);
             }
           }
           if (choices && sess.presetId === 'claude-code' && msg.menuVersion && (sess._menuConsumedVersion || 0) >= msg.menuVersion) {
-            // console.log(`[claude] menu ignored stale version=${msg.menuVersion} consumed=${sess._menuConsumedVersion || 0} session=${msg.id.slice(0,8)}`);
             choices = null;
           }
           let key = choices ? JSON.stringify(choices) : '';
@@ -336,22 +388,28 @@ function onConnection(ws) {
           // Once that exact menu was approved, ignore repeated detections of the
           // same signature until the next real turn starts.
           if (choices && sess.presetId === 'claude-code' && key === (sess._resolvedMenuKey || '')) {
-            // console.log(`[claude] menu ignored resolved key session=${msg.id.slice(0,8)}`);
             choices = null;
             key = '';
+          }
+          const candidateLines = (choices || (rawChoices && sess.presetId === 'claude-code'))
+            ? transcript.stripMenu(msg.lines, sess.presetId)
+            : msg.lines;
+          transcript.updateAgentCandidate(msg.id, sess.presetId, candidateLines);
+          if (!sess.working && sess._finalizeOnIdle) {
+            sess._finalizeOnIdle = false;
+            transcript.commitAgentCandidate(msg.id, sess.presetId);
           }
           // Auto-approve: send Enter immediately when menu detected
           if (choices && plugins.shouldAutoApproveMenu(msg.id)) {
             setTimeout(() => sessions.input({ id: msg.id, data: '\r' }), 500);
           }
+          if (choices) transcript.commitAgentCandidate(msg.id, sess.presetId);
           if (key !== (sess._menuKey || '')) {
             sess._menuKey = key;
+            sess._menuStartsWork = !(sess.presetId === 'claude-code' && !msg.menuVersion);
             sessions.broadcast({ type: 'session.menu', id: msg.id, choices: choices || [] });
             if (choices) {
               if (sess.presetId === 'claude-code' && msg.menuVersion) sess._menuActiveVersion = msg.menuVersion;
-              // if (sess.presetId === 'claude-code') {
-              //   console.log(`[claude] menu detected session=${msg.id.slice(0,8)} choices=${choices.length} version=${msg.menuVersion || 0}`);
-              // }
               plugins.notifyMenu(msg.id, choices);
               if (sess.presetId === 'codex') require('./telemetry-receiver').cancelCodexMenuPoll(msg.id);
               sessions.broadcast({ type: 'session.status', id: msg.id, working: false, source: 'menu' });
@@ -372,6 +430,7 @@ function onConnection(ws) {
         checkAvailability();
         if (detectTelemetryConfig(cfg)) config.save(cfg);
         ws.send(JSON.stringify({ type: 'presets', presets: clientPresets() }));
+        ws.send(JSON.stringify({ type: 'config', config: configForClient() }));
         break;
 
       case 'config.update':
@@ -380,6 +439,7 @@ function onConnection(ws) {
         cfg = { ...cfg, ...msg.config };
         detectTelemetryConfig(cfg);
         config.save(cfg);
+        plugins.notifyConfig(cfg);
         sessions.broadcast({ type: 'config', config: configForClient() });
         break;
 
@@ -393,16 +453,28 @@ function onConnection(ws) {
         const targetCmd = msg.commandId ? cfg.commands.find(c => c.id === msg.commandId) : null;
         const preset = targetCmd ? presetForCommand(targetCmd) : presets.find(p => p.presetId === msg.presetId);
         if (!preset?.telemetryAutoSetup) break;
+        if (preset.available === false) {
+          ws.send(JSON.stringify({
+            type: 'telemetry.autosetup.result',
+            presetId: preset.presetId,
+            commandId: msg.commandId || null,
+            success: false,
+            output: `${preset.name} is not installed`,
+          }));
+          break;
+        }
         const result = applyTelemetryConfig(preset, targetCmd);
         for (const cmd of cfg.commands) {
           if (targetCmd ? cmd.id === targetCmd.id : presetForCommand(cmd)?.presetId === preset.presetId) {
             cmd.telemetryEnabled = result.success;
             cmd.telemetryStatus = result.success ? { ok: true } : { ok: false, error: result.message };
+            if (result.success) cmd.telemetrySetupConsent = true;
             // Enable the agent when setup succeeds, disable if it fails
             if (result.success) cmd.enabled = true;
           }
         }
         config.save(cfg);
+        plugins.notifyConfig(cfg);
         sessions.broadcast({ type: 'config', config: configForClient() });
         ws.send(JSON.stringify({
           type: 'telemetry.autosetup.result',
@@ -429,12 +501,14 @@ function onConnection(ws) {
         for (const cmd of cfg.commands) {
           if (targetCmd ? cmd.id === targetCmd.id : presetForCommand(cmd)?.presetId === preset.presetId) {
             cmd.telemetryEnabled = enable && result.success;
+            cmd.telemetrySetupConsent = enable && result.success;
             cmd.telemetryStatus = enable
               ? (result.success ? { ok: true } : { ok: false, error: result.message })
               : null;
           }
         }
         config.save(cfg);
+        plugins.notifyConfig(cfg);
         sessions.broadcast({ type: 'config', config: configForClient() });
         break;
       }
@@ -629,7 +703,7 @@ function onConnection(ws) {
           try { ws.send(JSON.stringify({ type: 'remote.status', installed: true, ...JSON.parse(stdout) })); }
           catch { ws.send(JSON.stringify({ type: 'remote.status', installed: true })); }
         });
-        checkRemoteUpdate(ws);
+        checkRemoteUpdate(ws, !!msg.forceUpdate);
         break;
       }
 
@@ -658,7 +732,57 @@ function onConnection(ws) {
         break;
       }
 
+      case 'remote.voice.transcribe': {
+        const requestId = String(msg.requestId || '');
+        const replyError = (error) => ws.send(JSON.stringify({ type: 'remote.voice.error', requestId, error }));
+        if (!plugins.hasCapability('voice-input', 'transcribeAudio')) {
+          replyError(remoteVoiceCapabilityError());
+          break;
+        }
+        if (typeof msg.audio !== 'string' || !msg.audio) {
+          replyError('No audio received.');
+          break;
+        }
+        plugins.invoke('voice-input', 'transcribeAudio', { audio: msg.audio })
+          .then(result => ws.send(JSON.stringify({ type: 'remote.voice.result', requestId, ...result })))
+          .catch(e => replyError(e.message || 'Voice transcription failed.'));
+        break;
+      }
+
+      case 'remote.voice.send': {
+        const requestId = String(msg.requestId || '');
+        const id = String(msg.id || '');
+        const replyError = (error) => ws.send(JSON.stringify({ type: 'remote.voice.error', requestId, error }));
+        if (!plugins.hasCapability('voice-input', 'transcribeAudio')) {
+          replyError(remoteVoiceCapabilityError());
+          break;
+        }
+        if (!id || !sessions.getSessions().has(id)) {
+          replyError('Session is not available.');
+          break;
+        }
+        if (typeof msg.audio !== 'string' || !msg.audio) {
+          replyError('No audio received.');
+          break;
+        }
+        plugins.invoke('voice-input', 'transcribeAudio', { audio: msg.audio })
+          .then(result => {
+            const text = String(result?.text || '').trim();
+            if (!text) {
+              ws.send(JSON.stringify({ type: 'remote.voice.sent', requestId, id, skipped: true }));
+              return;
+            }
+            sessions.input({ id, data: text });
+            setTimeout(() => sessions.input({ id, data: '\r' }), 150);
+            ws.send(JSON.stringify({ type: 'remote.voice.sent', requestId, id, text }));
+          })
+          .catch(e => replyError(e.message || 'Voice transcription failed.'));
+        break;
+      }
+
       case 'remote.install': {
+        const update = !!msg.update;
+        const restartAfterUpdate = !!msg.restart;
         const proc = require('child_process').spawn('npm', ['install', '-g', 'clideck-remote'], {
           shell: true, stdio: ['ignore', 'pipe', 'pipe'],
         });
@@ -666,7 +790,19 @@ function onConnection(ws) {
         proc.stderr.on('data', d => ws.send(JSON.stringify({ type: 'remote.install.progress', text: d.toString() })));
         proc.on('close', code => {
           remoteUpdateCache = null;
-          ws.send(JSON.stringify({ type: 'remote.install.done', success: code === 0 }));
+          if (code !== 0 || !update || !restartAfterUpdate) {
+            ws.send(JSON.stringify({ type: 'remote.install.done', success: code === 0, update, restarted: false }));
+            return;
+          }
+          require('child_process').execFile('clideck-remote', ['restart', '--json'], { timeout: 10000, shell: process.platform === 'win32', env: remoteCliEnv() }, (err, stdout) => {
+            if (err) {
+              ws.send(JSON.stringify({ type: 'remote.install.done', success: false, update, error: err.message }));
+              return;
+            }
+            let restart = null;
+            try { restart = JSON.parse(stdout); } catch {}
+            ws.send(JSON.stringify({ type: 'remote.install.done', success: true, update, restart }));
+          });
         });
         break;
       }
@@ -695,18 +831,28 @@ function applyTelemetryConfig(preset, cmd = null) {
       const hookCmd = (route) => `"${process.execPath.replace(/\\/g, '/')}" "${join(__dirname, 'bin', 'claude-hook.js').replace(/\\/g, '/')}" ${port} ${route}`;
       const clideckHook = (route) => ({ hooks: [{ type: 'command', command: hookCmd(route) }] });
       const hasClideck = (arr, path) => arr?.some(h => h.hooks?.some(x => x.command === hookCmd(path)));
-      if (hasClideck(hooks.UserPromptSubmit, 'start') && hasClideck(hooks.Stop, 'stop') && hasClideck(hooks.StopFailure, 'stop') && hasClideck(hooks.PreToolUse, 'menu') && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && h.hooks?.some(x => x.command === hookCmd('idle')))) {
+      if (hasClideck(hooks.UserPromptSubmit, 'start')
+          && hasClideck(hooks.Stop, 'stop')
+          && hasClideck(hooks.StopFailure, 'stop')
+          && hasClideck(hooks.SessionStart, 'session-start')
+          && hasClideck(hooks.SessionEnd, 'session-end')
+          && hasClideck(hooks.PreToolUse, 'menu')
+          && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && h.hooks?.some(x => x.command === hookCmd('idle')))) {
         return { success: true, message: 'Already configured' };
       }
       const stripOld = (arr) => (arr || []).filter(h => !h.hooks?.some(x => x.url?.includes('/hook/claude/') || x.command?.includes('claude-hook.js')));
       hooks.UserPromptSubmit = stripOld(hooks.UserPromptSubmit);
       hooks.Stop = stripOld(hooks.Stop);
       hooks.StopFailure = stripOld(hooks.StopFailure);
+      hooks.SessionStart = stripOld(hooks.SessionStart);
+      hooks.SessionEnd = stripOld(hooks.SessionEnd);
       hooks.PreToolUse = stripOld(hooks.PreToolUse);
       hooks.Notification = stripOld(hooks.Notification);
       if (!hasClideck(hooks.UserPromptSubmit, 'start')) hooks.UserPromptSubmit = [...(hooks.UserPromptSubmit || []), clideckHook('start')];
       if (!hasClideck(hooks.Stop, 'stop')) hooks.Stop = [...(hooks.Stop || []), clideckHook('stop')];
       if (!hasClideck(hooks.StopFailure, 'stop')) hooks.StopFailure = [...(hooks.StopFailure || []), clideckHook('stop')];
+      if (!hasClideck(hooks.SessionStart, 'session-start')) hooks.SessionStart = [...(hooks.SessionStart || []), clideckHook('session-start')];
+      if (!hasClideck(hooks.SessionEnd, 'session-end')) hooks.SessionEnd = [...(hooks.SessionEnd || []), clideckHook('session-end')];
       if (!hasClideck(hooks.Notification, 'idle')) hooks.Notification = [...(hooks.Notification || []), { matcher: 'idle_prompt', ...clideckHook('idle') }];
       if (!hasClideck(hooks.PreToolUse, 'menu')) hooks.PreToolUse = [...(hooks.PreToolUse || []), clideckHook('menu')];
       settings.hooks = hooks;
@@ -783,6 +929,14 @@ function applyTelemetryConfig(preset, cmd = null) {
       return { success: true, message: `Installed bridge plugin to ${opencodePluginDir}` };
     }
 
+    if (preset.presetId === 'pi') {
+      const src = join(__dirname, 'pi-extension', 'clideck-bridge.ts');
+      const dest = piBridgePath(cmd);
+      mkdirSync(dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
+      return { success: true, message: `Installed Pi extension to ${dest}` };
+    }
+
     return { success: false, message: `No auto-setup for ${preset.presetId}` };
   } catch (err) {
     return { success: false, message: err.message };
@@ -797,7 +951,7 @@ function removeTelemetryConfig(preset, cmd = null) {
       let settings = {};
       try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
       if (!settings.hooks) return { success: true, message: 'No hooks to remove' };
-      for (const event of ['UserPromptSubmit', 'Stop', 'StopFailure', 'Notification', 'PreToolUse']) {
+      for (const event of ['UserPromptSubmit', 'Stop', 'StopFailure', 'SessionStart', 'SessionEnd', 'Notification', 'PreToolUse']) {
         const arr = settings.hooks[event];
         if (!arr) continue;
         settings.hooks[event] = arr.filter(h => !h.hooks?.some(x => x.url?.includes('/hook/claude/') || x.command?.includes('claude-hook.js')));
@@ -842,6 +996,11 @@ function removeTelemetryConfig(preset, cmd = null) {
       try { unlinkSync(join(opencodePluginDir, 'clideck-bridge.js')); } catch {}
       try { unlinkSync(join(opencodePluginDir, 'termix-bridge.js')); } catch {}
       return { success: true, message: 'Removed bridge plugin' };
+    }
+
+    if (preset.presetId === 'pi') {
+      try { unlinkSync(piBridgePath(cmd)); } catch {}
+      return { success: true, message: 'Removed Pi extension' };
     }
 
     return { success: false, message: `No removal logic for ${preset.presetId}` };

@@ -244,28 +244,38 @@ module.exports = {
       return { text: data.text || '', language: data.language || 'unknown', avg_logprob: null };
     }
 
+    // --- Transcription API ---
+
+    async function transcribeAudio(audio) {
+      if (!api.getSetting('enabled')) {
+        throw new Error('Enable the Voice Input plugin in CliDeck first.');
+      }
+      const backend = api.getSetting('backend');
+      let result;
+      if (backend === 'local') {
+        if (!worker) await startLocal();
+        if (!worker) throw new Error('Local model not running. Enable plugin with local backend to start.');
+        result = await workerCmd('transcribe', {
+          audio,
+          lang: api.getSetting('language') || 'auto',
+        });
+      } else {
+        result = await transcribeOpenAI(audio);
+      }
+
+      const text = processText(result.text || '');
+      if (!text) return { text: '', skipped: true };
+      return { text, language: result.language, inferenceTime: result.inference_time };
+    }
+
+    api.expose('transcribeAudio', ({ audio }) => transcribeAudio(audio));
+
     // --- Message handlers ---
 
     api.onFrontendMessage('transcribe', async (msg) => {
-      const backend = api.getSetting('backend');
       try {
-        let result;
-        if (backend === 'local') {
-          if (!worker) { api.sendToFrontend('error', { error: 'Local model not running. Enable plugin with local backend to start.' }); return; }
-          result = await workerCmd('transcribe', {
-            audio: msg.audio,
-            lang: api.getSetting('language') || 'auto',
-          });
-        } else {
-          result = await transcribeOpenAI(msg.audio);
-        }
-
-        const text = processText(result.text || '');
-        if (!text) {
-          api.sendToFrontend('result', { text: '', skipped: true, sessionId: msg.sessionId });
-          return;
-        }
-        api.sendToFrontend('result', { text, language: result.language, inferenceTime: result.inference_time, sessionId: msg.sessionId });
+        const result = await transcribeAudio(msg.audio);
+        api.sendToFrontend('result', { ...result, sessionId: msg.sessionId });
       } catch (e) {
         api.log(`transcribe: ${e.message}`);
         api.sendToFrontend('error', { error: e.message });

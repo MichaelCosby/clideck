@@ -4,6 +4,7 @@
 import { handleTerminalKey } from './prompts.js';
 
 const registry = new Map(); // normalized combo → { pluginId, callback }
+const MAX_OSC52_BYTES = 512 * 1024;
 
 // Normalize a KeyboardEvent into a canonical combo string
 function normalizeEvent(e) {
@@ -58,6 +59,7 @@ function dispatch(e) {
 // Catch keys outside terminals — skip text inputs
 document.addEventListener('keydown', (e) => {
   if (isInput(e.target)) return;
+  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === 'KeyK') return;
   dispatch(e);
 }, true);
 
@@ -83,10 +85,35 @@ export function unregisterAllForPlugin(pluginId) {
   }
 }
 
+function decodeOsc52(data) {
+  const parts = String(data || '').split(';');
+  if (parts.length < 2) return '';
+  const encoded = parts.slice(1).join(';').trim();
+  if (!encoded || encoded === '?') return '';
+  if (encoded.length > MAX_OSC52_BYTES) return '';
+  try {
+    const binary = atob(encoded);
+    const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+function attachClipboardOscHandler(term) {
+  if (!term.parser?.registerOscHandler) return;
+  term.parser.registerOscHandler(52, (data) => {
+    const text = decodeOsc52(data);
+    if (!text || !navigator.clipboard?.writeText) return false;
+    return navigator.clipboard.writeText(text).then(() => true, () => false);
+  });
+}
+
 // Attach to an xterm terminal instance — xterm's hidden textarea is an input,
 // so we bypass the isInput check and dispatch directly.
 // Prompt autocomplete (// trigger) runs first, then hotkey dispatch.
 export function attachToTerminal(term, presetId) {
+  attachClipboardOscHandler(term);
   term.attachCustomKeyEventHandler((e) => {
     if (e.type === 'keydown'
       && e.ctrlKey
@@ -112,6 +139,16 @@ export function attachToTerminal(term, presetId) {
       && !e.metaKey) {
       e.preventDefault();
       term.input('\x1b[13;2u');
+      return false;
+    }
+    if (e.type === 'keydown'
+      && e.ctrlKey
+      && !e.metaKey
+      && !e.altKey
+      && !e.shiftKey
+      && e.code === 'KeyK') {
+      e.preventDefault();
+      term.input('\x0b');
       return false;
     }
     const promptResult = handleTerminalKey(e);

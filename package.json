@@ -1,6 +1,6 @@
 {
   "name": "clideck",
-  "version": "1.31.11",
+  "version": "1.31.20",
   "description": "One screen for all your AI coding agents — run, monitor, and manage multiple CLI agents from a single browser tab",
   "main": "server.js",
   "bin": {
@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node server.js",
     "build:css": "tailwindcss -i src/input.css -o public/tailwind.css --minify",
-    "prepublishOnly": "npm run build:css"
+    "prepublishOnly": "npm run build:css",
+    "smoke:providers": "node tests/providers/run.js",
+    "smoke:menu": "node tests/providers/menu-detection.test.js"
   },
   "keywords": [
     "terminal",

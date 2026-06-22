@@ -2,7 +2,8 @@
 // CLI agents export telemetry events here; we capture agent session IDs
 // (for resume) and detect whether telemetry is configured (setup prompts).
 
-const ioActivity = require('./activity');
+const { updateClaudeSessionToken } = require('./claude-session');
+
 const activity = new Map(); // sessionId → has received events
 const lastEvent = new Map(); // sessionId → last OTEL event name (+ kind)
 const pendingSetup = new Map(); // sessionId → timer (waiting for first event)
@@ -10,6 +11,10 @@ const codexMenuPoll = new Map(); // sessionId → interval (polling for menu aft
 const codexPendingStop = new Map(); // sessionId → ts (notify hook arrived; wait for next response.completed)
 const codexOutputDone = new Map(); // sessionId → ts (fallback if notify never fires)
 const codexPendingIdle = new Map(); // sessionId → timer (tiny settle before committing idle)
+// Codex does not currently expose one reliable "fully idle" signal across streamed
+// output, tool calls, and approval menus. This state machine is the best available
+// approach for now; do not add more timing patches without fixture tests from real
+// Codex event sequences.
 const codexToolPhasePending = new Set(); // sessionId set once Codex has announced a tool-call phase, cleared when the phase resolves
 const codexPendingTools = new Map(); // sessionId → Set(callId) for approved Codex tool calls still awaiting a result
 let broadcastFn = null;
@@ -206,6 +211,10 @@ function handleLogs(req, res) {
           ? attrs['conversation.id']
           : (attrs['session.id'] || attrs['conversation.id']);
         if (agentSessionId && sess) {
+          if (serviceName === 'claude-code') {
+            updateClaudeSessionToken(sess, agentSessionId, resolvedId, { label: 'Telemetry' });
+            continue;
+          }
           // Prefer interactive session ID (Gemini sends non-interactive init events first)
           const dominated = sess.sessionToken && attrs['interactive'] === true;
           if (!sess.sessionToken || dominated) {
@@ -274,14 +283,6 @@ function markCodexStart(id, source = 'hook') {
   broadcastFn?.({ type: 'session.status', id, working: true, source });
 }
 
-function markCodexIdle(id, source = 'hook') {
-  codexPendingStop.delete(id);
-  codexOutputDone.delete(id);
-  codexToolPhasePending.delete(id);
-  clearPendingTools(id);
-  scheduleCodexIdle(id, source);
-}
-
 function scheduleCodexIdle(id, source) {
   cancelCodexPendingIdle(id);
   const timer = setTimeout(() => {
@@ -311,9 +312,4 @@ function clear(id) {
 
 function getLastEvent(id) { return lastEvent.get(id) || ''; }
 
-// Returns true if we've received telemetry events for this session
-function hasEvents(id) {
-  return activity.has(id);
-}
-
-module.exports = { init, handleLogs, clear, hasEvents, getLastEvent, cancelCodexMenuPoll, watchSession, armCodexStop, markCodexStart, markCodexIdle };
+module.exports = { init, handleLogs, clear, getLastEvent, cancelCodexMenuPoll, watchSession, armCodexStop, markCodexStart };

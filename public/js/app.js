@@ -1,6 +1,6 @@
 import { state, send, flushQueuedSends } from './state.js';
 import { esc, binName, resolveIconPath, randomUUID } from './utils.js';
-import { addTerminal, removeTerminal, select, startRename, startProjectRename, setSessionTheme, openMenu, closeMenu, setStatus, updateMuteIndicator, updatePreview, markUnread, applyFilter, setTab, renderResumable, regroupSessions, toggleProjectCollapse, setSessionProject, estimateSize, restartComplete, positionMenu, addPill, updatePill, removePill, appendPillLog, setPillLogs, closePillLog } from './terminals.js';
+import { addTerminal, removeTerminal, select, startRename, startProjectRename, setSessionTheme, openMenu, closeMenu, setStatus, updateMuteIndicator, updatePreview, markUnread, applyFilter, setTab, renderResumable, regroupSessions, toggleProjectCollapse, setSessionProject, estimateSize, restartComplete, positionMenu, addPill, updatePill, removePill, appendPillLog, setPillLogs, closePillLog, addTerminalInputAction, removeTerminalInputActionsForPlugin, trackTerminalInputData } from './terminals.js';
 import { renderSettings, updateVersionFooter } from './settings.js';
 import { openCreator, closeCreator, refreshCreator } from './creator.js';
 import { handleDirsResponse, handleMkdirResponse, openFolderPicker } from './folder-picker.js';
@@ -46,7 +46,7 @@ function connect() {
     reconnectReplaySkip = new Set(state.terms.keys());
     setServerConnectionState(true);
     flushQueuedSends();
-    send({ type: 'remote.status' });
+    send({ type: 'remote.status', forceUpdate: true });
   };
 
   state.ws.onmessage = ({ data }) => {
@@ -89,7 +89,7 @@ function connect() {
           for (const id of [...state.terms.keys()]) {
             if (!liveIds.has(id)) removeTerminal(id);
           }
-          msg.list.forEach(s => addTerminal(s.id, s.name, s.themeId, s.commandId, s.projectId, s.muted, s.lastPreview, s.presetId));
+          msg.list.forEach(s => addTerminal(s.id, s.name, s.themeId, s.commandId, s.projectId, s.muted, s.lastPreview, s.presetId, s.working));
           if (!state.active || !state.terms.has(state.active)) {
             const savedActive = localStorage.getItem('clideck.activeSessionId');
             const nextId = savedActive && liveIds.has(savedActive) ? savedActive : msg.list[0]?.id;
@@ -99,7 +99,7 @@ function connect() {
         break;
       case 'created':
         expandProjectForNewSession(msg.projectId);
-        if (!state.terms.has(msg.id)) addTerminal(msg.id, msg.name, msg.themeId, msg.commandId, msg.projectId, msg.muted, msg.lastPreview, msg.presetId);
+        if (!state.terms.has(msg.id)) addTerminal(msg.id, msg.name, msg.themeId, msg.commandId, msg.projectId, msg.muted, msg.lastPreview, msg.presetId, msg.working);
         select(msg.id);
         applyFilter();
         closeMobileSidebar();
@@ -395,10 +395,13 @@ function connect() {
         appendInstallLog(msg.text);
         break;
       case 'remote.install.done':
-        handleInstallDone(msg.success);
+        handleInstallDone(msg);
         break;
       case 'remote.update':
         remoteUpdateInfo = msg?.available ? msg : null;
+        if (remoteUpdateInfo?.available && remoteInstalled && !remoteInstallMode) {
+          startRemoteInstall({ update: true, auto: true, connectAfter: remoteState === 'waiting' || remoteState === 'paired' || remoteModalOpen });
+        }
         if (remotePreflight?.pending) {
           remotePreflight.updateSeen = true;
           finishRemotePreflight();
@@ -534,9 +537,20 @@ document.getElementById('btn-new-project').addEventListener('click', () => {
 });
 
 // Search & filter toolbar
-document.getElementById('search-input').addEventListener('input', (e) => {
-  state.filter.query = e.target.value;
+const searchInput = document.getElementById('search-input');
+const searchClear = document.getElementById('search-clear');
+function setSearchQuery(value, focus = false) {
+  searchInput.value = value;
+  state.filter.query = value;
+  searchClear.classList.toggle('hidden', !value);
   applyFilter();
+  if (focus) searchInput.focus();
+}
+searchInput.addEventListener('input', (e) => {
+  setSearchQuery(e.target.value);
+});
+searchClear.addEventListener('click', () => {
+  setSearchQuery('', true);
 });
 document.querySelectorAll('.filter-tab').forEach(btn => {
   btn.addEventListener('click', () => setTab(btn.dataset.tab));
@@ -1072,6 +1086,7 @@ async function loadPlugins(list) {
   for (const id of loadedPlugins) {
     if (!activeIds.has(id)) {
       unregisterAllForPlugin(id);
+      removeTerminalInputActionsForPlugin(id);
       for (const [key] of pluginMessageHandlers) {
         if (key.startsWith(`plugin.${id}.`)) pluginMessageHandlers.delete(key);
       }
@@ -1124,9 +1139,10 @@ async function loadPlugins(list) {
           send(event, data = {}) { send({ ...data, type: `plugin.${plugin.id}.${event}` }); },
           onMessage(event, fn) { pluginMessageHandlers.set(`plugin.${plugin.id}.${event}`, fn); },
           addToolbarButton(opts) { return addPluginToolbarButton(plugin.id, opts); },
+          addTerminalInputButton(opts) { return addTerminalInputAction(plugin.id, opts); },
           getActiveSessionId() { return state.active; },
           getTerminalSelection() { const e = state.terms.get(state.active); return e ? e.term.getSelection() : ''; },
-          writeToSession(id, text) { send({ type: 'input', id, data: text }); },
+          writeToSession(id, text) { trackTerminalInputData(id, text); send({ type: 'input', id, data: text }); },
           toast(message, opts) { return showToast(message, opts); },
           registerHotkey(combo, callback) { return registerHotkey(plugin.id, combo, callback); },
           unregisterHotkey(combo) { unregisterHotkey(plugin.id, combo); },
@@ -1222,6 +1238,7 @@ let remoteStatsTimer = null;
 let remoteUpdateInfo = null;
 let remotePreflight = null;
 let remoteLastStatus = null;
+let remoteInstallMode = null;
 
 function startRemotePoll() {
   stopRemotePoll();
@@ -1241,25 +1258,32 @@ function setRemotePane(pane) {
   }
 }
 
+function remoteTitle() {
+  const version = state.remoteVersion && state.remoteVersion !== 'not installed'
+    ? ` v${state.remoteVersion}`
+    : '';
+  return `Mobile Remote${version}`;
+}
+
+function updateRemoteTitle() {
+  const title = remoteTitle();
+  const modalTitle = document.getElementById('remote-modal-title');
+  const introTitle = document.getElementById('remote-intro-title');
+  if (modalTitle) modalTitle.textContent = title;
+  if (introTitle) introTitle.textContent = `CliDeck ${title}`;
+}
+
 function showRemoteIntro(opts = {}) {
   const title = document.getElementById('remote-intro-title');
   const text = document.getElementById('remote-intro-text');
   const foot = document.getElementById('remote-intro-foot');
   const btn = document.getElementById('remote-add');
-  title.textContent = opts.title || 'CliDeck Mobile Remote';
+  updateRemoteTitle();
+  if (opts.title) title.textContent = opts.title;
   text.textContent = opts.text || 'Control your AI agents from your phone. See live status, send messages, and get notifications — all end-to-end encrypted.';
   foot.innerHTML = opts.foot || 'Installs the <code class="text-slate-500">clideck-remote</code> package via npm';
   btn.textContent = opts.button || 'Add to CliDeck';
   setRemotePane('intro');
-}
-
-function showRemoteUpdateRequired() {
-  showRemoteIntro({
-    title: 'Update Required',
-    text: `Version ${remoteUpdateInfo.latest} is available. Update CliDeck Remote to continue with mobile pairing on this machine.`,
-    foot: `Installed: <code class="text-slate-500">${esc(remoteUpdateInfo.installed)}</code> · Latest: <code class="text-slate-500">${esc(remoteUpdateInfo.latest)}</code>`,
-    button: 'Update to Continue',
-  });
 }
 
 function finishRemotePreflight() {
@@ -1270,7 +1294,7 @@ function finishRemotePreflight() {
     return;
   }
   if (remoteUpdateInfo?.available) {
-    showRemoteUpdateRequired();
+    startRemoteInstall({ update: true, auto: true, connectAfter: true });
     return;
   }
   if (remoteState === 'idle') {
@@ -1302,6 +1326,7 @@ function finishRemotePreflight() {
 }
 
 function openRemoteModal() {
+  updateRemoteTitle();
   remoteModalOpen = true;
   remoteModal.classList.remove('hidden');
   remoteModal.style.display = 'flex';
@@ -1392,6 +1417,7 @@ function handleRemoteStatus(msg) {
   remoteLastStatus = msg;
   remoteInstalled = !!msg.installed;
   state.remoteVersion = msg.version || (msg.installed ? null : 'not installed');
+  updateRemoteTitle();
   updateVersionFooter();
   const wasPaired = remoteState === 'paired';
   const preflighting = !!remotePreflight?.pending;
@@ -1429,8 +1455,9 @@ function handleRemoteStatus(msg) {
     stopRemotePoll();
     if (wasPaired) { stopRemoteStats(); setRemoteLock(false); }
   }
-  if (remoteUpdateInfo?.available && remoteModalOpen) {
-    showRemoteUpdateRequired();
+  if (remoteUpdateInfo?.available && remoteInstalled && !remoteInstallMode) {
+    startRemoteInstall({ update: true, auto: true, connectAfter: remoteState === 'waiting' || remoteState === 'paired' || remoteModalOpen });
+    return;
   }
   updateRemoteButton();
   if (remotePreflight?.pending) {
@@ -1448,8 +1475,8 @@ function handleRemotePaired(msg) {
   else qrImg.classList.add('hidden');
   updateRemoteButton();
   startRemotePoll();
-  if (remoteUpdateInfo?.available && remoteModalOpen) {
-    showRemoteUpdateRequired();
+  if (remoteUpdateInfo?.available && remoteInstalled && !remoteInstallMode) {
+    startRemoteInstall({ update: true, auto: true, connectAfter: true });
     return;
   }
   if (remotePreflight?.pending) {
@@ -1483,18 +1510,54 @@ function appendInstallLog(text) {
   log.scrollTop = log.scrollHeight;
 }
 
-function handleInstallDone(success) {
+function startRemoteInstall(opts = {}) {
+  const update = !!opts.update;
+  const auto = !!opts.auto;
+  const connectAfter = opts.connectAfter !== undefined
+    ? !!opts.connectAfter
+    : (!auto || remoteModalOpen || remoteState === 'waiting' || remoteState === 'paired');
+  remoteInstallMode = { update, auto, connectAfter };
+  const log = document.getElementById('remote-install-log');
+  log.textContent = '';
+  if (remoteInstallMode.update) {
+    appendInstallLog(`Updating clideck-remote to ${remoteUpdateInfo?.latest || 'latest'}...\n`);
+  }
+  setRemotePane('installing');
+  if (!remoteModalOpen && remoteInstallMode.connectAfter) openRemoteModal();
+  send({ type: 'remote.install', update: remoteInstallMode.update, restart: remoteInstallMode.connectAfter });
+}
+
+function handleInstallDone(msg) {
+  const success = !!msg?.success;
+  const wasUpdate = !!msg?.update || !!remoteInstallMode?.update;
+  const mode = remoteInstallMode || {};
+  remoteInstallMode = null;
   if (success) {
     remoteInstalled = true;
     remoteUpdateInfo = null;
+    if (wasUpdate) {
+      if (!mode.connectAfter && !msg?.restart) {
+        send({ type: 'remote.status', forceUpdate: true });
+        updateRemoteButton();
+        return;
+      }
+      remoteState = 'connecting';
+      setRemotePane('connecting');
+      send({ type: 'remote.status', forceUpdate: true });
+      startRemotePoll();
+      return;
+    }
     // Installed — go straight to pairing
     remoteState = 'connecting';
     setRemotePane('connecting');
     send({ type: 'remote.pair' });
   } else {
     const log = document.getElementById('remote-install-log');
-    log.textContent += '\n— Install failed. Check permissions or run manually:\n  npm install -g clideck-remote\n';
+    log.textContent += `\n— ${msg?.error || 'Install failed'}. Check permissions or run manually:\n  npm install -g clideck-remote\n`;
     log.scrollTop = log.scrollHeight;
+    if (!remoteModalOpen) {
+      showToast('Mobile Remote update failed. Run `npm install -g clideck-remote` manually.', { type: 'error', duration: 6000 });
+    }
   }
 }
 
@@ -1511,14 +1574,12 @@ btnRemote.addEventListener('click', () => {
   remotePreflight = { pending: true, statusSeen: false, updateSeen: false };
   setRemotePane('connecting');
   openRemoteModal();
-  send({ type: 'remote.status' });
+  send({ type: 'remote.status', forceUpdate: true });
 });
 
 // Install button
 document.getElementById('remote-add').addEventListener('click', () => {
-  document.getElementById('remote-install-log').textContent = '';
-  setRemotePane('installing');
-  send({ type: 'remote.install' });
+  startRemoteInstall({ update: !!(remoteInstalled && remoteUpdateInfo?.available) });
 });
 
 // Close / disconnect

@@ -8,6 +8,7 @@ sessions.json
 data/
 
 # Dev / repo files
+tests/
 .claude/
 .clideck/
 .git/
@@ -18,3 +19,7 @@ npm-debug.log*
 
 # Workplans
 workplan-*.txt
+
+# Local Codex skill experiments
+skills/autonomous-session/
+skills/research-experiment/

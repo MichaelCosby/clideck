@@ -21,6 +21,7 @@ export function initDrag() {
     // Project drag — grab by the header
     const projHeader = e.target.closest('.project-header');
     if (projHeader) {
+      if (document.querySelectorAll('.project-group').length <= 1) return;
       const group = projHeader.closest('.project-group');
       const rect = group.getBoundingClientRect();
       dragState = {

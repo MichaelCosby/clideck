@@ -55,7 +55,6 @@ const statusHooks = [];
 const transcriptHooks = [];
 const menuHooks = [];
 const configHooks = [];
-const pluginRoutes = []; // { pluginId, method, path, fn }
 const sessionStatus = new Map(); // sessionId → boolean (dedup multi-client reports)
 const autoApproveMenus = new Set(); // sessionIds where menus should be auto-approved
 const frontendHandlers = new Map();
@@ -68,15 +67,19 @@ let createSessionFn = null;
 let closeSessionFn = null;
 const settingsChangeHandlers = new Map(); // pluginId → [fn]
 const sessionPills = new Map(); // pillId → { pluginId, id, title, projectId, working, statusText, icon, logs[] }
+const backendHandlers = new Map(); // pluginId.name → fn
 
 function removeHooks(pluginId) {
-  for (const arr of [inputHooks, outputHooks, statusHooks, transcriptHooks, menuHooks, configHooks, pluginRoutes]) {
+  for (const arr of [inputHooks, outputHooks, statusHooks, transcriptHooks, menuHooks, configHooks]) {
     for (let i = arr.length - 1; i >= 0; i--) {
       if (arr[i].pluginId === pluginId) arr.splice(i, 1);
     }
   }
   for (const key of frontendHandlers.keys()) {
     if (key.startsWith(`plugin.${pluginId}.`)) frontendHandlers.delete(key);
+  }
+  for (const key of backendHandlers.keys()) {
+    if (key.startsWith(`${pluginId}.`)) backendHandlers.delete(key);
   }
   settingsChangeHandlers.delete(pluginId);
   for (const [id, pill] of sessionPills) {
@@ -196,13 +199,16 @@ function buildApi(pluginId, pluginDir, state) {
     onTranscriptEntry(fn) { transcriptHooks.push({ pluginId, fn }); },
     onMenuDetected(fn) { menuHooks.push({ pluginId, fn }); },
     onConfigChange(fn) { configHooks.push({ pluginId, fn }); },
-    addRoute(method, path, fn) { pluginRoutes.push({ pluginId, method: method.toUpperCase(), path, fn }); },
-
     sendToFrontend(event, data = {}) {
       broadcastFn?.({ ...data, type: `plugin.${pluginId}.${event}` });
     },
     onFrontendMessage(event, fn) {
       frontendHandlers.set(`plugin.${pluginId}.${event}`, fn);
+    },
+    expose(name, fn) {
+      if (typeof name === 'string' && name && typeof fn === 'function') {
+        backendHandlers.set(`${pluginId}.${name}`, fn);
+      }
     },
 
     getSession(id) {
@@ -425,27 +431,25 @@ function handleMessage(msg) {
   return true;
 }
 
-function handlePluginRoute(req, res) {
-  const method = req.method.toUpperCase();
-  const urlPath = req.url.split('?')[0];
-  const handler = pluginRoutes.find(r => r.method === method && r.path === urlPath);
-  if (!handler) return false;
-  let body = '';
-  req.on('data', chunk => { body += chunk; if (body.length > 1e5) req.destroy(); });
-  req.on('end', () => {
-    let parsed = null;
-    try { parsed = body ? JSON.parse(body) : null; } catch {}
-    try { handler.fn(req, res, parsed); }
-    catch (e) {
-      console.error(`[plugin:${handler.pluginId}] route error: ${e.message}`);
-      if (!res.headersSent) res.writeHead(500).end('{}');
-    }
-  });
-  return true;
+function hasCapability(pluginId, name) {
+  return backendHandlers.has(`${pluginId}.${name}`);
+}
+
+async function invoke(pluginId, name, data = {}) {
+  const key = `${pluginId}.${name}`;
+  const fn = backendHandlers.get(key);
+  if (!fn) throw new Error(`Plugin capability not available: ${key}`);
+  return await fn(data);
 }
 
 function getInfo() {
   const cfg = getConfigFn?.();
+  const capabilitiesFor = (pluginId) => {
+    const prefix = `${pluginId}.`;
+    return [...backendHandlers.keys()]
+      .filter(k => k.startsWith(prefix))
+      .map(k => k.slice(prefix.length));
+  };
   const installed = [...plugins.values()].map(p => ({
     id: p.manifest.id,
     name: p.manifest.name,
@@ -457,6 +461,7 @@ function getInfo() {
     settingValues: cfg?.pluginSettings?.[p.manifest.id] || {},
     dynamicOptions: p.dynamicOptions || {},
     actions: p.actions,
+    capabilities: capabilitiesFor(p.manifest.id),
     hasClient: existsSync(join(p.dir, 'client.js')),
     bundled: BUNDLED_IDS.has(p.manifest.id),
     installed: true,
@@ -473,6 +478,7 @@ function getInfo() {
     settingValues: {},
     dynamicOptions: {},
     actions: [],
+    capabilities: [],
     hasClient: false,
     bundled: BUNDLED_IDS.has(u.manifest.id),
     installed: false,
@@ -579,52 +585,10 @@ function removePlugin(pluginId) {
   return { success: true };
 }
 
-// Unload a plugin from runtime without touching the filesystem.
-// Used before an update so the plugin directory can be replaced on disk.
-function unloadPlugin(pluginId) {
-  const state = plugins.get(pluginId);
-  if (!state) return;
-  for (const fn of state.shutdownFns) { try { fn(); } catch {} }
-  removeHooks(pluginId);
-  plugins.delete(pluginId);
-  try { delete require.cache[require.resolve(join(state.dir, 'index.js'))]; } catch {}
-}
-
-// Load a plugin from an arbitrary directory on disk (used after a GitHub install/update).
-// Runs npm install if the manifest declares it and node_modules is absent.
-function loadFromDir(dir, callback) {
-  const name = require('path').basename(dir);
-  const manifest = readManifest(dir, name);
-  if (!manifest) return callback(new Error('Invalid or missing clideck-plugin.json'));
-  if (!manifest.id) return callback(new Error('Plugin manifest is missing an id field'));
-  if (plugins.has(manifest.id)) return callback(new Error(`Plugin "${manifest.id}" is already loaded`));
-
-  const finish = () => {
-    const cfg = getConfigFn?.();
-    if (cfg && manifest.install) {
-      if (!cfg.pluginInstalled) cfg.pluginInstalled = {};
-      cfg.pluginInstalled[manifest.id] = true;
-      saveConfigFn?.(cfg);
-    }
-    loadPlugin(manifest, dir);
-    if (!plugins.has(manifest.id)) return callback(new Error('Plugin failed to initialize'));
-    callback(null, manifest.id);
-  };
-
-  if (manifest.install === 'npm' && !existsSync(join(dir, 'node_modules'))) {
-    npmExec(['install', '--production'], { cwd: dir, timeout: 120000 }, (err) => {
-      if (err) return callback(new Error(`npm install failed: ${err.message}`));
-      finish();
-    });
-  } else {
-    finish();
-  }
-}
-
 module.exports = {
   PLUGINS_DIR, BUNDLED_IDS,
   init, shutdown,
   transformInput, notifyOutput, notifyStatus, notifyTranscript, notifyMenu, notifyConfig, clearStatus, isWorking, shouldAutoApproveMenu,
-  handleMessage, handlePluginRoute, updateSetting, getInfo, resolveFile, installPlugin, removePlugin, unloadPlugin, loadFromDir,
+  handleMessage, hasCapability, invoke, updateSetting, getInfo, resolveFile, installPlugin, removePlugin,
   getPills, getPillLogs,
 };

@@ -2,7 +2,9 @@
 // Forwards session events to CliDeck server via HTTP POST.
 // Install: copy to ~/.config/opencode/plugins/clideck-bridge.js
 
-const CLIDECK_URL = "http://localhost:4000/opencode-events";
+const env = globalThis.process?.env || {};
+const baseUrl = env.CLIDECK_URL || `http://localhost:${env.CLIDECK_PORT || "4000"}`;
+const CLIDECK_URL = `${baseUrl.replace(/\/$/, "")}/opencode-events`;
 
 function post(payload) {
   fetch(CLIDECK_URL, {

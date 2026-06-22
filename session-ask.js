@@ -1,15 +1,11 @@
 const transcript = require('./transcript');
+const { sendJson, isLoopback, sameProject, projectName } = require('./http-util');
 
 const MAX_BODY = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TIMEOUT_MS = 60 * 60 * 1000;
 const BRACKETED_PASTE_START = '\x1b[200~';
 const BRACKETED_PASTE_END = '\x1b[201~';
-
-function sendJson(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(payload));
-}
 
 function readJson(req) {
   return new Promise((resolve, reject) => {
@@ -35,24 +31,63 @@ function jsonError(message, status = 400) {
   return err;
 }
 
-function isLoopback(req) {
-  const addr = req.socket?.remoteAddress || '';
-  return addr === '::1' || addr === '127.0.0.1' || addr.startsWith('127.') || addr.startsWith('::ffff:127.');
-}
-
 function normalizeTimeout(ms) {
   const n = Number(ms || DEFAULT_TIMEOUT_MS);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_TIMEOUT_MS;
   return Math.min(Math.round(n), MAX_TIMEOUT_MS);
 }
 
-function sameProject(a, b) {
-  return (a.projectId || null) === (b.projectId || null);
+function parseScopedTarget(target) {
+  const text = String(target || '').trim();
+  if (!text.startsWith('@')) return null;
+  const slash = text.indexOf('/');
+  if (slash <= 1 || slash === text.length - 1) {
+    throw jsonError('Cross-project target must use @project/session');
+  }
+  return { project: text.slice(1, slash).trim(), session: text.slice(slash + 1).trim() };
 }
 
-function findTarget(sessions, callerId, caller, target) {
+function resolveProject(projects, nameOrId) {
+  const text = String(nameOrId || '').trim();
+  const byId = projects.filter(p => p.id === text);
+  if (byId.length === 1) return byId[0];
+  const exact = projects.filter(p => p.name === text);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) throw jsonError(`Multiple projects named "${text}". Use the project id.`, 409);
+  const lower = text.toLowerCase();
+  const insensitive = projects.filter(p => String(p.name || '').toLowerCase() === lower);
+  if (insensitive.length === 1) return insensitive[0];
+  if (insensitive.length > 1) throw jsonError(`Multiple projects named "${text}". Use the project id.`, 409);
+  throw jsonError(`No project named "${text}"`, 404);
+}
+
+function findInProject(candidates, target, projectLabel) {
+  const byId = candidates.filter(([id]) => id === target);
+  if (byId.length === 1) return byId[0];
+
+  const exact = candidates.filter(([, s]) => s.name === target);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) throw jsonError(`Multiple sessions named "${target}" in ${projectLabel}. Use the session id.`);
+
+  const lower = target.toLowerCase();
+  const insensitive = candidates.filter(([, s]) => String(s.name || '').toLowerCase() === lower);
+  if (insensitive.length === 1) return insensitive[0];
+  if (insensitive.length > 1) throw jsonError(`Multiple sessions named "${target}" in ${projectLabel}. Use the session id.`);
+  throw jsonError(`No session named "${target}" in ${projectLabel}`, 404);
+}
+
+function findTarget(sessions, callerId, caller, target, cfg = {}) {
   const trimmed = String(target || '').trim();
   if (!trimmed) throw jsonError('Target session is required');
+  const projects = Array.isArray(cfg.projects) ? cfg.projects : [];
+  const scoped = parseScopedTarget(trimmed);
+
+  if (scoped) {
+    const project = resolveProject(projects, scoped.project);
+    const projectSessions = [...sessions]
+      .filter(([id, s]) => id !== callerId && (s.projectId || null) === project.id);
+    return findInProject(projectSessions, scoped.session, `project "${project.name || project.id}"`);
+  }
 
   const byId = sessions.get(trimmed);
   if (byId) {
@@ -63,15 +98,7 @@ function findTarget(sessions, callerId, caller, target) {
 
   const sameProjectSessions = [...sessions]
     .filter(([id, s]) => id !== callerId && sameProject(caller, s));
-  const exact = sameProjectSessions.filter(([, s]) => s.name === trimmed);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) throw jsonError(`Multiple sessions named "${trimmed}" in this project. Use the session id.`);
-
-  const lower = trimmed.toLowerCase();
-  const insensitive = sameProjectSessions.filter(([, s]) => String(s.name || '').toLowerCase() === lower);
-  if (insensitive.length === 1) return insensitive[0];
-  if (insensitive.length > 1) throw jsonError(`Multiple sessions named "${trimmed}" in this project. Use the session id.`);
-  throw jsonError(`No session named "${trimmed}" in this project`, 404);
+  return findInProject(sameProjectSessions, trimmed, `project "${projectName(projects, caller.projectId)}"`);
 }
 
 function latestAgentTextSince(sessionId, sinceTs) {
@@ -167,13 +194,13 @@ function waitForAnswer({ sessionsApi, targetId, sinceTs, timeoutMs }) {
   });
 }
 
-async function askSession(payload, sessionsApi) {
+async function askSession(payload, sessionsApi, cfg = {}) {
   const sessions = sessionsApi.getSessions();
   const callerId = String(payload.callerSessionId || '').trim();
   const caller = sessions.get(callerId);
   if (!caller) throw jsonError('Caller session is not active', 404);
 
-  const [targetId, target] = findTarget(sessions, callerId, caller, payload.target);
+  const [targetId, target] = findTarget(sessions, callerId, caller, payload.target, cfg);
   if (target.working) {
     throw jsonError(`Target session "${target.name}" is busy. CliDeck ask only sends to idle sessions. Try again later, choose another idle session, or ask the user how to proceed.`, 409);
   }
@@ -193,11 +220,11 @@ async function askSession(payload, sessionsApi) {
   return { targetSessionId: targetId, targetName: target.name, response };
 }
 
-async function handleHttp(req, res, sessionsApi) {
+async function handleHttp(req, res, sessionsApi, getConfig = () => ({})) {
   try {
     if (!isLoopback(req)) throw jsonError('CliDeck ask only accepts local requests', 403);
     const payload = await readJson(req);
-    const result = await askSession(payload, sessionsApi);
+    const result = await askSession(payload, sessionsApi, getConfig() || {});
     sendJson(res, 200, result);
   } catch (e) {
     sendJson(res, e.status || 500, { error: e.message || 'CliDeck ask failed' });

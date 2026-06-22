@@ -12,7 +12,7 @@
     "sessionIdPattern": "Session ID:\\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     "outputMarker": "⏺",
     "telemetryConfigPath": "~/.claude/settings.json",
-    "telemetrySetup": "Required for working/idle status, Autopilot, notifications, and mobile remote.\n\nCliDeck will add start/stop hooks to ~/.claude/settings.json. Claude will ask for one-time approval on next launch.",
+    "telemetrySetup": "Required for working/idle status, Autopilot, notifications, and mobile remote.\n\nCliDeck will add lifecycle hooks to ~/.claude/settings.json. Claude will ask for one-time approval on next launch.",
     "telemetryAutoSetup": {
       "label": "Patch Claude"
     },
@@ -83,6 +83,24 @@
     "pluginSetup": "Install the CliDeck bridge plugin to enable real-time status and resume.\n\ncp opencode-plugin/clideck-bridge.js ~/.config/opencode/plugins/",
     "telemetryAutoSetup": {
       "label": "Install plugin"
+    }
+  },
+  {
+    "presetId": "pi",
+    "name": "Pi",
+    "icon": "/img/pi.svg",
+    "command": "pi",
+    "minVersion": "0.79.3",
+    "installCmd": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+    "isAgent": true,
+    "canResume": true,
+    "resumeCommand": "pi --session {{sessionId}}",
+    "sessionIdPattern": null,
+    "outputMarker": "•",
+    "telemetryConfigPath": "~/.pi/agent/extensions/clideck-bridge.ts",
+    "telemetrySetup": "Required for working/idle status, resume, Autopilot, notifications, and mobile remote.\n\nCliDeck will install a small Pi extension to ~/.pi/agent/extensions/clideck-bridge.ts.",
+    "telemetryAutoSetup": {
+      "label": "Install extension"
     }
   },
   {

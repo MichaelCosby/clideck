@@ -3,7 +3,8 @@ const { join } = require('path');
 const crypto = require('crypto');
 const os = require('os');
 const { DATA_DIR } = require('./paths');
-const { defaultShell, binName } = require('./utils');
+const { defaultShell } = require('./utils');
+const { presetForCommand } = require('./preset-utils');
 
 const CONFIG_PATH = join(DATA_DIR, 'config.json');
 
@@ -63,10 +64,7 @@ function isPresetEnabled(preset) {
 }
 const EXPOSED_PRESETS = PRESETS.filter(isPresetEnabled);
 
-function matchPreset(cmd) {
-  const bin = binName(cmd.command);
-  return PRESETS.find(p => binName(p.command) === bin);
-}
+function matchPreset(cmd) { return presetForCommand(cmd, PRESETS, { usePresetId: false }); }
 
 function firstCommandToken(command) {
   const raw = String(command || '').trim();

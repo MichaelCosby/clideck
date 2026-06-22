@@ -43,6 +43,113 @@ const LIGHT_BALLS = ['#0891b2', '#059669', '#7c3aed'];
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
 const JUMP_LATEST_THRESHOLD_ROWS = 3;
 const JUMP_LATEST_VISIBLE_CLASS = 'is-visible';
+const terminalInputActions = new Map();
+let terminalInputActionSeq = 0;
+let terminalInputActionsEl = null;
+
+function ensureTerminalInputActionsEl() {
+  if (terminalInputActionsEl?.isConnected) return terminalInputActionsEl;
+  const host = document.getElementById('terminals');
+  if (!host) return null;
+  terminalInputActionsEl = document.createElement('div');
+  terminalInputActionsEl.className = 'terminal-input-actions is-hidden';
+  host.appendChild(terminalInputActionsEl);
+  return terminalInputActionsEl;
+}
+
+function refreshTerminalInputActions() {
+  const el = ensureTerminalInputActionsEl();
+  if (!el) return;
+  const entry = state.active ? state.terms.get(state.active) : null;
+  let visibleCount = 0;
+  for (const action of terminalInputActions.values()) {
+    const visible = action.visible !== false;
+    action.button.style.display = visible ? '' : 'none';
+    action.button.classList.toggle('is-active', !!action.active);
+    action.button.classList.toggle('is-busy', !!action.busy);
+    if (visible) visibleCount++;
+  }
+  el.classList.toggle('is-hidden', !entry || visibleCount === 0 || !!entry.inputHasText || !!entry.scrolledUp);
+}
+
+function setTerminalInputAction(action, patch) {
+  Object.assign(action, patch);
+  if (patch.title !== undefined) action.button.title = patch.title || '';
+  if (patch.icon !== undefined) action.button.innerHTML = patch.icon || '';
+  refreshTerminalInputActions();
+}
+
+export function addTerminalInputAction(pluginId, opts = {}) {
+  const id = opts.id || `action-${++terminalInputActionSeq}`;
+  const key = `${pluginId}:${id}`;
+  terminalInputActions.get(key)?.remove?.();
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'terminal-input-action';
+  button.title = opts.title || '';
+  button.innerHTML = opts.icon || '';
+  button.dataset.pluginId = pluginId;
+  button.dataset.actionId = id;
+  const action = {
+    pluginId,
+    id,
+    button,
+    title: opts.title || '',
+    icon: opts.icon || '',
+    onClick: typeof opts.onClick === 'function' ? opts.onClick : null,
+    visible: opts.visible !== false,
+    active: false,
+    busy: false,
+  };
+  button.addEventListener('mousedown', e => e.preventDefault());
+  button.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const sessionId = state.active;
+    if (!sessionId) return;
+    action.onClick?.(sessionId);
+    state.terms.get(sessionId)?.term?.focus();
+  });
+  action.remove = () => {
+    terminalInputActions.delete(key);
+    button.remove();
+    refreshTerminalInputActions();
+  };
+  terminalInputActions.set(key, action);
+  ensureTerminalInputActionsEl()?.appendChild(button);
+  refreshTerminalInputActions();
+  return {
+    setVisible(visible) { setTerminalInputAction(action, { visible: !!visible }); },
+    setActive(active) { setTerminalInputAction(action, { active: !!active }); },
+    setBusy(busy) { setTerminalInputAction(action, { busy: !!busy }); },
+    setTitle(title) { setTerminalInputAction(action, { title: title || '' }); },
+    setIcon(icon) { setTerminalInputAction(action, { icon: icon || '' }); },
+    remove: action.remove,
+  };
+}
+
+export function removeTerminalInputActionsForPlugin(pluginId) {
+  for (const action of [...terminalInputActions.values()]) {
+    if (action.pluginId === pluginId) action.remove();
+  }
+}
+
+export function trackTerminalInputData(id, data) {
+  const entry = state.terms.get(id);
+  if (!entry || !data || data.startsWith('\x1b')) return;
+  let length = entry.inputLength || 0;
+  for (const ch of data) {
+    if (ch === '\r' || ch === '\n' || ch === '\x03' || ch === '\x15') length = 0;
+    else if (ch === '\x7f' || ch === '\b') length = Math.max(0, length - 1);
+    else if (ch >= ' ') length += 1;
+  }
+  entry.inputLength = length;
+  const hasText = length > 0;
+  if (entry.inputHasText !== hasText) {
+    entry.inputHasText = hasText;
+    if (id === state.active) refreshTerminalInputActions();
+  }
+}
 
 function cleanUrlMatch(text, index) {
   let url = text;
@@ -117,8 +224,13 @@ function createJumpLatestButton(term) {
   return btn;
 }
 
-function updateJumpLatestButton(term, btn) {
-  btn.classList.toggle(JUMP_LATEST_VISIBLE_CLASS, shouldShowJumpLatest(term));
+function updateJumpLatestButton(id, term, btn) {
+  const scrolledUp = shouldShowJumpLatest(term);
+  btn.classList.toggle(JUMP_LATEST_VISIBLE_CLASS, scrolledUp);
+  const entry = state.terms.get(id);
+  if (!entry || entry.scrolledUp === scrolledUp) return;
+  entry.scrolledUp = scrolledUp;
+  if (id === state.active) refreshTerminalInputActions();
 }
 
 function startBounce(container) {
@@ -233,7 +345,10 @@ async function copyTerminalSelection(sessionId) {
 async function pasteIntoTerminal(sessionId) {
   try {
     const text = await navigator.clipboard.readText();
-    if (text) send({ type: 'input', id: sessionId, data: text });
+    if (text) {
+      trackTerminalInputData(sessionId, text);
+      send({ type: 'input', id: sessionId, data: text });
+    }
   } catch {
     showToast('Clipboard read failed.', { type: 'error' });
   }
@@ -416,7 +531,7 @@ export function estimateSize() {
 
 // --- Terminal management ---
 
-export function addTerminal(id, name, themeId, commandId, projectId, muted, lastPreview, presetId) {
+export function addTerminal(id, name, themeId, commandId, projectId, muted, lastPreview, presetId, working = false) {
   if (state.terms.has(id)) return;
   themeId = themeId || state.cfg.defaultTheme || 'default';
 
@@ -464,18 +579,14 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     minimumContrastRatio: MIN_CONTRAST_RATIO,
     cursorBlink: true,
     scrollback: 10000,
-    allowProposedApi: true,
     smoothScrollDuration: 180,
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   addLinkProvider(term);
-  term.onData(data => send({ type: 'input', id, data }));
-  term.parser.registerOscHandler(52, data => {
-    const b64 = data.split(';')[1];
-    if (!b64 || b64 === '?') return false;
-    try { navigator.clipboard.writeText(atob(b64)); } catch {}
-    return true;
+  term.onData(data => {
+    trackTerminalInputData(id, data);
+    send({ type: 'input', id, data });
   });
 
   // [TRANSCRIPT-CAPTURE] initial settled capture plus one delayed idle save
@@ -556,7 +667,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   term.open(el);
   const jumpLatestBtn = createJumpLatestButton(term);
   el.appendChild(jumpLatestBtn);
-  const refreshJumpLatest = () => updateJumpLatestButton(term, jumpLatestBtn);
+  const refreshJumpLatest = () => updateJumpLatestButton(id, term, jumpLatestBtn);
   term.onScroll(refreshJumpLatest);
   term.onWriteParsed(refreshJumpLatest);
   attachToTerminal(term, presetId);
@@ -614,7 +725,9 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     }
   }, 500);
   const cancelFitRaf = () => { if (fitRaf) { cancelAnimationFrame(fitRaf); fitRaf = 0; } };
-  state.terms.set(id, { term, fit, el, ro, cancelFitRaf, onContextMenu, themeId, commandId, presetId: presetId || null, projectId: projectId || null, muted: !!muted, working: false, workStartedAt: null, stopBounce, queue: (data) => { if (!fitted) { pending.push(data); return true; } return false; }, lastActivityAt: Date.now(), unread: false, lastPreviewText: lastPreview || '', searchText: '' });
+  state.terms.set(id, { term, fit, el, ro, cancelFitRaf, onContextMenu, inputLength: 0, inputHasText: false, scrolledUp: false, themeId, commandId, presetId: presetId || null, projectId: projectId || null, muted: !!muted, working: false, workStartedAt: null, stopBounce, queue: (data) => { if (!fitted) { pending.push(data); return true; } return false; }, lastActivityAt: Date.now(), unread: false, lastPreviewText: lastPreview || '', searchText: '' });
+  if (working) setStatus(id, true);
+  refreshTerminalInputActions();
   document.getElementById('empty').style.display = 'none';
   document.getElementById('terminals').style.pointerEvents = '';
   if (muted) requestAnimationFrame(() => updateMuteIndicator(id));
@@ -639,6 +752,7 @@ export function removeTerminal(id) {
     if (next) select(next);
     else {
       state.active = null;
+      refreshTerminalInputActions();
       document.getElementById('empty').style.display = 'flex';
       document.getElementById('terminals').style.pointerEvents = 'none';
     }
@@ -667,12 +781,17 @@ export function select(id) {
       const dot = document.querySelector(`.group[data-id="${id}"] .unread-dot`);
       if (dot) dot.classList.add('hidden');
       updateUnreadBadge();
-      if (state.filter.tab === 'unread') setTab('all');
+      if (state.filter.tab === 'unread') {
+        const hasMoreUnread = [...state.terms].some(([otherId, other]) => otherId !== id && other.unread);
+        if (hasMoreUnread) applyFilter();
+        else setTab('all');
+      }
     }
     entry.term.scrollToBottom();
     if (!document.querySelector('[contenteditable="true"]')) entry.term.focus();
   }
   state.active = id;
+  refreshTerminalInputActions();
   localStorage.setItem('clideck.activeSessionId', id);
 }
 

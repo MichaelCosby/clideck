@@ -1,8 +1,10 @@
 let settings = { enabled: false, backend: 'openai', hotkey: 'F4' };
 let recordingState = null; // { startTime, mediaRecorder, stream, cancelled, sessionId }
+let transcribing = false;
 let activeToast = null;
-let btnEl = null;
+let micControl = null;
 let _api = null;
+const MIC_ICON = '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>';
 
 function toast(message, type, persistent) {
   if (activeToast) activeToast.dismiss();
@@ -39,20 +41,22 @@ function float32ToBase64(f32) {
 // --- Button state ---
 
 function updateButton() {
-  if (!btnEl) return;
-  if (recordingState) {
-    btnEl.style.color = '#ef4444';
-    btnEl.title = 'Stop recording (or press ' + (settings.hotkey || 'F4') + ')';
-  } else {
-    btnEl.style.color = '';
-    btnEl.title = 'Voice Input (' + (settings.hotkey || 'F4') + ')';
-  }
+  if (!micControl) return;
+  const hotkey = settings.hotkey || 'F4';
+  micControl.setVisible(!!settings.enabled);
+  micControl.setActive(!!recordingState);
+  micControl.setBusy(!!transcribing);
+  micControl.setTitle(recordingState
+    ? `Stop recording (${hotkey})`
+    : transcribing ? 'Transcribing...'
+      : `Voice Input (${hotkey})`);
 }
 
 // --- Recording ---
 
 async function startRecording() {
-  if (!_api || recordingState) return;
+  if (!_api || recordingState || transcribing) return;
+  if (!settings.enabled) { toast('Voice Input is disabled', 'error'); return; }
   const sessionId = _api.getActiveSessionId();
   if (!sessionId) { toast('No active terminal', 'error'); return; }
 
@@ -85,6 +89,8 @@ async function startRecording() {
         return;
       }
 
+      transcribing = true;
+      updateButton();
       toast('Transcribing...', 'info', true);
 
       try {
@@ -93,6 +99,8 @@ async function startRecording() {
         const b64 = float32ToBase64(pcm);
         _api.send('transcribe', { audio: b64, sessionId: state.sessionId });
       } catch (e) {
+        transcribing = false;
+        updateButton();
         toast('Audio decode failed', 'error');
       }
     };
@@ -100,7 +108,6 @@ async function startRecording() {
     mr.start(100);
     recordingState = { startTime: Date.now(), mediaRecorder: mr, stream, cancelled: false, sessionId };
     updateButton();
-    toast('REC \u25cf', 'error', true);
   } catch (e) {
     toast('Mic: ' + e.message, 'error');
   }
@@ -156,7 +163,7 @@ export function init(api) {
 
   api.onMessage('settings', msg => {
     settings = { ...settings, ...msg };
-    if (btnEl) btnEl.style.display = settings.enabled ? '' : 'none';
+    updateButton();
     bindHotkey();
   });
 
@@ -166,6 +173,8 @@ export function init(api) {
   });
 
   api.onMessage('result', msg => {
+    transcribing = false;
+    updateButton();
     if (activeToast) { activeToast.dismiss(); activeToast = null; }
     if (msg.skipped || !msg.text) return;
     const sid = msg.sessionId || _api.getActiveSessionId();
@@ -175,22 +184,22 @@ export function init(api) {
   });
 
   api.onMessage('error', msg => {
+    transcribing = false;
+    updateButton();
     toast(msg.error || 'Error', 'error');
   });
 
   api.send('getSettings');
 
-  btnEl = api.addToolbarButton({
+  micControl = api.addTerminalInputButton({
+    id: 'voice-input',
     title: 'Voice Input (F4)',
-    icon: '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>',
+    icon: MIC_ICON,
     onClick() {
-      if (!settings.enabled) { toast('Voice Input is disabled', 'error'); return; }
       if (!recordingState) startRecording();
       else stopRecording();
     },
   });
-
-  btnEl.addEventListener('mousedown', e => e.preventDefault());
-  if (!settings.enabled && btnEl) btnEl.style.display = 'none';
+  updateButton();
   bindHotkey();
 }

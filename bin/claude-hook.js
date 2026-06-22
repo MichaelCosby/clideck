@@ -15,6 +15,9 @@ process.stdin.on('end', () => {
   const body = JSON.stringify({
     clideck_id: process.env.CLIDECK_SESSION_ID || '',
     session_id: hook.session_id || '',
+    hook_event_name: hook.hook_event_name || '',
+    source: hook.source || '',
+    reason: hook.reason || '',
     payload: stdin.trim() || undefined,
   });
   const req = http.request({

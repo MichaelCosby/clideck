@@ -6,11 +6,19 @@ function usage() {
     'Usage:',
     '  clideck ask --session <name-or-id> --message <text> [--timeout 10m]',
     '  clideck ask <name-or-id> <message> [--timeout 10m]',
+    '  clideck ask "@project-name/session-name" <message> [--timeout 10m]',
     '  cat file.txt | clideck ask --session <name-or-id> [--timeout 10m]',
     '',
     'Use from inside a CliDeck session when this agent needs an answer from another active session.',
-    'Target lookup is limited to the same project as the caller session.',
-    'Run `clideck agents` first to discover available target sessions.',
+    'Unscoped target lookup is limited to the same project as the caller session.',
+    'Use @project/session only when you intentionally need to ask across projects.',
+    'Run `clideck agents` or `clideck agents --all` first to discover available target sessions.',
+    '',
+    'Important for agents:',
+    '  The target is another LLM agent, not a fast CLI command. It may need minutes to read files,',
+    '  think, use tools, and answer. Set BOTH the `clideck ask --timeout` value and your own',
+    '  shell/tool-call timeout high enough. If your shell tool kills this process first, the target',
+    '  agent may keep working but you will lose the response.',
     '',
     'Options:',
     '  -s, --session <name-or-id>  Target session name or id.',
@@ -109,10 +117,12 @@ function findAgent(agents, target) {
   if (!text) return null;
   const byId = agents.filter(a => a.id === text);
   if (byId.length === 1) return byId[0];
+  const byAddress = agents.filter(a => a.address === text);
+  if (byAddress.length === 1) return byAddress[0];
   const exact = agents.filter(a => a.name === text);
   if (exact.length === 1) return exact[0];
   const lower = text.toLowerCase();
-  const insensitive = agents.filter(a => String(a.name || '').toLowerCase() === lower);
+  const insensitive = agents.filter(a => String(a.name || '').toLowerCase() === lower || String(a.address || '').toLowerCase() === lower);
   return insensitive.length === 1 ? insensitive[0] : null;
 }
 
@@ -133,7 +143,8 @@ function startProgressHints(opts, callerSessionId) {
   const tick = async () => {
     if (stopped) return;
     try {
-      const path = `/api/session/agents?callerSessionId=${encodeURIComponent(callerSessionId)}`;
+      const all = String(opts.session || '').trim().startsWith('@') ? '&all=1' : '';
+      const path = `/api/session/agents?callerSessionId=${encodeURIComponent(callerSessionId)}${all}`;
       const res = await getJson(opts.url, path, 4000);
       const agent = findAgent(res.agents || [], opts.session);
       const elapsed = formatDuration(Date.now() - started);
