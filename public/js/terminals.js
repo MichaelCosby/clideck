@@ -442,7 +442,7 @@ function openMenu(sessionId, anchor) {
       toggleMute(sessionId);
     } else if (action === 'refresh') {
       const re = state.terms.get(sessionId);
-      if (re) send({ type: 'session.restart', id: sessionId, themeId: re.themeId, cols: re.term.cols, rows: re.term.rows });
+      if (re) send({ type: 'session.restart', id: sessionId, themeId: re.themeId, cols: re.term?.cols ?? 120, rows: re.term?.rows ?? 30 });
     } else if (action === 'delete') {
       document.getElementById('session-list').dispatchEvent(
         new CustomEvent('session-delete', { detail: { id: sessionId } })
@@ -561,15 +561,33 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   if (lastPreview) item.querySelector('.session-preview').textContent = lastPreview;
 
   document.getElementById('session-list').appendChild(item);
-  const statusEl = item.querySelector('.session-status');
-  const cmd = state.cfg.commands.find(c => c.id === commandId);
-  const hasBridge = !!cmd?.bridge;
-  const stopBounce = null;
-
   const el = document.createElement('div');
   el.className = 'term-wrap';
   el.style.backgroundColor = resolveTheme(themeId).background;
   document.getElementById('terminals').appendChild(el);
+
+  // Dormant stub — xterm.js created lazily on first select via activateTerminal()
+  state.terms.set(id, {
+    term: null, fit: null, el, ro: null, cancelFitRaf: null, onContextMenu: null,
+    activationState: 'dormant', pendingData: [],
+    inputLength: 0, inputHasText: false, scrolledUp: false,
+    themeId, commandId, presetId: presetId || null, projectId: projectId || null,
+    muted: !!muted, working: !!working, workStartedAt: null, stopBounce: null,
+    queue: () => false,
+    lastActivityAt: Date.now(), unread: false, lastPreviewText: lastPreview || '', searchText: '',
+  });
+  if (working) setStatus(id, true);
+  document.getElementById('empty').style.display = 'none';
+  document.getElementById('terminals').style.pointerEvents = '';
+  if (muted) requestAnimationFrame(() => updateMuteIndicator(id));
+  regroupSessions();
+}
+
+export function activateTerminal(id) {
+  const entry = state.terms.get(id);
+  if (!entry || entry.term) return; // already active or gone
+
+  const { themeId, commandId, presetId, muted, el } = entry;
 
   const term = new Terminal({
     fontSize: 13,
@@ -592,9 +610,9 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   // [TRANSCRIPT-CAPTURE] initial settled capture plus one delayed idle save
   let _captureTimer = null, _renderSilent = false, _lastTyping = 0, _initialCaptureDone = false, _idleSaveTimer = null;
   function _sendCapture() {
-    const entry = state.terms.get(id);
-    if (!entry?.term) return;
-    const buf = entry.term.buffer.active;
+    const e = state.terms.get(id);
+    if (!e?.term) return;
+    const buf = e.term.buffer.active;
     const lines = [];
     for (let i = 0; i < buf.length; i++) { const line = buf.getLine(i); if (line) lines.push(line.translateToString(true)); }
     send({ type: 'terminal.buffer', id, lines });
@@ -608,9 +626,9 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
       || /^(esc to interrupt|\? for shortcuts)$/i.test(t);
   }
   function _hasContent() {
-    const entry = state.terms.get(id);
-    if (!entry?.term) return false;
-    const buf = entry.term.buffer.active;
+    const e = state.terms.get(id);
+    if (!e?.term) return false;
+    const buf = e.term.buffer.active;
     for (let i = 0; i < buf.length; i++) {
       const text = buf.getLine(i)?.translateToString(true).trim();
       if (!_isChrome(text)) return true;
@@ -618,11 +636,9 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     return false;
   }
   function _tryCapture() {
-    const entry = state.terms.get(id);
     if (!_renderSilent || Date.now() - _lastTyping < 2000) return;
-    // Initial capture: first time render settles with real content, capture regardless of working/idle
     if (!_initialCaptureDone) {
-      if (!_hasContent()) return; // retry on next silence
+      if (!_hasContent()) return;
       _initialCaptureDone = true;
       _sendCapture();
       return;
@@ -630,7 +646,6 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   }
   term.onData(() => {
     _lastTyping = Date.now();
-    // User typing invalidates pending capture — will re-try after silence
     _renderSilent = false;
     clearTimeout(_captureTimer);
     _captureTimer = setTimeout(() => { _renderSilent = true; _tryCapture(); }, 2000);
@@ -642,27 +657,9 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   });
   term.onWriteParsed(() => {
     if (Date.now() - _lastTyping < 500) return;
-    const entry = state.terms.get(id);
-    if (entry) entry.lastRenderAt = Date.now();
-  });
-
-  // Expose capture function so setStatus can schedule a retry
-  setTimeout(() => {
     const e = state.terms.get(id);
-    if (e) {
-      e.tryCapture = _tryCapture;
-      e.sendCaptureNow = _sendCapture;
-      e.scheduleIdleCapture = () => {
-        clearTimeout(_idleSaveTimer);
-        _idleSaveTimer = setTimeout(() => {
-          const entry = state.terms.get(id);
-          if (!entry || entry.working) return;
-          _sendCapture();
-        }, 300);
-      };
-      e.cancelIdleCapture = () => clearTimeout(_idleSaveTimer);
-    }
-  }, 0);
+    if (e) e.lastRenderAt = Date.now();
+  });
 
   term.open(el);
   const jumpLatestBtn = createJumpLatestButton(term);
@@ -671,6 +668,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   term.onScroll(refreshJumpLatest);
   term.onWriteParsed(refreshJumpLatest);
   attachToTerminal(term, presetId);
+
   const onContextMenu = (e) => {
     if (e.shiftKey) return;
     e.preventDefault();
@@ -679,6 +677,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     openMenu(id, { x: e.clientX, y: e.clientY });
   };
   el.addEventListener('contextmenu', onContextMenu);
+
   let fitted = false, pending = [];
   // [FIT-GUARD] only call fit() when proposed dimensions actually change — prevents
   // unnecessary buffer reflows that cause scrollbar jumpiness on sub-pixel layout shifts
@@ -725,15 +724,38 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     }
   }, 500);
   const cancelFitRaf = () => { if (fitRaf) { cancelAnimationFrame(fitRaf); fitRaf = 0; } };
-  state.terms.set(id, { term, fit, el, ro, cancelFitRaf, onContextMenu, inputLength: 0, inputHasText: false, scrolledUp: false, themeId, commandId, presetId: presetId || null, projectId: projectId || null, muted: !!muted, working: false, workStartedAt: null, stopBounce, queue: (data) => { if (!fitted) { pending.push(data); return true; } return false; }, lastActivityAt: Date.now(), unread: false, lastPreviewText: lastPreview || '', searchText: '' });
-  if (working) setStatus(id, true);
-  refreshTerminalInputActions();
-  document.getElementById('empty').style.display = 'none';
-  document.getElementById('terminals').style.pointerEvents = '';
-  if (muted) requestAnimationFrame(() => updateMuteIndicator(id));
 
-  regroupSessions();
+  // Patch the dormant entry in-place so external references remain valid
+  Object.assign(entry, {
+    term, fit, ro, cancelFitRaf, onContextMenu,
+    activationState: 'awaiting_replay',
+    queue: (data) => { if (!fitted) { pending.push(data); return true; } return false; },
+  });
+
+  // Expose capture helpers for setStatus etc.
+  setTimeout(() => {
+    const e = state.terms.get(id);
+    if (e) {
+      e.tryCapture = _tryCapture;
+      e.sendCaptureNow = _sendCapture;
+      e.scheduleIdleCapture = () => {
+        clearTimeout(_idleSaveTimer);
+        _idleSaveTimer = setTimeout(() => {
+          const entry = state.terms.get(id);
+          if (!entry || entry.working) return;
+          _sendCapture();
+        }, 300);
+      };
+      e.cancelIdleCapture = () => clearTimeout(_idleSaveTimer);
+    }
+  }, 0);
+
+  if (muted) requestAnimationFrame(() => updateMuteIndicator(id));
+  refreshTerminalInputActions();
+  // Request replay — server responds with output/history (replay:true) or session.replay.done
+  send({ type: 'session.requestReplay', id });
 }
+
 
 export function removeTerminal(id) {
   const entry = state.terms.get(id);
@@ -742,7 +764,7 @@ export function removeTerminal(id) {
   entry.cancelFitRaf?.();
   entry.ro?.disconnect();
   entry.el.removeEventListener?.('contextmenu', entry.onContextMenu);
-  entry.term.dispose();
+  entry.term?.dispose();
   entry.el.remove();
   state.terms.delete(id);
   document.querySelector(`.group[data-id="${id}"]`)?.remove();
@@ -762,6 +784,8 @@ export function removeTerminal(id) {
 
 export function select(id) {
   if (state.active === id) return;
+  const toActivate = state.terms.get(id);
+  if (toActivate && !toActivate.term) activateTerminal(id);
   closeDropdown();
   closePillLog();
   document.querySelectorAll('.pill-row.active-session').forEach(r => r.classList.remove('active-session'));
@@ -787,8 +811,8 @@ export function select(id) {
         else setTab('all');
       }
     }
-    entry.term.scrollToBottom();
-    if (!document.querySelector('[contenteditable="true"]')) entry.term.focus();
+    if (entry.term) entry.term.scrollToBottom();
+    if (entry.term && !document.querySelector('[contenteditable="true"]')) entry.term.focus();
   }
   state.active = id;
   refreshTerminalInputActions();

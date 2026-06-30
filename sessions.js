@@ -432,21 +432,28 @@ function getResumable(cfg) {
   });
 }
 
-function sendBuffers(ws) {
-  for (const [id, s] of sessions) {
+const AI_PRESETS = ['claude-code', 'codex', 'gemini-cli', 'opencode', 'pi', 'clideck-agent'];
+
+function sendBuffer(ws, id) {
+  const s = sessions.get(id);
+  if (s) {
     if (s.chunks.length) {
-      const data = s.chunks.join('');
-      ws.send(JSON.stringify({ type: 'output', id, data, replay: true }));
-      continue;
+      ws.send(JSON.stringify({ type: 'output', id, data: s.chunks.join(''), replay: true }));
+      return;
     }
-    if (['claude-code', 'codex', 'gemini-cli', 'opencode', 'pi', 'clideck-agent'].includes(s.presetId) && !s.working) {
+    if (AI_PRESETS.includes(s.presetId) && !s.working) {
       const text = transcript.getReplayText(id, s.presetId);
       if (text) {
         ws.send(JSON.stringify({ type: 'session.history', id, text, replay: true }));
-        continue;
+        return;
       }
     }
   }
+  ws.send(JSON.stringify({ type: 'session.replay.done', id }));
+}
+
+function sendBuffers(ws) {
+  for (const [id] of sessions) sendBuffer(ws, id);
 }
 
 // --- Persistence: save on shutdown, load on startup ---
@@ -524,6 +531,6 @@ function shutdown(cfg) {
 module.exports = {
   clients, broadcast, addBroadcastListener, getSessions: () => sessions,
   create, createProgrammatic, resume, restart, input, resize, rename, setTheme, setMute, setProject, setPreview, close,
-  list, getResumable, sendBuffers,
+  list, getResumable, sendBuffer, sendBuffers,
   loadSessions, startAutoSave, shutdown,
 };

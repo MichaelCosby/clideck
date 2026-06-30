@@ -243,6 +243,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Generic plugin hook — POST /hook/plugin/:pluginId/:action → plugins.invoke(pluginId, action, body)
+  if (req.method === 'POST' && req.url.startsWith('/hook/plugin/')) {
+    const parts = req.url.slice('/hook/plugin/'.length).split('/');
+    const pluginId = parts[0];
+    const action = parts[1];
+    if (pluginId && action && plugins.hasCapability(pluginId, action)) {
+      let body = '';
+      req.on('data', chunk => { body += chunk; if (body.length > 1e5) req.destroy(); });
+      req.on('end', () => {
+        let parsed = {};
+        try { parsed = body ? JSON.parse(body) : {}; } catch {}
+        plugins.invoke(pluginId, action, parsed).catch(() => {});
+        res.writeHead(200).end('{}');
+      });
+      return;
+    }
+  }
+
   // Pi extension bridge events
   if (req.method === 'POST' && req.url === '/hook/pi') {
     let body = '';
@@ -266,8 +284,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Plugin-registered HTTP routes
-  if (plugins.handlePluginRoute(req, res)) return;
 
   // DEBUG: log any POST (agents might use /v1/traces, /v1/metrics, or other paths)
   if (req.method === 'POST') {

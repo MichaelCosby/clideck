@@ -15,6 +15,8 @@ import { renderPrompts } from './prompts.js';
 
 const shownAgentHealthToasts = new Set();
 let reconnectReplaySkip = null;
+let _heartbeatInterval = null;
+let _lastPong = 0;
 
 function normalizeTerminalHistoryText(text) {
   return `${text || ''}\n`.replace(/\r?\n/g, '\r\n');
@@ -44,6 +46,12 @@ function connect() {
 
   state.ws.onopen = () => {
     reconnectReplaySkip = new Set(state.terms.keys());
+    _lastPong = Date.now();
+    _heartbeatInterval = setInterval(() => {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - _lastPong > 10000) { state.ws.close(); return; }
+      send({ type: 'ping' });
+    }, 5000);
     setServerConnectionState(true);
     flushQueuedSends();
     send({ type: 'remote.status', forceUpdate: true });
@@ -80,6 +88,9 @@ function connect() {
         state.resumable = msg.list;
         renderResumable();
         break;
+      case 'pong':
+        _lastPong = Date.now();
+        break;
       case 'error':
         showToast(msg.message || 'CliDeck action failed.', { type: 'error', title: 'CliDeck Error', duration: 5000 });
         break;
@@ -107,7 +118,25 @@ function connect() {
       case 'output': {
         const entry = state.terms.get(msg.id);
         if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) break;
-        if (entry && !entry.queue(msg.data)) entry.term.write(msg.data);
+        if (!entry) break;
+        if (!entry.term) {
+          // Dormant — buffer live output only (replay arrives later via session.requestReplay)
+          if (!msg.replay) { entry.pendingData.push(msg.data); updatePreview(msg.id); markUnread(msg.id); }
+          break;
+        }
+        if (entry.activationState === 'awaiting_replay') {
+          if (msg.replay) {
+            entry.term.write(msg.data);
+            for (const d of entry.pendingData) { if (!entry.queue(d)) entry.term.write(d); }
+            entry.pendingData = [];
+            entry.activationState = 'active';
+            updatePreview(msg.id);
+          } else {
+            entry.pendingData.push(msg.data); updatePreview(msg.id); markUnread(msg.id);
+          }
+          break;
+        }
+        if (!entry.queue(msg.data)) entry.term.write(msg.data);
         updatePreview(msg.id);
         markUnread(msg.id);
         break;
@@ -137,9 +166,30 @@ function connect() {
       case 'session.history': {
         const entry = state.terms.get(msg.id);
         if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) break;
+        if (!entry) break;
         const historyText = normalizeTerminalHistoryText(msg.text);
-        if (entry && !entry.queue(historyText)) entry.term.write(historyText);
+        if (!entry.term) break; // dormant — replay requested on activation
+        if (entry.activationState === 'awaiting_replay') {
+          if (msg.replay) {
+            if (!entry.queue(historyText)) entry.term.write(historyText);
+            for (const d of entry.pendingData) { if (!entry.queue(d)) entry.term.write(d); }
+            entry.pendingData = [];
+            entry.activationState = 'active';
+            updatePreview(msg.id);
+          }
+          break;
+        }
+        if (!entry.queue(historyText)) entry.term.write(historyText);
         updatePreview(msg.id);
+        break;
+      }
+      case 'session.replay.done': {
+        const entry = state.terms.get(msg.id);
+        if (entry?.activationState === 'awaiting_replay') {
+          for (const d of entry.pendingData) { if (!entry.queue(d)) entry.term.write(d); }
+          entry.pendingData = [];
+          entry.activationState = 'active';
+        }
         break;
       }
       // Bridge preview text (OpenCode plugin)
@@ -212,7 +262,7 @@ function connect() {
         const entry = state.terms.get(msg.id);
         if (entry) {
           entry.themeId = msg.themeId;
-          applyTheme(entry.term, msg.themeId);
+          if (entry.term) applyTheme(entry.term, msg.themeId);
         }
         break;
       }
@@ -358,25 +408,14 @@ function connect() {
         const btn = document.getElementById('plugin-github-btn');
         const input = document.getElementById('plugin-github-input');
         const status = document.getElementById('plugin-github-status');
+        if (btn) { btn.textContent = 'Install'; btn.disabled = false; btn.className = btn.className.replace('bg-slate-700 cursor-wait', 'bg-blue-600 hover:bg-blue-500'); }
         if (msg.success) {
           if (input) input.value = '';
-          if (status) { status.textContent = `✓ ${msg.name} installed`; status.className = 'text-[11px] mt-1.5 text-emerald-400'; }
-          if (btn) { btn.textContent = 'Install'; btn.disabled = false; btn.className = btn.className.replace('bg-slate-700 cursor-wait', 'bg-blue-600 hover:bg-blue-500'); }
+          const label = msg.isUpdate ? `✓ ${msg.name} updated` : `✓ ${msg.name} installed`;
+          if (status) { status.textContent = `${label} — restart CliDeck to activate`; status.className = 'text-[11px] mt-1.5 text-emerald-400'; }
         } else {
           if (status) { status.textContent = msg.error; status.className = 'text-[11px] mt-1.5 text-red-400'; }
-          if (btn) { btn.textContent = 'Install'; btn.disabled = false; btn.className = btn.className.replace('bg-slate-700 cursor-wait', 'bg-blue-600 hover:bg-blue-500'); }
         }
-        break;
-      }
-      case 'plugin.github.update.result': {
-        const updateBtn = document.querySelector(`.plugin-update-btn[data-plugin-id="${msg.pluginId}"]`);
-        if (msg.progress) {
-          if (updateBtn) updateBtn.title = msg.label;
-          break;
-        }
-        if (updateBtn) { updateBtn.disabled = false; updateBtn.title = 'Pull update from GitHub'; updateBtn.classList.remove('opacity-50', 'cursor-wait'); }
-        if (msg.success) showToast(`${msg.name} updated`, { duration: 3000 });
-        else showToast(`Update failed: ${msg.error}`, { type: 'error', duration: 5000 });
         break;
       }
       case 'remote.status':
@@ -414,8 +453,10 @@ function connect() {
   };
 
   state.ws.onclose = () => {
+    clearInterval(_heartbeatInterval);
+    _heartbeatInterval = null;
     setServerConnectionState(false);
-    setTimeout(connect, 1000);
+    setTimeout(connect, 0);
   };
 }
 

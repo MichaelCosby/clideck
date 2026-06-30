@@ -380,6 +380,7 @@ html { transition: color 0.3s ease, background-color 0.3s ease; }
   border-color: color-mix(in srgb, var(--color-warning) 76%, var(--color-search-text));
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   opacity: 0.9;
+  animation: offline-pulse 1.8s ease-in-out infinite;
 }
 
 .save-indicator.offline .save-tick,
@@ -419,6 +420,11 @@ html { transition: color 0.3s ease, background-color 0.3s ease; }
 
 @keyframes save-rotate {
   to { transform: rotate(360deg); }
+}
+
+@keyframes offline-pulse {
+  0%, 100% { opacity: 0.9; box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-warning) 40%, transparent); }
+  50% { opacity: 1; box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-warning) 0%, transparent); }
 }
 
 /* Toast shadow — stronger in light mode */

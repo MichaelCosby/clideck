@@ -351,13 +351,14 @@ function onConnection(ws) {
   ws.send(JSON.stringify({ type: 'transcript.cache', cache: transcript.getCache() }));
   ws.send(JSON.stringify({ type: 'plugins', list: plugins.getInfo() }));
   ws.send(JSON.stringify({ type: 'pills', list: plugins.getPills() }));
-  sessions.sendBuffers(ws);
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
     switch (msg.type) {
+      case 'ping':             ws.send(JSON.stringify({ type: 'pong' })); break;
+      case 'session.requestReplay': sessions.sendBuffer(ws, msg.id); break;
       case 'create':          sessions.create(msg, ws, cfg); break;
       case 'session.resume':  sessions.resume(msg, ws, cfg); break;
       case 'session.restart': console.log('[handler] session.restart', msg.id); sessions.restart(msg, ws, cfg); break;
@@ -631,13 +632,13 @@ function onConnection(ws) {
         ws.send(JSON.stringify({ type: 'plugin.github.progress', label: `Downloading ${parsed.owner}/${parsed.repo}…` }));
         downloadGithubPlugin(parsed, (err, result) => {
           if (err) return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: err.message }));
-          const { manifest, srcDir, tmpDir, cleanup } = result;
+          const { manifest, srcDir, cleanup } = result;
           const destDir = join(plugins.PLUGINS_DIR, manifest.id);
-          if (existsSync(destDir)) {
-            cleanup();
-            return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: `Plugin "${manifest.id}" is already installed — use the update button to refresh it` }));
-          }
-          try { cpSync(srcDir, destDir, { recursive: true }); } catch (e) {
+          const isUpdate = existsSync(destDir);
+          try {
+            if (isUpdate) rmSync(destDir, { recursive: true, force: true });
+            cpSync(srcDir, destDir, { recursive: true });
+          } catch (e) {
             cleanup();
             return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: `Failed to copy plugin files: ${e.message}` }));
           }
@@ -645,47 +646,7 @@ function onConnection(ws) {
           cfg.pluginSource = cfg.pluginSource || {};
           cfg.pluginSource[manifest.id] = (msg.source || '').trim();
           config.save(cfg);
-          ws.send(JSON.stringify({ type: 'plugin.github.progress', label: `Loading ${manifest.name}…` }));
-          plugins.loadFromDir(destDir, (err) => {
-            if (err) return ws.send(JSON.stringify({ type: 'plugin.github.result', success: false, error: err.message }));
-            sessions.broadcast({ type: 'plugins', list: plugins.getInfo() });
-            ws.send(JSON.stringify({ type: 'plugin.github.result', success: true, pluginId: manifest.id, name: manifest.name }));
-          });
-        });
-        break;
-      }
-
-      case 'plugin.github.update': {
-        const source = cfg.pluginSource?.[msg.pluginId];
-        if (!source) {
-          ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: 'No GitHub source recorded for this plugin' }));
-          break;
-        }
-        const parsed = parseGithubSource(source);
-        if (!parsed) {
-          ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: 'Stored source URL is invalid' }));
-          break;
-        }
-        ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, progress: true, label: `Downloading ${parsed.owner}/${parsed.repo}…` }));
-        downloadGithubPlugin(parsed, (err, result) => {
-          if (err) return ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: err.message }));
-          const { manifest, srcDir, tmpDir, cleanup } = result;
-          const destDir = join(plugins.PLUGINS_DIR, msg.pluginId);
-          plugins.unloadPlugin(msg.pluginId);
-          try {
-            if (existsSync(destDir)) rmSync(destDir, { recursive: true, force: true });
-            cpSync(srcDir, destDir, { recursive: true });
-          } catch (e) {
-            cleanup();
-            return ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: `Failed to replace plugin files: ${e.message}` }));
-          }
-          cleanup();
-          ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, progress: true, label: `Reloading ${manifest.name}…` }));
-          plugins.loadFromDir(destDir, (err) => {
-            if (err) return ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: false, error: err.message }));
-            sessions.broadcast({ type: 'plugins', list: plugins.getInfo() });
-            ws.send(JSON.stringify({ type: 'plugin.github.update.result', pluginId: msg.pluginId, success: true, name: manifest.name }));
-          });
+          ws.send(JSON.stringify({ type: 'plugin.github.result', success: true, pluginId: manifest.id, name: manifest.name, requiresRestart: true, isUpdate }));
         });
         break;
       }
