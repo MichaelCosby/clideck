@@ -177,6 +177,22 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
 
 // --- Create a new session ---
 
+function normalizeSessionName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+function sessionNameExistsInScope(name, projectId, exceptId = null) {
+  const wanted = normalizeSessionName(name);
+  if (!wanted) return false;
+  const scope = projectId || null;
+  for (const [id, s] of sessions) {
+    if (id === exceptId) continue;
+    if ((s.projectId || null) !== scope) continue;
+    if (normalizeSessionName(s.name) === wanted) return true;
+  }
+  return false;
+}
+
 function create(msg, ws, cfg) {
   const id = crypto.randomUUID();
   const cmd = cfg.commands.find(c => c.id === msg.commandId)
@@ -188,6 +204,10 @@ function create(msg, ws, cfg) {
   const name = msg.name || cmd.label;
 
   const projectId = msg.projectId || null;
+  if (sessionNameExistsInScope(name, projectId)) {
+    ws.send(JSON.stringify({ type: 'error', message: `Agent name "${name}" is already taken in this project.` }));
+    return;
+  }
   const err = spawnSession(id, cmd, parts, cwd, name, themeId, cmd.id, null, projectId, msg.cols, msg.rows);
   if (err) {
     console.error('Failed to spawn pty:', err.message);
@@ -220,6 +240,9 @@ function createProgrammatic(opts, cfg) {
   const themeId = opts.themeId || cfg.defaultTheme || 'default';
   const name = opts.name || cmd.label;
   const projectId = opts.projectId || null;
+  if (sessionNameExistsInScope(name, projectId)) {
+    return { error: `Agent name "${name}" is already taken in this project.` };
+  }
 
   const err = spawnSession(id, cmd, parts, cwd, name, themeId, cmd.id, null, projectId);
   if (err) return { error: err.message };
@@ -323,7 +346,15 @@ function resize(msg) { sessions.get(msg.id)?.pty.resize(msg.cols, msg.rows); }
 
 function rename(msg) {
   const s = sessions.get(msg.id);
-  if (s) { s.name = msg.name; broadcast({ type: 'renamed', id: msg.id, name: msg.name }); }
+  if (!s) return;
+  const name = String(msg.name || '').trim();
+  if (!name) return;
+  if (sessionNameExistsInScope(name, s.projectId, msg.id)) {
+    broadcast({ type: 'session.renameRejected', id: msg.id, name: s.name, message: `Agent name "${name}" is already taken in this project.` });
+    return;
+  }
+  s.name = name;
+  broadcast({ type: 'renamed', id: msg.id, name });
 }
 
 function setTheme(id, themeId) {
@@ -417,8 +448,13 @@ function setPreview(id, text, timestamp) {
 
 function setProject(id, projectId) {
   const s = sessions.get(id);
-  if (s) { s.projectId = projectId || null; return true; }
-  return false;
+  if (!s) return { ok: false };
+  const nextProjectId = projectId || null;
+  if (sessionNameExistsInScope(s.name, nextProjectId, id)) {
+    return { ok: false, error: `Agent name "${s.name}" is already taken in this project.` };
+  }
+  s.projectId = nextProjectId;
+  return { ok: true };
 }
 
 function getResumable(cfg) {

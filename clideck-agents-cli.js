@@ -9,6 +9,7 @@ function usage() {
     'Lists active CliDeck sessions in the same project as the caller session.',
     'Use this from inside a CliDeck session before `clideck ask` to discover target names.',
     'Use --all to discover cross-project targets and their @project/session ask addresses.',
+    'Use the printed ask= value exactly when present, and prefer idle targets for `clideck ask`.',
     '',
     'Options:',
     '  --json       Print machine-readable JSON.',

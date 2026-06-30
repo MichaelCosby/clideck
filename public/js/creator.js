@@ -1,7 +1,7 @@
 import { state, send } from './state.js';
 import { esc, agentIcon, binName, randomUUID } from './utils.js';
 import { openFolderPicker } from './folder-picker.js';
-import { estimateSize } from './terminals.js';
+import { estimateSize, sessionNameTakenInProject } from './terminals.js';
 import { showToast } from './toast.js';
 
 const ADJECTIVES = [
@@ -228,6 +228,13 @@ function ensureShellCommand() {
   return cmd;
 }
 
+function setNameValidation(input, messageEl, invalid) {
+  input.style.borderColor = invalid ? 'rgba(251,113,133,.65)' : '';
+  input.style.boxShadow = invalid ? '0 0 0 1px rgba(251,113,133,.18)' : '';
+  input.style.backgroundColor = invalid ? 'rgba(244,63,94,.08)' : '';
+  messageEl.classList.toggle('hidden', !invalid);
+}
+
 export function openCreator() {
   // Toggle off if already open
   if (document.getElementById('session-creator')) {
@@ -245,17 +252,17 @@ export function openCreator() {
   card.id = 'session-creator';
   card.className = 'p-3 border-b border-slate-700/50 bg-slate-800/30';
   card.innerHTML = `
-    ${(state.cfg.projects?.length) ? `
     <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Select project</div>
     <input type="hidden" id="creator-project" value="">
     <button type="button" id="creator-project-trigger" class="w-full px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-md text-slate-400 text-left flex items-center justify-between outline-none hover:border-slate-500 transition-colors cursor-pointer mb-2">
       <span id="creator-project-label">Select project</span>
       <span class="text-slate-600 ml-2">&#9662;</span>
-    </button>` : ''}
+    </button>
     <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Session name</div>
     <input id="creator-name" type="text" maxlength="35" placeholder="Session name"
-      class="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-md text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500 transition-colors mb-2">
-    <div id="creator-cwd-wrap" class="flex items-center gap-1.5 mb-2 ${(state.cfg.projects?.length) ? 'hidden' : ''}">
+      class="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-md text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500 transition-colors mb-1">
+    <div id="creator-name-error" class="hidden mb-2 text-[11px] leading-snug text-rose-400/80">This name is already taken by another agent in this project.</div>
+    <div id="creator-cwd-wrap" class="flex items-center gap-1.5 mb-2 hidden">
       <input id="creator-cwd" type="text" value="${esc(defaultPath)}" placeholder="Working directory"
         class="flex-1 px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-md text-slate-400 placeholder-slate-600 outline-none focus:border-blue-500 transition-colors font-mono">
       <button id="creator-browse" class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md border border-slate-700 text-slate-500 hover:text-slate-300 hover:bg-slate-700 transition-colors" title="Browse">
@@ -271,15 +278,28 @@ export function openCreator() {
   list.parentElement.insertBefore(card, list);
 
   const nameInput = card.querySelector('#creator-name');
+  const nameError = card.querySelector('#creator-name-error');
   const cwdInput = card.querySelector('#creator-cwd');
   const cwdWrap = card.querySelector('#creator-cwd-wrap');
   const projHidden = card.querySelector('#creator-project');
   const projTrigger = card.querySelector('#creator-project-trigger');
   (projTrigger || nameInput).focus();
 
+  const selectedProjectId = () => {
+    if (!projHidden?.value) return undefined;
+    return projHidden.value === NO_PROJECT_VALUE ? null : projHidden.value;
+  };
+  const refreshNameValidation = () => {
+    const projectId = selectedProjectId();
+    const invalid = projectId !== undefined && sessionNameTakenInProject(nameInput.value.trim() || fallbackName, projectId);
+    setNameValidation(nameInput, nameError, invalid);
+    return invalid;
+  };
+
   nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeCreator();
   });
+  nameInput.addEventListener('input', refreshNameValidation);
   cwdInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeCreator();
   });
@@ -301,17 +321,20 @@ export function openCreator() {
         projLabel.textContent = proj.name;
         cwdWrap.classList.add('hidden');
         cwdInput.value = proj.path || defaultPath;
+        refreshNameValidation();
         return;
       }
       if (value === NO_PROJECT_VALUE) {
         projLabel.textContent = 'None (outside project hierarchy)';
         cwdWrap.classList.remove('hidden');
         cwdInput.value = cwdInput.value.trim() || defaultPath;
+        refreshNameValidation();
         return;
       }
       projLabel.textContent = 'Select project';
       cwdWrap.classList.add('hidden');
       cwdInput.value = defaultPath;
+      refreshNameValidation();
     };
 
     let projMenuCleanup = null;
@@ -384,6 +407,10 @@ export function openCreator() {
       return;
     }
     const name = nameInput.value.trim() || fallbackName;
+    if (refreshNameValidation()) {
+      nameInput.focus();
+      return;
+    }
     const cwd = cwdInput.value.trim() || undefined;
     const projectId = projHidden?.value && projHidden.value !== NO_PROJECT_VALUE ? projHidden.value : undefined;
     if (cmd) createFromCommand(cmd, name, cwd, projectId);

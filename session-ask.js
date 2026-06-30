@@ -202,7 +202,7 @@ async function askSession(payload, sessionsApi, cfg = {}) {
 
   const [targetId, target] = findTarget(sessions, callerId, caller, payload.target, cfg);
   if (target.working) {
-    throw jsonError(`Target session "${target.name}" is busy. CliDeck ask only sends to idle sessions. Try again later, choose another idle session, or ask the user how to proceed.`, 409);
+    throw jsonError(`Target agent "${target.name}" is busy right now. CliDeck ask only sends to idle agents and does not queue requests because the context can become stale. If you need this specific agent, try again later or set a reminder to retry. You can also ask another idle agent.`, 409);
   }
 
   const message = String(payload.message || '').trim();

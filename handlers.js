@@ -521,8 +521,9 @@ function onConnection(ws) {
       }
 
       case 'session.setProject': {
-        const ok = sessions.setProject(msg.id, msg.projectId);
-        if (ok) sessions.broadcast({ type: 'session.setProject', id: msg.id, projectId: msg.projectId });
+        const result = sessions.setProject(msg.id, msg.projectId);
+        if (result?.ok) sessions.broadcast({ type: 'session.setProject', id: msg.id, projectId: msg.projectId });
+        else if (result?.error) ws.send(JSON.stringify({ type: 'error', message: result.error }));
         break;
       }
 

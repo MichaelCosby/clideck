@@ -33,8 +33,53 @@ function updateTimeEl(el, ts) {
   el.classList.toggle('recent', isRecent(ts));
 }
 
+async function writeClipboardText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  ta.remove();
+  if (!ok) throw new Error('Clipboard copy failed');
+}
+
+export async function copySessionName(id) {
+  const entry = state.terms.get(id);
+  const name = document.querySelector(`.group[data-id="${id}"] .name`)?.textContent?.trim();
+  if (!name) return;
+  const project = entry?.projectId
+    ? (state.cfg.projects || []).find(p => p.id === entry.projectId)
+    : null;
+  const target = project?.name ? `@${project.name}/${name}` : name;
+  try {
+    await writeClipboardText(target);
+    showToast(target, { title: 'Ask target copied', duration: 1800 });
+  } catch {
+    showToast('Could not copy ask target.', { title: 'Copy failed', type: 'error', duration: 3000 });
+  }
+}
+
+export function sessionNameTakenInProject(name, projectId, exceptId = null) {
+  const wanted = String(name || '').trim().toLowerCase();
+  if (!wanted) return false;
+  const scope = projectId || null;
+  for (const [id, entry] of state.terms) {
+    if (id === exceptId) continue;
+    if ((entry.projectId || null) !== scope) continue;
+    const existing = document.querySelector(`.group[data-id="${id}"] .name`)?.textContent?.trim().toLowerCase();
+    if (existing === wanted) return true;
+  }
+  return false;
+}
 
 const TERMINAL_SVG = `<svg class="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`;
+const COPY_NAME_SVG = `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const MIN_CONTRAST_RATIO = 4.5;
 
 const DARK_BALLS = ['#00e5ff', '#5df0d6', '#9b8cff'];
@@ -543,8 +588,13 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
       ${iconHtml(commandId)}
     </div>
     <div class="flex-1 min-w-0 pointer-events-none">
-      <div class="flex items-baseline gap-2">
-        <span class="name flex-1 font-semibold text-[13px] text-slate-200 truncate pointer-events-auto cursor-default">${esc(name)}</span>
+      <div class="flex items-center gap-2">
+        <div class="flex-1 min-w-0 flex items-center gap-1.5">
+          <span class="name min-w-0 font-semibold text-[13px] text-slate-200 truncate pointer-events-auto cursor-default">${esc(name)}</span>
+          <button class="copy-name-btn opacity-50 hover:opacity-100 text-slate-500 hover:text-slate-300 flex-shrink-0 transition-opacity pointer-events-auto" title="Copy ask target" aria-label="Copy ask target">
+            ${COPY_NAME_SVG}
+          </button>
+        </div>
         <span class="session-time recent text-[11px] flex-shrink-0">${formatTime(Date.now())}</span>
       </div>
       <div class="flex items-center gap-1 mt-0.5">
@@ -1020,7 +1070,14 @@ export function restartComplete(id, msg) {
 export function startRename(id) {
   const el = document.querySelector(`.group[data-id="${id}"] .name`);
   if (!el || el.contentEditable === 'true') return;
+  const entry = state.terms.get(id);
+  const row = el.closest('.group[data-id]');
+  const textCol = row?.children?.[1];
   const original = el.textContent;
+  const errorEl = document.createElement('div');
+  errorEl.className = 'rename-name-error hidden mt-0.5 text-[11px] leading-snug text-rose-400/80';
+  errorEl.textContent = 'This name is already taken by another agent in this project.';
+  if (textCol?.children?.[1]) textCol.insertBefore(errorEl, textCol.children[1]);
   el.contentEditable = 'true';
   el.style.userSelect = 'text';
   el.style.webkitUserSelect = 'text';
@@ -1029,12 +1086,36 @@ export function startRename(id) {
   document.getSelection().selectAllChildren(el);
 
   let cancelled = false;
-  const finish = () => {
+  const setInvalid = (invalid) => {
+    el.style.outline = invalid ? '1px solid rgba(251,113,133,.62)' : '';
+    el.style.backgroundColor = invalid ? 'rgba(244,63,94,.10)' : '';
+    el.style.borderRadius = invalid ? '6px' : '';
+    el.style.paddingInline = invalid ? '4px' : '';
+    errorEl.classList.toggle('hidden', !invalid);
+  };
+  const validate = () => {
+    const name = el.textContent.trim();
+    const invalid = !!name && sessionNameTakenInProject(name, entry?.projectId || null, id);
+    setInvalid(invalid);
+    return invalid;
+  };
+  const cleanup = () => {
     el.removeEventListener('keydown', onKey);
+    el.removeEventListener('input', validate);
+    el.removeEventListener('blur', finish);
+    errorEl.remove();
+    setInvalid(false);
     el.contentEditable = 'false';
     el.style.userSelect = '';
     el.style.webkitUserSelect = '';
     el.classList.remove('cursor-text');
+  };
+  const finish = () => {
+    if (!cancelled && validate()) {
+      setTimeout(() => el.focus(), 0);
+      return;
+    }
+    cleanup();
     if (cancelled) el.textContent = original;
     else {
       const name = el.textContent.trim() || original;
@@ -1043,10 +1124,14 @@ export function startRename(id) {
     }
   };
   const onKey = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!validate()) el.blur();
+    }
     if (e.key === 'Escape') { cancelled = true; el.blur(); }
   };
-  el.addEventListener('blur', finish, { once: true });
+  el.addEventListener('input', validate);
+  el.addEventListener('blur', finish);
   el.addEventListener('keydown', onKey);
 }
 
