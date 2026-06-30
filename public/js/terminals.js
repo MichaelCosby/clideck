@@ -840,7 +840,11 @@ export function removeTerminal(id) {
   document.querySelector(`.group[data-id="${id}"]`)?.remove();
 
   if (state.active === id) {
-    const next = state.terms.keys().next().value;
+    // Prefer a sibling in the same project, then fall back to global first
+    const projectId = entry.projectId;
+    const next = (projectId
+      ? [...state.terms.entries()].find(([tid, e]) => tid !== id && e.projectId === projectId)?.[0]
+      : null) ?? state.terms.keys().next().value;
     if (next) select(next);
     else {
       state.active = null;

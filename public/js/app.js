@@ -45,7 +45,14 @@ function connect() {
   state.ws = new WebSocket(`${wsProtocol}//${location.host}`);
 
   state.ws.onopen = () => {
-    reconnectReplaySkip = new Set(state.terms.keys());
+    // Terminals in awaiting_replay haven't received their content yet — exclude them
+    // from the skip-set and re-request their replay after reconnecting.
+    reconnectReplaySkip = new Set(
+      [...state.terms.entries()].filter(([, e]) => e.activationState !== 'awaiting_replay').map(([id]) => id)
+    );
+    for (const [id, e] of state.terms) {
+      if (e.activationState === 'awaiting_replay') send({ type: 'session.requestReplay', id });
+    }
     _lastPong = Date.now();
     _heartbeatInterval = setInterval(() => {
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
