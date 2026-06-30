@@ -4,6 +4,7 @@ import { resolveTheme, resolveAccent, applyTheme } from './profiles.js';
 import { attachToTerminal, registerHotkey } from './hotkeys.js';
 import { closeDropdown } from './prompts.js';
 import { showToast } from './toast.js';
+import { confirmClose } from './confirm.js';
 function isLightBg(themeId) {
   const bg = resolveTheme(themeId)?.background;
   if (!bg || bg[0] !== '#') return false;
@@ -652,7 +653,26 @@ export function activateTerminal(id) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   addLinkProvider(term);
-  term.onData(data => {
+  let _lastCtrlL = 0, _ctrlLPending = false;
+  term.onData(async data => {
+    // Guard against accidental double Ctrl+L triggering /clear in Claude Code.
+    // Single Ctrl+L passes through (screen clear). A second \x0c within 2s
+    // is held until the user confirms, then forwarded or dropped.
+    if (data === '\x0c' && presetId === 'claude-code') {
+      const now = Date.now();
+      if (now - _lastCtrlL < 2000 && !_ctrlLPending) {
+        _ctrlLPending = true;
+        const ok = await confirmClose(
+          'Send Ctrl+L again? This will run /clear and erase your Claude Code conversation history.',
+          'Clear conversation'
+        );
+        _ctrlLPending = false;
+        _lastCtrlL = 0;
+        if (!ok) return;
+      } else {
+        _lastCtrlL = now;
+      }
+    }
     trackTerminalInputData(id, data);
     send({ type: 'input', id, data });
   });
