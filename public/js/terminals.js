@@ -884,7 +884,7 @@ export function markUnread(id) {
 export function updatePreview(id) {
   const entry = state.terms.get(id);
   if (!entry) return;
-  const last = readLastAgentLine(entry.term, entry.commandId);
+  const last = entry.term ? readLastAgentLine(entry.term, entry.commandId) : '';
   const el = document.querySelector(`.group[data-id="${id}"] .session-preview`);
   if (el && last && el.textContent !== last) {
     el.textContent = last;

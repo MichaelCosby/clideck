@@ -67,7 +67,7 @@ function connect() {
         renderSettings();
         renderPrompts();
         refreshCreator();
-        for (const [, entry] of state.terms) applyTheme(entry.term, entry.themeId);
+        for (const [, entry] of state.terms) if (entry.term) applyTheme(entry.term, entry.themeId);
         break;
       case 'themes':
         state.themes = msg.themes;
