@@ -743,7 +743,7 @@ export function activateTerminal(id) {
     if (e.shiftKey) return;
     e.preventDefault();
     e.stopPropagation();
-    select(id);
+    select(id, 'context-menu');
     openMenu(id, { x: e.clientX, y: e.clientY });
   };
   el.addEventListener('contextmenu', onContextMenu);
@@ -830,6 +830,7 @@ export function activateTerminal(id) {
 export function removeTerminal(id) {
   const entry = state.terms.get(id);
   if (!entry) return;
+  console.log(`[removeTerminal] id=${id} wasActive=${state.active === id} activationState=${entry.activationState}`);
   if (entry.stopBounce) entry.stopBounce();
   entry.cancelFitRaf?.();
   entry.ro?.disconnect();
@@ -845,7 +846,7 @@ export function removeTerminal(id) {
     const next = (projectId
       ? [...state.terms.entries()].find(([tid, e]) => tid !== id && e.projectId === projectId)?.[0]
       : null) ?? state.terms.keys().next().value;
-    if (next) select(next);
+    if (next) select(next, `removeTerminal(${id})`);
     else {
       state.active = null;
       refreshTerminalInputActions();
@@ -856,7 +857,8 @@ export function removeTerminal(id) {
   regroupSessions();
 }
 
-export function select(id) {
+export function select(id, _reason) {
+  console.log(`[select] ${_reason || 'unknown'}: ${state.active} → ${id}`, new Error().stack.split('\n').slice(1, 4).join(' | '));
   if (state.active === id) return;
   const toActivate = state.terms.get(id);
   if (toActivate && !toActivate.term) activateTerminal(id);
@@ -977,7 +979,7 @@ function setStatus(id, working) {
         const proj = state.cfg.projects?.find(p => p.id === entry.projectId);
         const title = proj ? `${proj.name}: ${sessionName}` : sessionName;
         const n = new Notification(title, { body: `Is now idle.\n${entry.lastPreviewText || ''}`, icon: '/img/clideck-logo-icon.png', tag: id });
-        n.onclick = () => { window.focus(); select(id); n.close(); };
+        n.onclick = () => { window.focus(); select(id, 'notification-click'); n.close(); };
       }
     }
   }
@@ -1085,7 +1087,7 @@ export function restartComplete(id, msg) {
   const entry = state.terms.get(id);
   if (!entry) return;
   entry.term.clear();
-  if (state.active !== id) select(id);
+  if (state.active !== id) select(id, 'restartComplete');
   else entry.term.focus();
 }
 

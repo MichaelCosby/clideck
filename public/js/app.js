@@ -111,14 +111,14 @@ function connect() {
           if (!state.active || !state.terms.has(state.active)) {
             const savedActive = localStorage.getItem('clideck.activeSessionId');
             const nextId = savedActive && liveIds.has(savedActive) ? savedActive : msg.list[0]?.id;
-            if (nextId) select(nextId);
+            if (nextId) select(nextId, `sessions-msg(no-active,saved=${savedActive})`);
           }
         }
         break;
       case 'created':
         expandProjectForNewSession(msg.projectId);
         if (!state.terms.has(msg.id)) addTerminal(msg.id, msg.name, msg.themeId, msg.commandId, msg.projectId, msg.muted, msg.lastPreview, msg.presetId, msg.working);
-        select(msg.id);
+        select(msg.id, `created(resumed=${!!msg.resumed})`);
         applyFilter();
         closeMobileSidebar();
         break;
@@ -149,6 +149,7 @@ function connect() {
         break;
       }
       case 'closed':
+        console.log(`[closed] id=${msg.id} active=${state.active}`);
         removeTerminal(msg.id);
         break;
       case 'session.restarted':
@@ -541,7 +542,7 @@ sessionList.addEventListener('click', (e) => {
     return;
   }
 
-  select(item.dataset.id);
+  select(item.dataset.id, 'sidebar-click');
   closeMobileSidebar();
 });
 
