@@ -823,7 +823,14 @@ export function activateTerminal(id) {
   if (muted) requestAnimationFrame(() => updateMuteIndicator(id));
   refreshTerminalInputActions();
   // Request replay — server responds with output/history (replay:true) or session.replay.done
+  console.log(`[activateTerminal] id=${id} sending session.requestReplay, activationState=${entry.activationState}`);
   send({ type: 'session.requestReplay', id });
+  setTimeout(() => {
+    const e = state.terms.get(id);
+    if (e && e.activationState === 'awaiting_replay') {
+      console.warn(`[activateTerminal] id=${id} STUCK in awaiting_replay 5s after requestReplay — no output/session.history/replay.done arrived. wsState=${state.ws?.readyState}`);
+    }
+  }, 5000);
 }
 
 

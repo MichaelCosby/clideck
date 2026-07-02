@@ -45,13 +45,20 @@ function connect() {
   state.ws = new WebSocket(`${wsProtocol}//${location.host}`);
 
   state.ws.onopen = () => {
-    // Terminals in awaiting_replay haven't received their content yet — exclude them
-    // from the skip-set and re-request their replay after reconnecting.
-    reconnectReplaySkip = new Set(
-      [...state.terms.entries()].filter(([, e]) => e.activationState !== 'awaiting_replay').map(([id]) => id)
-    );
+    console.log(`[ws] opened at ${new Date().toISOString()}, terms=${state.terms.size}`);
+    // Only terminals that already have real rendered content ('active') should skip
+    // a fresh replay on reconnect. Dormant terminals (never selected, term===null)
+    // have no content yet, and awaiting_replay ones are mid-activation — including
+    // either in the skip-set causes their eventual replay response to be silently
+    // dropped, leaving the terminal permanently blank once it's finally activated.
+    const skipIds = [...state.terms.entries()].filter(([, e]) => e.activationState === 'active').map(([id]) => id);
+    reconnectReplaySkip = new Set(skipIds);
+    console.log(`[reconnect] onopen: skip-set (active)=${skipIds.length} terms=${state.terms.size}`, skipIds);
     for (const [id, e] of state.terms) {
-      if (e.activationState === 'awaiting_replay') send({ type: 'session.requestReplay', id });
+      if (e.activationState === 'awaiting_replay') {
+        console.log(`[reconnect] re-requesting replay for awaiting_replay id=${id}`);
+        send({ type: 'session.requestReplay', id });
+      }
     }
     _lastPong = Date.now();
     _heartbeatInterval = setInterval(() => {
@@ -126,11 +133,15 @@ function connect() {
         break;
       case 'output': {
         const entry = state.terms.get(msg.id);
-        if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) break;
+        if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) {
+          console.warn(`[output] id=${msg.id} DROPPED replay — id is in reconnectReplaySkip, activationState=${entry.activationState}`);
+          break;
+        }
         if (!entry) break;
         if (!entry.term) {
           // Dormant — buffer live output only (replay arrives later via session.requestReplay)
           if (!msg.replay) { entry.pendingData.push(msg.data); updatePreview(msg.id); markUnread(msg.id); }
+          else console.warn(`[output] id=${msg.id} got replay data but term is null (dormant) — will be lost`);
           break;
         }
         if (entry.activationState === 'awaiting_replay') {
@@ -175,10 +186,13 @@ function connect() {
       }
       case 'session.history': {
         const entry = state.terms.get(msg.id);
-        if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) break;
+        if (msg.replay && reconnectReplaySkip?.has(msg.id) && entry) {
+          console.warn(`[session.history] id=${msg.id} DROPPED replay — id is in reconnectReplaySkip, activationState=${entry.activationState}`);
+          break;
+        }
         if (!entry) break;
         const historyText = normalizeTerminalHistoryText(msg.text);
-        if (!entry.term) break; // dormant — replay requested on activation
+        if (!entry.term) { console.warn(`[session.history] id=${msg.id} got history but term is null (dormant) — will be lost`); break; } // dormant — replay requested on activation
         if (entry.activationState === 'awaiting_replay') {
           if (msg.replay) {
             console.log(`[session.history] id=${msg.id} replay complete, activationState → active`);
@@ -471,6 +485,7 @@ function connect() {
   };
 
   state.ws.onclose = () => {
+    console.log(`[ws] closed at ${new Date().toISOString()}, terms=${state.terms.size}, active=${state.active}`);
     clearInterval(_heartbeatInterval);
     _heartbeatInterval = null;
     setServerConnectionState(false);
