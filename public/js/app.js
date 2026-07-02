@@ -92,6 +92,7 @@ function connect() {
         }
         break;
       case 'sessions.resumable':
+        console.log(`[sessions.resumable] ids=${msg.list.map(s => s.id).join(',')}`);
         state.resumable = msg.list;
         renderResumable();
         break;
@@ -116,6 +117,7 @@ function connect() {
         }
         break;
       case 'created':
+        console.log(`[created] id=${msg.id} resumed=${!!msg.resumed} name=${msg.name}`);
         expandProjectForNewSession(msg.projectId);
         if (!state.terms.has(msg.id)) addTerminal(msg.id, msg.name, msg.themeId, msg.commandId, msg.projectId, msg.muted, msg.lastPreview, msg.presetId, msg.working);
         select(msg.id, `created(resumed=${!!msg.resumed})`);
@@ -179,6 +181,7 @@ function connect() {
         if (!entry.term) break; // dormant — replay requested on activation
         if (entry.activationState === 'awaiting_replay') {
           if (msg.replay) {
+            console.log(`[session.history] id=${msg.id} replay complete, activationState → active`);
             if (!entry.queue(historyText)) entry.term.write(historyText);
             for (const d of entry.pendingData) { if (!entry.queue(d)) entry.term.write(d); }
             entry.pendingData = [];
@@ -193,6 +196,7 @@ function connect() {
       }
       case 'session.replay.done': {
         const entry = state.terms.get(msg.id);
+        console.log(`[session.replay.done] id=${msg.id} activationState=${entry?.activationState}`);
         if (entry?.activationState === 'awaiting_replay') {
           for (const d of entry.pendingData) { if (!entry.queue(d)) entry.term.write(d); }
           entry.pendingData = [];

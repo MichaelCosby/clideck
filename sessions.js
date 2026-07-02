@@ -113,7 +113,7 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
 
   const sessionIdRe = cmd.sessionIdPattern ? new RegExp(cmd.sessionIdPattern, 'i') : null;
   const preset = matchPreset(cmd);
-  const session = { name, themeId, commandId, cwd, pty: term, chunks: [], chunksSize: 0, sessionToken: savedToken || null, projectId: projectId || null, presetId: preset?.presetId || 'shell', working: undefined };
+  const session = { name, themeId, commandId, cwd, pty: term, chunks: [], chunksSize: 0, sessionToken: savedToken || null, projectId: projectId || null, presetId: preset?.presetId || 'shell', working: undefined, spawnedAt: Date.now(), resumedFrom: savedToken || null };
   sessions.set(id, session);
   transcript.setFinalizeOnIdle(id, ['claude-code', 'codex', 'gemini-cli', 'opencode', 'pi', 'clideck-agent'].includes(session.presetId) ? session.presetId : null);
 
@@ -144,10 +144,15 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
     broadcast({ type: 'output', id, data });
   });
 
-  term.onExit(() => {
+  term.onExit(({ exitCode, signal } = {}) => {
     // Skip cleanup if this PTY was replaced by a restart
     const s = sessions.get(id);
     if (s?.pty !== term) return;
+    const uptimeMs = Date.now() - (s.spawnedAt || Date.now());
+    console.log(`Session ${id.slice(0, 8)}: pty exited after ${uptimeMs}ms — exitCode=${exitCode} signal=${signal} resumed=${!!s.resumedFrom} cmd="${cmd.command}"`);
+    if (uptimeMs < 3000) {
+      console.log(`Session ${id.slice(0, 8)}: EARLY EXIT (<3s) — likely spawn/resume failure, not a normal close`);
+    }
     activity.clear(id);
     telemetry.clear(id);
     opencodeBridge.clear(id);
