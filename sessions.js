@@ -152,6 +152,7 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
     console.log(`Session ${id.slice(0, 8)}: pty exited after ${uptimeMs}ms — exitCode=${exitCode} signal=${signal} resumed=${!!s.resumedFrom} cmd="${cmd.command}"`);
     if (uptimeMs < 3000) {
       console.log(`Session ${id.slice(0, 8)}: EARLY EXIT (<3s) — likely spawn/resume failure, not a normal close`);
+      console.log(`Session ${id.slice(0, 8)}: captured output before exit:\n${JSON.stringify(s.chunks.join(''))}`);
       if (s.resumedFrom) {
         broadcast({ type: 'error', message: `"${s.name}" failed to resume (exited after ${uptimeMs}ms, code ${exitCode}${signal ? `, signal ${signal}` : ''})` });
       }
