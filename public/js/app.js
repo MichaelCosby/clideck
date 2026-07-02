@@ -524,7 +524,15 @@ sessionList.addEventListener('click', (e) => {
   // Resumable session click
   const resumableRow = e.target.closest('[data-resumable-id]');
   if (resumableRow) {
-    send({ type: 'session.resume', id: resumableRow.dataset.resumableId });
+    const id = resumableRow.dataset.resumableId;
+    if (e.target.closest('.resumable-delete-btn')) {
+      const name = resumableRow.querySelector('.resumable-name')?.textContent || 'this session';
+      confirmClose(`Delete "${name}"? This cannot be undone.`, 'Delete').then(ok => {
+        if (ok) send({ type: 'close', id });
+      });
+      return;
+    }
+    send({ type: 'session.resume', id });
     closeMobileSidebar();
     return;
   }

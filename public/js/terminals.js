@@ -1332,6 +1332,7 @@ export function setSessionProject(id, projectId) {
 // --- Resumable sessions ---
 
 const RESUME_SVG = `<svg class="w-3 h-3 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>`;
+const TRASH_SVG = `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>`;
 
 function buildResumableRow(s) {
   const cmd = state.cfg.commands.find(c => c.id === s.commandId);
@@ -1352,6 +1353,9 @@ function buildResumableRow(s) {
       </div>
       <div class="flex items-center gap-1 mt-0.5">
         <span class="flex-1 text-xs text-slate-600 truncate">${s.lastPreview ? esc(s.lastPreview) : esc(label) + (path ? ' · ' + esc(path) : '')}</span>
+        <button class="resumable-delete-btn opacity-60 group-hover:opacity-100 text-slate-500 hover:text-red-400 flex-shrink-0 transition-all flex items-center p-0.5" title="Delete session">
+          ${TRASH_SVG}
+        </button>
         <button class="resume-btn opacity-60 group-hover:opacity-100 text-slate-500 hover:text-emerald-400 flex-shrink-0 transition-all flex items-center gap-0.5 text-[11px] font-medium" title="Resume session">
           Resume${RESUME_SVG}
         </button>
