@@ -111,7 +111,7 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
     return e;
   }
 
-  const sessionIdRe = cmd.sessionIdPattern ? new RegExp(cmd.sessionIdPattern, 'i') : null;
+  const sessionIdRe = cmd.sessionIdPattern ? new RegExp(cmd.sessionIdPattern, 'gi') : null;
   const preset = matchPreset(cmd);
   const session = { name, themeId, commandId, cwd, pty: term, chunks: [], chunksSize: 0, sessionToken: savedToken || null, projectId: projectId || null, presetId: preset?.presetId || 'shell', working: undefined, spawnedAt: Date.now(), resumedFrom: savedToken || null };
   sessions.set(id, session);
@@ -129,13 +129,20 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
     while (session.chunksSize > MAX_BUFFER && session.chunks.length > 1) {
       session.chunksSize -= session.chunks.shift().length;
     }
-    // Capture session ID from output
-    if (sessionIdRe && !session.sessionToken) {
-      const joined = session.chunks.join('');
-      const match = joined.match(sessionIdRe) || stripAnsi(joined).match(sessionIdRe);
-      if (match) {
-        session.sessionToken = match[1];
-        console.log(`Session ${id.slice(0, 8)}: captured token via output regex: ${match[1].slice(0, 12)}…`);
+    // Track session ID from output. Claude Code (and similar agents) assigns a new
+    // session ID whenever the conversation resets (e.g. /clear) — keep watching for a
+    // newer banner throughout the session's life instead of capturing only the first
+    // one, or a resumed session's saved token goes stale after any in-terminal reset.
+    if (sessionIdRe) {
+      session.idTail = ((session.idTail || '') + data).slice(-2000);
+      const clean = stripAnsi(session.idTail);
+      const matches = [...clean.matchAll(sessionIdRe)];
+      if (matches.length) {
+        const latest = matches[matches.length - 1][1];
+        if (latest !== session.sessionToken) {
+          console.log(`Session ${id.slice(0, 8)}: ${session.sessionToken ? `token updated (was ${session.sessionToken.slice(0, 12)}…)` : 'captured token via output regex'}: ${latest.slice(0, 12)}…`);
+          session.sessionToken = latest;
+        }
       }
     }
     activity.trackOut(id, data);
