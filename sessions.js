@@ -11,6 +11,7 @@ const piBridge = require('./pi-bridge');
 const plugins = require('./plugin-loader');
 const { presetForCommand } = require('./preset-utils');
 const { stripAnsi } = require('./ansi-utils');
+const { withCliDeckGuide } = require('./agent-session-guide');
 
 const THEMES = require('./themes');
 const MAX_BUFFER = 2 * 1024 * 1024;
@@ -98,12 +99,14 @@ function isLightTheme(themeId) {
 }
 
 function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken, projectId, cols, rows) {
+  const preset = matchPreset(cmd);
+  const launchParts = withCliDeckGuide(parts, preset?.presetId);
   const telemetryEnv = buildTelemetryEnv(id, cmd);
   const colorEnv = isLightTheme(themeId) ? { COLORFGBG: '0;15' } : { COLORFGBG: '15;0' };
   const extraEnv = commandEnv(cmd);
   let term;
   try {
-    term = pty.spawn(parts[0], parts.slice(1), {
+    term = pty.spawn(launchParts[0], launchParts.slice(1), {
       name: 'xterm-256color', cols: cols || 80, rows: rows || 24, cwd,
       env: { ...process.env, ...extraEnv, ...telemetryEnv, ...colorEnv },
     });
@@ -112,7 +115,6 @@ function spawnSession(id, cmd, parts, cwd, name, themeId, commandId, savedToken,
   }
 
   const sessionIdRe = cmd.sessionIdPattern ? new RegExp(cmd.sessionIdPattern, 'i') : null;
-  const preset = matchPreset(cmd);
   const session = { name, themeId, commandId, cwd, pty: term, chunks: [], chunksSize: 0, sessionToken: savedToken || null, projectId: projectId || null, presetId: preset?.presetId || 'shell', working: undefined };
   sessions.set(id, session);
   transcript.setFinalizeOnIdle(id, ['claude-code', 'codex', 'gemini-cli', 'opencode', 'pi', 'clideck-agent'].includes(session.presetId) ? session.presetId : null);

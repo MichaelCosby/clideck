@@ -565,6 +565,11 @@ function renderNotifications() {
   document.getElementById('cfg-notify-sound').checked = soundEnabled;
   document.getElementById('notify-sound-row').classList.toggle('hidden', !soundEnabled);
   document.getElementById('cfg-notify-sound-pick').value = state.cfg.notifySound || 'default-beep';
+
+  const dispatchSoundEnabled = state.cfg.askDispatchSoundEnabled !== false;
+  document.getElementById('cfg-ask-dispatch-sound').checked = dispatchSoundEnabled;
+  document.getElementById('ask-dispatch-sound-row').classList.toggle('hidden', !dispatchSoundEnabled);
+  document.getElementById('cfg-ask-dispatch-sound-pick').value = state.cfg.askDispatchSound || 'agent-dispatch-ambient';
 }
 
 document.getElementById('cfg-notify-idle').addEventListener('change', (e) => {
@@ -586,6 +591,18 @@ document.getElementById('cfg-notify-sound-pick').addEventListener('change', save
 
 document.getElementById('btn-sound-preview').addEventListener('click', () => {
   const sound = document.getElementById('cfg-notify-sound-pick').value;
+  new Audio(`/fx/${sound}.mp3`).play().catch(() => {});
+});
+
+document.getElementById('cfg-ask-dispatch-sound').addEventListener('change', (e) => {
+  document.getElementById('ask-dispatch-sound-row').classList.toggle('hidden', !e.target.checked);
+  saveConfig();
+});
+
+document.getElementById('cfg-ask-dispatch-sound-pick').addEventListener('change', saveConfig);
+
+document.getElementById('btn-ask-dispatch-sound-preview').addEventListener('click', () => {
+  const sound = document.getElementById('cfg-ask-dispatch-sound-pick').value;
   new Audio(`/fx/${sound}.mp3`).play().catch(() => {});
 });
 
@@ -628,6 +645,8 @@ function saveConfig() {
   state.cfg.notifyMinWork = parseInt(document.getElementById('cfg-notify-min-work').value, 10) || 0;
   state.cfg.notifySoundEnabled = document.getElementById('cfg-notify-sound').checked;
   state.cfg.notifySound = document.getElementById('cfg-notify-sound-pick').value;
+  state.cfg.askDispatchSoundEnabled = document.getElementById('cfg-ask-dispatch-sound').checked;
+  state.cfg.askDispatchSound = document.getElementById('cfg-ask-dispatch-sound-pick').value;
   // Preserve fields not managed by this form
   // (projects, prompts, etc. live on state.cfg and must not be dropped)
   send({ type: 'config.update', config: state.cfg });

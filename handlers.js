@@ -261,11 +261,11 @@ function detectTelemetryConfig(c) {
           repairAllowed = repairAllowed || hasAnyExistingHook(hooks, 'claude-hook.js');
           detected = hasExistingHook(hooks.UserPromptSubmit, 'claude-hook.js', 'start')
                   && hasExistingHook(hooks.Stop, 'claude-hook.js', 'stop')
-                  && hasExistingHook(hooks.StopFailure, 'claude-hook.js', 'stop')
                   && hasExistingHook(hooks.SessionStart, 'claude-hook.js', 'session-start')
                   && hasExistingHook(hooks.SessionEnd, 'claude-hook.js', 'session-end')
                   && hasExistingHook(hooks.PreToolUse, 'claude-hook.js', 'menu')
-                  && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && hasExistingHook([h], 'claude-hook.js', 'idle'));
+                  && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && hasExistingHook([h], 'claude-hook.js', 'idle'))
+                  && !hooks.StopFailure;
           if (detected && cmd.telemetrySetupConsent !== true) {
             cmd.telemetrySetupConsent = true;
             changed = true;
@@ -765,24 +765,23 @@ function applyTelemetryConfig(preset, cmd = null) {
       const hasClideck = (arr, path) => arr?.some(h => h.hooks?.some(x => x.command === hookCmd(path)));
       if (hasClideck(hooks.UserPromptSubmit, 'start')
           && hasClideck(hooks.Stop, 'stop')
-          && hasClideck(hooks.StopFailure, 'stop')
           && hasClideck(hooks.SessionStart, 'session-start')
           && hasClideck(hooks.SessionEnd, 'session-end')
           && hasClideck(hooks.PreToolUse, 'menu')
-          && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && h.hooks?.some(x => x.command === hookCmd('idle')))) {
+          && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && h.hooks?.some(x => x.command === hookCmd('idle')))
+          && !hooks.StopFailure) {
         return { success: true, message: 'Already configured' };
       }
       const stripOld = (arr) => (arr || []).filter(h => !h.hooks?.some(x => x.url?.includes('/hook/claude/') || x.command?.includes('claude-hook.js')));
       hooks.UserPromptSubmit = stripOld(hooks.UserPromptSubmit);
       hooks.Stop = stripOld(hooks.Stop);
-      hooks.StopFailure = stripOld(hooks.StopFailure);
+      delete hooks.StopFailure;
       hooks.SessionStart = stripOld(hooks.SessionStart);
       hooks.SessionEnd = stripOld(hooks.SessionEnd);
       hooks.PreToolUse = stripOld(hooks.PreToolUse);
       hooks.Notification = stripOld(hooks.Notification);
       if (!hasClideck(hooks.UserPromptSubmit, 'start')) hooks.UserPromptSubmit = [...(hooks.UserPromptSubmit || []), clideckHook('start')];
       if (!hasClideck(hooks.Stop, 'stop')) hooks.Stop = [...(hooks.Stop || []), clideckHook('stop')];
-      if (!hasClideck(hooks.StopFailure, 'stop')) hooks.StopFailure = [...(hooks.StopFailure || []), clideckHook('stop')];
       if (!hasClideck(hooks.SessionStart, 'session-start')) hooks.SessionStart = [...(hooks.SessionStart || []), clideckHook('session-start')];
       if (!hasClideck(hooks.SessionEnd, 'session-end')) hooks.SessionEnd = [...(hooks.SessionEnd || []), clideckHook('session-end')];
       if (!hasClideck(hooks.Notification, 'idle')) hooks.Notification = [...(hooks.Notification || []), { matcher: 'idle_prompt', ...clideckHook('idle') }];
@@ -883,7 +882,8 @@ function removeTelemetryConfig(preset, cmd = null) {
       let settings = {};
       try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
       if (!settings.hooks) return { success: true, message: 'No hooks to remove' };
-      for (const event of ['UserPromptSubmit', 'Stop', 'StopFailure', 'SessionStart', 'SessionEnd', 'Notification', 'PreToolUse']) {
+      delete settings.hooks.StopFailure;
+      for (const event of ['UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'Notification', 'PreToolUse']) {
         const arr = settings.hooks[event];
         if (!arr) continue;
         settings.hooks[event] = arr.filter(h => !h.hooks?.some(x => x.url?.includes('/hook/claude/') || x.command?.includes('claude-hook.js')));

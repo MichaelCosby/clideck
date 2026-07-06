@@ -47,6 +47,8 @@ const DEFAULTS = {
   notifySoundEnabled: true,
   notifySound: 'soft-beep',
   notifyMinWork: 0,
+  askDispatchSoundEnabled: true,
+  askDispatchSound: 'agent-dispatch-ambient',
   defaultTheme: 'catppuccin-mocha',
   defaultShell,
   prompts: [],

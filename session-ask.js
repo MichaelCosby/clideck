@@ -214,6 +214,13 @@ async function askSession(payload, sessionsApi, cfg = {}) {
 
   console.log(`[ask] ${caller.name || callerId.slice(0, 8)} -> ${target.name || targetId.slice(0, 8)} (${timeoutMs}ms timeout)`);
   const cancelSubmit = submitAskInput(sessionsApi, targetId, injected);
+  sessionsApi.broadcast({
+    type: 'session.dispatch',
+    fromId: callerId,
+    fromName: caller.name || callerId.slice(0, 8),
+    toId: targetId,
+    toName: target.name || targetId.slice(0, 8),
+  });
 
   const response = await waitForAnswer({ sessionsApi, targetId, sinceTs, timeoutMs }).finally(cancelSubmit);
   console.log(`[ask] completed ${target.name || targetId.slice(0, 8)} -> ${caller.name || callerId.slice(0, 8)}`);

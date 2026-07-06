@@ -4,15 +4,18 @@ const https = require('https');
 function usage() {
   return [
     'Usage:',
+    '  clideck ask status [--json] [--all]',
     '  clideck ask --session <name-or-id> --message <text> [--timeout 10m]',
     '  clideck ask <name-or-id> <message> [--timeout 10m]',
     '  clideck ask "@project-name/session-name" <message> [--timeout 10m]',
     '  cat file.txt | clideck ask --session <name-or-id> [--timeout 10m]',
     '',
     'Use from inside a CliDeck session when this agent needs an answer from another active session.',
+    'CliDeck ask lets agents communicate with each other without manual copy/paste through the user.',
     'Unscoped target lookup is limited to the same project as the caller session.',
     'Use @project/session only when you intentionally need to ask across projects.',
     'Run `clideck agents` or `clideck agents --all` first to discover available target sessions.',
+    'Run `clideck ask status` to quickly see which project sessions are idle or busy.',
     'Copy and use the target exactly as listed by `clideck agents`; quote it if it contains spaces.',
     '',
     'Important for agents:',
@@ -28,13 +31,30 @@ function usage() {
     '  To ask multiple agents, start one `clideck ask` command per target and keep each command open.',
     '',
     'Options:',
+    '  status                   Show idle/busy state for active project sessions.',
     '  -s, --session <name-or-id>  Target session name or id.',
     '  -m, --message <text>       Message to send. If omitted, stdin is used.',
     '  -t, --timeout <duration>   Wait time. Examples: 30s, 10m, 1h. Default: 10m.',
     '  --url <url>                CliDeck server URL. Default: CLIDECK_URL or local port.',
+    '  --json                     With status: print machine-readable JSON.',
+    '  --all                      With status: include all projects.',
     '  --no-progress              Do not print waiting hints to stderr.',
     '  -h, --help                 Show this help.',
   ].join('\n');
+}
+
+function parseStatusArgs(args) {
+  const port = process.env.CLIDECK_PORT || process.env.PORT || '4000';
+  const out = { json: false, all: false, url: process.env.CLIDECK_URL || `http://127.0.0.1:${port}` };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--json') out.json = true;
+    else if (arg === '--all') out.all = true;
+    else if (arg === '--url') out.url = args[++i];
+    else if (arg === '--help' || arg === '-h') out.help = true;
+    else throw new Error(`Unknown status argument: ${arg}`);
+  }
+  return out;
 }
 
 function parseDuration(value) {
@@ -133,6 +153,32 @@ function findAgent(agents, target) {
   return insensitive.length === 1 ? insensitive[0] : null;
 }
 
+function formatStatus(agents, opts = {}) {
+  if (!agents.length) return opts.all ? 'No active sessions found.' : 'No active sessions found in this project.';
+  return agents.map(a => {
+    const status = a.working ? 'busy' : 'idle';
+    const self = a.caller ? ' self' : '';
+    const address = a.address && a.address !== a.name ? ` ${a.address}` : '';
+    const project = opts.all && a.project ? ` project="${a.project}"` : '';
+    return `${status.padEnd(4)}  ${a.name}${self}${address}${project}`;
+  }).join('\n');
+}
+
+async function runStatus(args) {
+  const opts = parseStatusArgs(args);
+  if (opts.help) {
+    console.log(usage());
+    return;
+  }
+  const callerSessionId = process.env.CLIDECK_SESSION_ID || '';
+  if (!callerSessionId) throw new Error('CLIDECK_SESSION_ID is missing. Run this from inside a CliDeck session.');
+  const all = opts.all ? '&all=1' : '';
+  const res = await getJson(opts.url, `/api/session/agents?callerSessionId=${encodeURIComponent(callerSessionId)}${all}`);
+  const agents = (res.agents || []).map(a => ({ ...a, status: a.working ? 'busy' : 'idle' }));
+  if (opts.json) process.stdout.write(JSON.stringify(agents, null, 2) + '\n');
+  else process.stdout.write(formatStatus(agents, opts) + '\n');
+}
+
 function startProgressHints(opts, callerSessionId) {
   if (!opts.progress) return () => {};
   const started = Date.now();
@@ -212,6 +258,10 @@ function postJson(url, payload, timeoutMs) {
 
 async function run(args) {
   try {
+    if (args[0] === 'status') {
+      await runStatus(args.slice(1));
+      return;
+    }
     const opts = parseArgs(args);
     if (opts.help) {
       console.log(usage());
@@ -236,4 +286,4 @@ async function run(args) {
   }
 }
 
-module.exports = { run, parseArgs, parseDuration };
+module.exports = { run, parseArgs, parseDuration, parseStatusArgs, formatStatus };
