@@ -435,6 +435,12 @@ function onConnection(ws) {
       case 'config.update':
         delete msg.config.pluginsDir;
         delete msg.config.version;
+        // The client only ever sees the filtered command list — keep the
+        // commands hidden from it so a settings save can't delete them.
+        if (msg.config.commands) {
+          const visibleIds = new Set(filterClientCommands(cfg.commands).map(c => c.id));
+          msg.config.commands.push(...cfg.commands.filter(c => !visibleIds.has(c.id)));
+        }
         cfg = { ...cfg, ...msg.config };
         detectTelemetryConfig(cfg);
         config.save(cfg);

@@ -1,5 +1,21 @@
 const { chmodSync, existsSync, statSync, readdirSync } = require('fs');
-const { dirname, join } = require('path');
+const { dirname, join, delimiter } = require('path');
+
+// Agent binaries often live in dirs that interactive shell rc files add to PATH
+// (e.g. ~/.local/bin for claude). The server can be launched without them —
+// from a terminal opened before the agent was installed, or a login item.
+function augmentPath() {
+  const dirs = [
+    join(require('os').homedir(), '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    dirname(process.execPath),
+  ];
+  const current = (process.env.PATH || '').split(delimiter);
+  const missing = dirs.filter(d => existsSync(d) && !current.includes(d));
+  if (missing.length) process.env.PATH = [...current, ...missing].join(delimiter);
+}
+augmentPath();
 
 function ensurePtyHelper() {
   if (process.platform === 'win32') return;
