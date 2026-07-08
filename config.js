@@ -152,14 +152,14 @@ function migrate(cfg) {
 
 function load() {
   if (!existsSync(CONFIG_PATH)) {
-    return {
+    return migrate({
       ...deepCopy(DEFAULTS),
       prompts: deepCopy(STARTER_PROMPTS),
-    };
+    });
   }
   try {
     return migrate({ ...deepCopy(DEFAULTS), ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) });
-  } catch { return deepCopy(DEFAULTS); }
+  } catch { return migrate(deepCopy(DEFAULTS)); }
 }
 
 function save(config) {
