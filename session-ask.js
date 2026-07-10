@@ -1,5 +1,5 @@
 const transcript = require('./transcript');
-const { sendJson, isLoopback, sameProject, projectName } = require('./http-util');
+const { sendJson, isLoopback, sameProject, projectName, sessionAddress } = require('./http-util');
 
 const MAX_BODY = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -210,7 +210,8 @@ async function askSession(payload, sessionsApi, cfg = {}) {
 
   const timeoutMs = normalizeTimeout(payload.timeoutMs);
   const sinceTs = Date.now();
-  const injected = `[CliDeck ask from ${caller.name || callerId.slice(0, 8)}]\n\n${message}`;
+  const projects = Array.isArray(cfg.projects) ? cfg.projects : [];
+  const injected = `[CliDeck ask from ${sessionAddress(caller, callerId, projects)}]\n\n${message}`;
 
   console.log(`[ask] ${caller.name || callerId.slice(0, 8)} -> ${target.name || targetId.slice(0, 8)} (${timeoutMs}ms timeout)`);
   const cancelSubmit = submitAskInput(sessionsApi, targetId, injected);
