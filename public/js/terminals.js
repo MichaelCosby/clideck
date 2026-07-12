@@ -777,6 +777,7 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
   const cancelFitRaf = () => { if (fitRaf) { cancelAnimationFrame(fitRaf); fitRaf = 0; } };
   state.terms.set(id, { term, fit, el, ro, cancelFitRaf, onContextMenu, inputLength: 0, inputHasText: false, scrolledUp: false, themeId, commandId, presetId: presetId || null, projectId: projectId || null, muted: !!muted, working: false, workStartedAt: null, stopBounce, queue: (data) => { if (!fitted) { pending.push(data); return true; } return false; }, lastActivityAt: Date.now(), unread: false, lastPreviewText: lastPreview || '', searchText: '' });
   if (working) setStatus(id, true);
+  else renderSessionStatus(state.terms.get(id), statusEl, false); // idle sessions get the zᶻZ icon now, not a blank slot until their first transition
   refreshTerminalInputActions();
   document.getElementById('empty').style.display = 'none';
   document.getElementById('terminals').style.pointerEvents = '';
@@ -953,15 +954,23 @@ function setStatus(id, working) {
   // Fade out, swap, fade in
   el.style.opacity = '0';
   setTimeout(() => {
-    if (working) {
-      el.className = 'session-status flex-shrink-0 leading-none';
-      entry.stopBounce = startBounce(el);
-    } else {
-      el.className = 'session-status dormant flex-shrink-0 text-[11px] leading-none';
-      el.innerHTML = '<span>z<sup>z</sup>Z</span>';
-    }
+    renderSessionStatus(entry, el, working);
     el.style.opacity = '1';
   }, 200);
+}
+
+// Draw the working (bounce) or idle (zᶻZ) icon into a session's status element.
+// Idempotent — used both for the initial render on add and for setStatus swaps,
+// so a session always shows an icon instead of a blank slot.
+function renderSessionStatus(entry, el, working) {
+  if (entry.stopBounce) { entry.stopBounce(); entry.stopBounce = null; }
+  if (working) {
+    el.className = 'session-status flex-shrink-0 leading-none';
+    entry.stopBounce = startBounce(el);
+  } else {
+    el.className = 'session-status dormant flex-shrink-0 text-[11px] leading-none';
+    el.innerHTML = '<span>z<sup>z</sup>Z</span>';
+  }
 }
 
 // --- Mute ---

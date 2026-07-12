@@ -11,6 +11,10 @@ const codexMenuPoll = new Map(); // sessionId → interval (polling for menu aft
 const codexPendingStop = new Map(); // sessionId → ts (notify hook arrived; wait for next response.completed)
 const codexOutputDone = new Map(); // sessionId → ts (fallback if notify never fires)
 const codexPendingIdle = new Map(); // sessionId → timer (tiny settle before committing idle)
+const codexStopFallback = new Map(); // sessionId → timer (commit idle if an armed stop is never confirmed by a completion)
+// Kept longer than the OTEL export interval (2s) so a real response.completed
+// still wins the existing happy path first; this only fires when it never comes.
+const CODEX_STOP_FALLBACK_MS = 3000;
 // Codex does not currently expose one reliable "fully idle" signal across streamed
 // output, tool calls, and approval menus. This state machine is the best available
 // approach for now; do not add more timing patches without fixture tests from real
@@ -269,9 +273,37 @@ function cancelCodexMenuPoll(id) {
 }
 
 function armCodexStop(id) {
-  codexPendingStop.set(id, Date.now());
+  const stamp = Date.now();
+  codexPendingStop.set(id, stamp);
   codexOutputDone.delete(id);
   // console.log(`[codex] pending-stop armed session=${id.slice(0,8)}`);
+  // Codex's Stop/notify is the authoritative "turn stopped" signal, but the
+  // existing flow only commits idle on a *subsequent* response.completed. If
+  // that completion was dropped or batched away, nothing else clears the working
+  // state and the session spins forever. Safety net: once the window elapses,
+  // commit idle ourselves — but only when this exact arming is still un-consumed
+  // (`stamp` cancels the moment a completion, new prompt, tool decision, or
+  // restart touches codexPendingStop) AND the session is still marked working
+  // (so a completion→stop ordering that already went idle does not emit a
+  // duplicate). Being the authoritative stop, it also clears any stale tool
+  // state, so a missing/mismatched tool_result cannot wedge idle forever.
+  cancelCodexStopFallback(id);
+  const timer = setTimeout(() => {
+    codexStopFallback.delete(id);
+    if (codexPendingStop.get(id) !== stamp) return;      // consumed or re-armed
+    const sess = sessionsFn?.()?.get(id);
+    if (!sess || sess.working !== true) return;          // already idle — no duplicate
+    codexPendingStop.delete(id);
+    codexToolPhasePending.delete(id);
+    clearPendingTools(id);
+    broadcastFn?.({ type: 'session.status', id, working: false, source: 'telemetry-stop-fallback' });
+  }, CODEX_STOP_FALLBACK_MS);
+  codexStopFallback.set(id, timer);
+}
+
+function cancelCodexStopFallback(id) {
+  const timer = codexStopFallback.get(id);
+  if (timer) { clearTimeout(timer); codexStopFallback.delete(id); }
 }
 
 function markCodexStart(id, source = 'hook') {
@@ -280,6 +312,7 @@ function markCodexStart(id, source = 'hook') {
   codexToolPhasePending.delete(id);
   clearPendingTools(id);
   cancelCodexPendingIdle(id);
+  cancelCodexStopFallback(id);
   broadcastFn?.({ type: 'session.status', id, working: true, source });
 }
 
@@ -302,6 +335,7 @@ function clear(id) {
   lastEvent.delete(id);
   cancelCodexMenuPoll(id);
   cancelCodexPendingIdle(id);
+  cancelCodexStopFallback(id);
   codexPendingStop.delete(id);
   codexOutputDone.delete(id);
   codexToolPhasePending.delete(id);

@@ -88,10 +88,25 @@ export function renderPrompts() {
   renderPromptList(prompts, '');
 }
 
+// Rank matches so title (name) hits outrank body-only hits — the name is why the
+// prompt exists, so //programmer lists every name match before any text-only match.
+function searchPrompts(prompts, filter) {
+  const q = (filter || '').toLowerCase().trim();
+  if (!q) return prompts;
+  return prompts
+    .map((p, i) => {
+      const rank = p.name.toLowerCase().includes(q) ? 2 : p.text.toLowerCase().includes(q) ? 1 : 0;
+      return { p, i, rank };
+    })
+    .filter(m => m.rank)
+    .sort((a, b) => b.rank - a.rank || a.i - b.i)
+    .map(m => m.p);
+}
+
 function renderPromptList(prompts, filter) {
   const list = panel.querySelector('#prompts-list');
   const q = (filter || '').toLowerCase().trim();
-  const filtered = q ? prompts.filter(p => p.name.toLowerCase().includes(q) || p.text.toLowerCase().includes(q)) : prompts;
+  const filtered = searchPrompts(prompts, filter);
   if (!prompts.length) {
     list.innerHTML = `<div class="flex flex-col items-center justify-center h-full px-6 text-center">
       <p class="text-sm text-slate-400 mb-1">No prompts saved</p>
@@ -196,10 +211,7 @@ let dropdown = null;
 let selectedIdx = 0;
 
 function getMatches() {
-  const q = buffer.toLowerCase();
-  return getPrompts().filter(p =>
-    p.name.toLowerCase().includes(q) || p.text.toLowerCase().includes(q)
-  );
+  return searchPrompts(getPrompts(), buffer);
 }
 
 function showDropdown() {
