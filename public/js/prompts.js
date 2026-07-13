@@ -420,6 +420,9 @@ function truncate(s, n) {
 // immediately (no lag). If a matching second char arrives within 300ms, erase the
 // first with backspace and open the menu — // for prompts, @@ for agent mentions.
 const TRIGGER_MODES = { '/': 'prompt', '@': 'agent' };
+// @ can only be typed with a modifier (Shift, or AltGr on many layouts), so these
+// keydowns interleave with the @ keystrokes — they must not disturb trigger history.
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
 let lastTriggerTime = 0;
 let lastTriggerKey = '';
 let lastKeyWasPrintable = false;
@@ -481,12 +484,22 @@ export function handleTerminalKey(e) {
     return false;
   }
 
+  // Modifier-only keydowns must not disturb trigger history. Since @ is typed with
+  // Shift (or AltGr), a Shift keydown fires between the two @ of @@; letting it reset
+  // state broke @@ across platforms and defeated the "printable char before" guard.
+  if (MODIFIER_KEYS.has(e.key)) return true;
+
+  // Treat AltGr-produced characters (e.g. @ on many EU layouts) as normal input, not
+  // a Ctrl/Alt shortcut, so // and @@ trigger regardless of keyboard layout.
+  const altGraph = typeof e.getModifierState === 'function' && e.getModifierState('AltGraph');
+  const isChar = e.key.length === 1 && !e.metaKey && (!e.ctrlKey || altGraph) && (!e.altKey || altGraph);
+
   // Detect // and @@ triggers — first char goes through normally, a matching second
   // char within 300ms activates. Suppress if a non-whitespace character was typed
   // just before the first char (e.g. s//, a@@, ://).
   // This is a key-history heuristic, not a true terminal-state check.
   const trigMode = TRIGGER_MODES[e.key];
-  if (trigMode && !e.ctrlKey && !e.metaKey && !e.altKey && triggerAvailable(trigMode)) {
+  if (trigMode && isChar && triggerAvailable(trigMode)) {
     const now = Date.now();
     if (e.key === lastTriggerKey && now - lastTriggerTime < 300) {
       // Second matching char — erase the first from the terminal, open the menu
@@ -513,6 +526,6 @@ export function handleTerminalKey(e) {
   lastTriggerTime = 0;
   lastTriggerKey = '';
   // Track non-whitespace printable keys; whitespace (space, tab) should not block a standalone // or @@
-  lastKeyWasPrintable = e.key.length === 1 && e.key.trim() !== '' && !e.ctrlKey && !e.metaKey && !e.altKey;
+  lastKeyWasPrintable = isChar && e.key.trim() !== '';
   return true;
 }
