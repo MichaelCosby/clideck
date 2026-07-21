@@ -12,7 +12,8 @@
     "prepublishOnly": "npm run build:css",
     "smoke:providers": "node tests/providers/run.js",
     "smoke:menu": "node tests/providers/menu-detection.test.js",
-    "smoke:capture": "node tests/providers/antigravity-capture.test.js"
+    "smoke:capture": "node tests/providers/antigravity-capture.test.js",
+    "smoke:menu-status": "node tests/providers/menu-status.test.js"
   },
   "keywords": [
     "terminal",

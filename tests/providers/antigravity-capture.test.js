@@ -3,12 +3,14 @@
 // other agents' transcripts. Instead its preset carries `finalizeOnCapture`, and
 // the server commits the transcript from each settled terminal capture.
 //
-// This proves that capture-and-commit path end to end at the transcript layer:
-// a post-startup agent turn is captured AND persisted, a repeated identical
-// capture is idempotent (no duplicate), and a later turn keeps saving without
-// collapsing the earlier one. It drives the exact calls the WS handler makes on
-// a settled `terminal.buffer` (updateAgentCandidate → commitAgentCandidate) plus
+// This covers the capture-and-commit path at the transcript layer (module-level,
+// not through the WS handler or the client's terminal capture): a post-startup
+// agent turn is captured AND persisted, a repeated identical capture is
+// idempotent (no duplicate), and a later turn keeps saving without collapsing the
+// earlier one. It drives the exact transcript calls the WS handler makes on a
+// settled `terminal.buffer` (updateAgentCandidate → commitAgentCandidate) plus
 // the PTY-driven user path (trackInput) — deliberately NOT a detectMenu() call.
+// The menu → status side of the flow is covered by menu-status.test.js.
 //
 // If the capture-and-commit path regresses, this breaks first.
 //

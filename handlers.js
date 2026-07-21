@@ -7,7 +7,7 @@ const sessions = require('./sessions');
 const themes = require('./themes');
 const presets = JSON.parse(readFileSync(join(__dirname, 'agent-presets.json'), 'utf8'));
 const { listDirs, binName, defaultShell } = require('./utils');
-const { presetForCommand: findPresetForCommand } = require('./preset-utils');
+const { presetForCommand: findPresetForCommand, menuStartsWork } = require('./preset-utils');
 const { PORT } = require('./runtime');
 for (const p of presets) if (p.presetId === 'shell') p.command = defaultShell;
 function isPresetEnabled(preset) {
@@ -411,7 +411,7 @@ function onConnection(ws) {
           if (choices) transcript.commitAgentCandidate(msg.id, sess.presetId);
           if (key !== (sess._menuKey || '')) {
             sess._menuKey = key;
-            sess._menuStartsWork = !(sess.presetId === 'claude-code' && !msg.menuVersion);
+            sess._menuStartsWork = menuStartsWork(sess.presetId, !!msg.menuVersion, sess._finalizeOnCapture);
             sessions.broadcast({ type: 'session.menu', id: msg.id, choices: choices || [] });
             if (choices) {
               if (sess.presetId === 'claude-code' && msg.menuVersion) sess._menuActiveVersion = msg.menuVersion;
