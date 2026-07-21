@@ -639,15 +639,18 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     send({ type: 'input', id, data });
   });
 
-  // [TRANSCRIPT-CAPTURE] initial settled capture plus one delayed idle save
+  // [TRANSCRIPT-CAPTURE] initial settled capture, plus one delayed idle save;
+  // agents with no push status (finalizeOnCapture) also save on each settled render
   let _captureTimer = null, _renderSilent = false, _lastTyping = 0, _initialCaptureDone = false, _idleSaveTimer = null;
-  function _sendCapture() {
+  function _sendCapture(settled) {
     const entry = state.terms.get(id);
     if (!entry?.term) return;
     const buf = entry.term.buffer.active;
     const lines = [];
     for (let i = 0; i < buf.length; i++) { const line = buf.getLine(i); if (line) lines.push(line.translateToString(true)); }
-    send({ type: 'terminal.buffer', id, lines });
+    // `settled` marks a post-render-silence frame — the server commits the
+    // transcript from these for agents with no push status (finalizeOnCapture).
+    send({ type: 'terminal.buffer', id, lines, settled: !!settled });
   }
   function _isChrome(t) {
     return !t
@@ -674,9 +677,12 @@ export function addTerminal(id, name, themeId, commandId, projectId, muted, last
     if (!_initialCaptureDone) {
       if (!_hasContent()) return; // retry on next silence
       _initialCaptureDone = true;
-      _sendCapture();
+      _sendCapture(true);
       return;
     }
+    // Agents with no push status (antigravity) never trigger the status- or
+    // hook-driven capture paths, so keep saving on each settled render.
+    if (state.presets.find(p => p.presetId === presetId)?.finalizeOnCapture) _sendCapture(true);
   }
   term.onData(() => {
     _lastTyping = Date.now();

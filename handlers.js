@@ -397,6 +397,12 @@ function onConnection(ws) {
           if (!sess.working && sess._finalizeOnIdle) {
             sess._finalizeOnIdle = false;
             transcript.commitAgentCandidate(msg.id, sess.presetId);
+          } else if (sess._finalizeOnCapture && msg.settled) {
+            // Agents with no push status (e.g. antigravity) never hit the idle
+            // path above. The client only sends settled buffers after render
+            // silence, so commit each one — commitAgentCandidate skips empty and
+            // duplicate text, making repeated captures idempotent.
+            transcript.commitAgentCandidate(msg.id, sess.presetId);
           }
           // Auto-approve: send Enter immediately when menu detected
           if (choices && plugins.shouldAutoApproveMenu(msg.id)) {

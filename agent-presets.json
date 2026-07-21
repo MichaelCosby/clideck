@@ -109,6 +109,7 @@
     "icon": "/img/antigravity.svg",
     "command": "agy",
     "lineage": "claude-code",
+    "finalizeOnCapture": true,
     "installCmd": "agy update",
     "isAgent": true,
     "canResume": false,
