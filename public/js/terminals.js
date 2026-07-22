@@ -677,15 +677,18 @@ export function activateTerminal(id) {
     send({ type: 'input', id, data });
   });
 
-  // [TRANSCRIPT-CAPTURE] initial settled capture plus one delayed idle save
+  // [TRANSCRIPT-CAPTURE] initial settled capture, plus one delayed idle save;
+  // agents with no push status (finalizeOnCapture) also save on each settled render
   let _captureTimer = null, _renderSilent = false, _lastTyping = 0, _initialCaptureDone = false, _idleSaveTimer = null;
-  function _sendCapture() {
-    const e = state.terms.get(id);
-    if (!e?.term) return;
-    const buf = e.term.buffer.active;
+  function _sendCapture(settled) {
+    const entry = state.terms.get(id);
+    if (!entry?.term) return;
+    const buf = entry.term.buffer.active;
     const lines = [];
     for (let i = 0; i < buf.length; i++) { const line = buf.getLine(i); if (line) lines.push(line.translateToString(true)); }
-    send({ type: 'terminal.buffer', id, lines });
+    // `settled` marks a post-render-silence frame — the server commits the
+    // transcript from these for agents with no push status (finalizeOnCapture).
+    send({ type: 'terminal.buffer', id, lines, settled: !!settled });
   }
   function _isChrome(t) {
     return !t
@@ -710,9 +713,12 @@ export function activateTerminal(id) {
     if (!_initialCaptureDone) {
       if (!_hasContent()) return;
       _initialCaptureDone = true;
-      _sendCapture();
+      _sendCapture(true);
       return;
     }
+    // Agents with no push status (antigravity) never trigger the status- or
+    // hook-driven capture paths, so keep saving on each settled render.
+    if (state.presets.find(p => p.presetId === presetId)?.finalizeOnCapture) _sendCapture(true);
   }
   term.onData(() => {
     _lastTyping = Date.now();
@@ -794,7 +800,6 @@ export function activateTerminal(id) {
     }
   }, 500);
   const cancelFitRaf = () => { if (fitRaf) { cancelAnimationFrame(fitRaf); fitRaf = 0; } };
-
   // Patch the dormant entry in-place so external references remain valid
   Object.assign(entry, {
     term, fit, ro, cancelFitRaf, onContextMenu,
@@ -1010,15 +1015,23 @@ function setStatus(id, working) {
   // Fade out, swap, fade in
   el.style.opacity = '0';
   setTimeout(() => {
-    if (working) {
-      el.className = 'session-status flex-shrink-0 leading-none';
-      entry.stopBounce = startBounce(el);
-    } else {
-      el.className = 'session-status dormant flex-shrink-0 text-[11px] leading-none';
-      el.innerHTML = '<span>z<sup>z</sup>Z</span>';
-    }
+    renderSessionStatus(entry, el, working);
     el.style.opacity = '1';
   }, 200);
+}
+
+// Draw the working (bounce) or idle (zᶻZ) icon into a session's status element.
+// Idempotent — used both for the initial render on add and for setStatus swaps,
+// so a session always shows an icon instead of a blank slot.
+function renderSessionStatus(entry, el, working) {
+  if (entry.stopBounce) { entry.stopBounce(); entry.stopBounce = null; }
+  if (working) {
+    el.className = 'session-status flex-shrink-0 leading-none';
+    entry.stopBounce = startBounce(el);
+  } else {
+    el.className = 'session-status dormant flex-shrink-0 text-[11px] leading-none';
+    el.innerHTML = '<span>z<sup>z</sup>Z</span>';
+  }
 }
 
 // --- Mute ---

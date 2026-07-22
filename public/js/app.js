@@ -39,6 +39,13 @@ function expandProjectForNewSession(projectId) {
   send({ type: 'config.update', config: state.cfg });
 }
 
+function playAskDispatchSound(msg) {
+  if (state.cfg.askDispatchSoundEnabled === false) return;
+  const target = state.terms.get(msg.toId);
+  if (target?.muted) return;
+  const sound = state.cfg.askDispatchSound || 'agent-dispatch-ambient';
+  new Audio(`/fx/${sound}.mp3`).play().catch(() => {});
+}
 
 function connect() {
   const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -172,6 +179,9 @@ function connect() {
       // Telemetry/bridge working/idle
       case 'session.status':
         setStatus(msg.id, msg.working);
+        break;
+      case 'session.dispatch':
+        playAskDispatchSound(msg);
         break;
       // Server requests terminal capture (e.g. after PermissionRequest hook)
       case 'terminal.capture': {

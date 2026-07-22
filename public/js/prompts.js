@@ -17,7 +17,10 @@ export function renderPrompts() {
   panel.innerHTML = `
     <div class="flex items-center justify-between px-3 pt-3 pb-2">
       <span class="text-sm font-bold text-slate-200 tracking-tight" style="font-family:'JetBrains Mono',monospace">Prompts</span>
-      <button id="btn-add-prompt" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md border border-slate-600 text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors text-sm" title="New prompt">+</button>
+      <div class="flex items-center gap-1">
+        <button id="btn-prompt-help" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md border border-slate-600 text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors text-sm" title="How prompts work">?</button>
+        <button id="btn-add-prompt" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md border border-slate-600 text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors text-sm" title="New prompt">+</button>
+      </div>
     </div>
     <div class="px-3 pb-2.5">
       <div id="prompts-hint" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800/40 text-slate-600 text-[11px] cursor-text">
@@ -61,6 +64,7 @@ export function renderPrompts() {
   });
 
   panel.querySelector('#btn-add-prompt').addEventListener('click', () => openEditor());
+  panel.querySelector('#btn-prompt-help').addEventListener('click', () => openHelp());
 
   const list = panel.querySelector('#prompts-list');
 
@@ -88,10 +92,25 @@ export function renderPrompts() {
   renderPromptList(prompts, '');
 }
 
+// Rank matches so title (name) hits outrank body-only hits — the name is why the
+// prompt exists, so //programmer lists every name match before any text-only match.
+function searchPrompts(prompts, filter) {
+  const q = (filter || '').toLowerCase().trim();
+  if (!q) return prompts;
+  return prompts
+    .map((p, i) => {
+      const rank = p.name.toLowerCase().includes(q) ? 2 : p.text.toLowerCase().includes(q) ? 1 : 0;
+      return { p, i, rank };
+    })
+    .filter(m => m.rank)
+    .sort((a, b) => b.rank - a.rank || a.i - b.i)
+    .map(m => m.p);
+}
+
 function renderPromptList(prompts, filter) {
   const list = panel.querySelector('#prompts-list');
   const q = (filter || '').toLowerCase().trim();
-  const filtered = q ? prompts.filter(p => p.name.toLowerCase().includes(q) || p.text.toLowerCase().includes(q)) : prompts;
+  const filtered = searchPrompts(prompts, filter);
   if (!prompts.length) {
     list.innerHTML = `<div class="flex flex-col items-center justify-center h-full px-6 text-center">
       <p class="text-sm text-slate-400 mb-1">No prompts saved</p>
@@ -127,9 +146,39 @@ function closeEditor() {
   document.getElementById('prompt-editor')?.remove();
 }
 
+function closeHelp() {
+  document.getElementById('prompt-help')?.remove();
+}
+
+// PORT-TO-NEXT: prompts help card ([?] in header) — new feature, replicate in clideck-next.
+// Concise usage help. Shares the editor's slot below the header and is mutually
+// exclusive with it — opening help closes an open add/edit form, and vice versa.
+function openHelp() {
+  if (document.getElementById('prompt-help')) { closeHelp(); return; } // toggle off
+  closeEditor();
+  const card = document.createElement('div');
+  card.id = 'prompt-help';
+  card.className = 'p-3 border-b border-slate-700/50 bg-slate-800/30 text-[11px] text-slate-400 leading-relaxed';
+  card.innerHTML = `
+    <div class="flex items-center justify-between mb-1.5">
+      <span class="text-xs font-semibold text-slate-300">Using prompts</span>
+      <button id="ph-close" class="text-slate-500 hover:text-slate-300 transition-colors" title="Close">✕</button>
+    </div>
+    <p class="mb-2">Save reusable prompts — coding guidance, reviewer notes, project intros. In any terminal, type <kbd class="px-1 py-0.5 rounded bg-slate-700/60 text-slate-300 font-mono text-[10px]">//</kbd> then a few letters to search and paste one (title matches rank first).</p>
+    <p class="mb-1 text-slate-300">Placeholders — filled from the active session on paste:</p>
+    <ul class="space-y-1">
+      <li><code class="px-1 py-0.5 rounded bg-slate-900 text-slate-300 font-mono">{{session_name}}</code> → the session's name</li>
+      <li><code class="px-1 py-0.5 rounded bg-slate-900 text-slate-300 font-mono">{{project_name}}</code> → its project (blank if none)</li>
+    </ul>`;
+  const list = panel.querySelector('#prompts-list');
+  list.parentElement.insertBefore(card, list);
+  card.querySelector('#ph-close').addEventListener('click', closeHelp);
+}
+
 function openEditor(idx) {
   // Toggle off if already open
   if (document.getElementById('prompt-editor')) { closeEditor(); if (idx == null) return; }
+  closeHelp(); // help and the add/edit form share one slot — never both at once
   const existing = idx != null ? getPrompts()[idx] : null;
 
   const card = document.createElement('div');
@@ -180,26 +229,97 @@ function openEditor(idx) {
 
 // --- Paste prompt into active terminal ---
 
+// PORT-TO-NEXT: prompt {{placeholders}} — new feature, replicate in clideck-next.
+// Fill {{session_name}} / {{project_name}} placeholders from the target session
+// on the fly at paste time. Missing/unknown values resolve to an empty string.
+function fillPromptVars(text, id) {
+  const entry = state.terms.get(id);
+  const sessionName = document.querySelector(`.group[data-id="${id}"] .name`)?.textContent?.trim() || '';
+  const project = entry?.projectId ? (state.cfg.projects || []).find(p => p.id === entry.projectId) : null;
+  return text
+    .replaceAll('{{session_name}}', sessionName)
+    .replaceAll('{{project_name}}', project?.name || '');
+}
+
 function pastePrompt(text) {
   if (!state.active) return;
-  send({ type: 'input', id: state.active, data: text });
+  send({ type: 'input', id: state.active, data: fillPromptVars(text, state.active) });
   // Refocus the terminal after pasting
   const entry = state.terms.get(state.active);
   if (entry) entry.term.focus();
 }
 
-// --- // Autocomplete trigger ---
+// PORT-TO-NEXT: @@ agent mentions — new feature, replicate in clideck-next.
+// Active sessions as mention targets: name + @project/session address (matches
+// `clideck agents` / copySessionName). Built from the live session list on demand.
+function getAgents() {
+  const projects = state.cfg.projects || [];
+  const out = [];
+  for (const [id, entry] of state.terms) {
+    const name = document.querySelector(`.group[data-id="${id}"] .name`)?.textContent?.trim();
+    if (!name) continue;
+    const project = entry.projectId ? projects.find(p => p.id === entry.projectId) : null;
+    out.push({ id, name, address: project?.name ? `@${project.name}/${name}` : name });
+  }
+  return out;
+}
 
-let buffer = '';    // chars typed after //
-let active = false; // autocomplete is open
+// Rank name matches above address-only matches, like searchPrompts.
+function searchAgents(filter) {
+  const q = (filter || '').toLowerCase().trim();
+  const all = getAgents();
+  if (!q) return all;
+  return all
+    .map((a, i) => {
+      const rank = a.name.toLowerCase().includes(q) ? 2 : a.address.toLowerCase().includes(q) ? 1 : 0;
+      return { a, i, rank };
+    })
+    .filter(m => m.rank)
+    .sort((x, y) => y.rank - x.rank || x.i - y.i)
+    .map(m => m.a);
+}
+
+// Bracketed paste — same technique session-ask.js uses to inject into an agent TUI.
+// Wrapping the mention makes the agent treat the leading @ as literal pasted text,
+// so it does NOT re-open Claude/Codex's native @ file-mention picker.
+const BRACKETED_PASTE_START = '\x1b[200~';
+const BRACKETED_PASTE_END = '\x1b[201~';
+
+function insertMention(address) {
+  if (!state.active) return;
+  send({ type: 'input', id: state.active, data: `${BRACKETED_PASTE_START}${address} ${BRACKETED_PASTE_END}` });
+  const entry = state.terms.get(state.active);
+  if (entry) entry.term.focus();
+}
+
+// --- // (prompts) and @@ (agents) autocomplete ---
+
+let buffer = '';         // chars typed after the trigger
+let active = false;      // autocomplete is open
 let dropdown = null;
 let selectedIdx = 0;
+let mode = 'prompt';     // 'prompt' (//) or 'agent' (@@) — set when the menu opens
+
+// Per-mode config: match source, how each row renders, and what completion does.
+const AUTOCOMPLETE_MODES = {
+  prompt: {
+    label: 'Prompts', prefix: '//', empty: 'No matching prompts',
+    hint: 'Type <kbd>//</kbd> to search your prompt library', action: 'paste',
+    matches: () => searchPrompts(getPrompts(), buffer),
+    main: m => m.name, sub: m => truncate(m.text, 80),
+    complete: m => pastePrompt(m.text),
+  },
+  agent: {
+    label: 'Agents', prefix: '@@', empty: 'No matching agents',
+    hint: 'Type <kbd>@@</kbd> to mention an agent', action: 'insert',
+    matches: () => searchAgents(buffer),
+    main: m => m.name, sub: m => m.address,
+    complete: m => insertMention(m.address),
+  },
+};
 
 function getMatches() {
-  const q = buffer.toLowerCase();
-  return getPrompts().filter(p =>
-    p.name.toLowerCase().includes(q) || p.text.toLowerCase().includes(q)
-  );
+  return AUTOCOMPLETE_MODES[mode].matches();
 }
 
 function showDropdown() {
@@ -233,28 +353,29 @@ function showDropdown() {
 function renderDropdownContent(matches) {
   if (!dropdown) return;
   const q = buffer.toLowerCase();
+  const cfg = AUTOCOMPLETE_MODES[mode];
 
   if (!matches.length) {
     dropdown.innerHTML = `
-      <div class="pa-empty">No matching prompts</div>
-      <div class="pa-hint">Type <kbd>//</kbd> to search your prompt library</div>`;
+      <div class="pa-empty">${cfg.empty}</div>
+      <div class="pa-hint">${cfg.hint}</div>`;
     return;
   }
 
   dropdown.innerHTML = `
     <div class="pa-header">
-      <span class="pa-label">Prompts</span>
-      <span class="pa-query">//${esc(buffer)}</span>
+      <span class="pa-label">${cfg.label}</span>
+      <span class="pa-query">${cfg.prefix}${esc(buffer)}</span>
     </div>
-    <div class="pa-list">${matches.map((p, i) => `
+    <div class="pa-list">${matches.map((m, i) => `
       <div class="pa-item${i === selectedIdx ? ' pa-selected' : ''}" data-idx="${i}">
-        <div class="pa-name">${highlight(p.name, q)}</div>
-        <div class="pa-text">${highlight(truncate(p.text, 80), q)}</div>
+        <div class="pa-name">${highlight(cfg.main(m), q)}</div>
+        <div class="pa-text">${highlight(cfg.sub(m), q)}</div>
       </div>`).join('')}
     </div>
     <div class="pa-footer">
       <span><kbd>↑↓</kbd> navigate</span>
-      <span><kbd>Enter</kbd> paste</span>
+      <span><kbd>Enter</kbd> ${cfg.action}</span>
       <span><kbd>Esc</kbd> cancel</span>
     </div>`;
 
@@ -263,7 +384,7 @@ function renderDropdownContent(matches) {
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
       const match = matches[+el.dataset.idx];
-      if (match) { closeDropdown(); pastePrompt(match.text); }
+      if (match) { closeDropdown(); cfg.complete(match); }
     });
   });
 }
@@ -295,10 +416,20 @@ function truncate(s, n) {
 
 // --- Key interception (called from hotkeys.js attachToTerminal) ---
 
-// Trigger detection: let the first / go to the terminal immediately (no lag).
-// If a second / arrives within 300ms, erase the first / with backspace and open autocomplete.
-let lastSlashTime = 0;
+// Trigger detection: let the first trigger char (/ or @) reach the terminal
+// immediately (no lag). If a matching second char arrives within 300ms, erase the
+// first with backspace and open the menu — // for prompts, @@ for agent mentions.
+const TRIGGER_MODES = { '/': 'prompt', '@': 'agent' };
+// @ can only be typed with a modifier (Shift, or AltGr on many layouts), so these
+// keydowns interleave with the @ keystrokes — they must not disturb trigger history.
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
+let lastTriggerTime = 0;
+let lastTriggerKey = '';
 let lastKeyWasPrintable = false;
+
+function triggerAvailable(m) {
+  return m === 'agent' ? state.terms.size > 0 : getPrompts().length > 0;
+}
 
 export function handleTerminalKey(e) {
   if (e.type !== 'keydown') return true;
@@ -326,8 +457,9 @@ export function handleTerminalKey(e) {
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
       const match = matches[selectedIdx];
+      const cfg = AUTOCOMPLETE_MODES[mode];
       closeDropdown();
-      if (match) pastePrompt(match.text);
+      if (match) cfg.complete(match);
       return false;
     }
     if (e.key === 'Backspace') {
@@ -352,32 +484,48 @@ export function handleTerminalKey(e) {
     return false;
   }
 
-  // Detect // trigger — first / goes through normally, second / within 300ms activates.
-  // Suppress if a non-whitespace character was typed just before the first / (e.g. s//, ://).
+  // Modifier-only keydowns must not disturb trigger history. Since @ is typed with
+  // Shift (or AltGr), a Shift keydown fires between the two @ of @@; letting it reset
+  // state broke @@ across platforms and defeated the "printable char before" guard.
+  if (MODIFIER_KEYS.has(e.key)) return true;
+
+  // Treat AltGr-produced characters (e.g. @ on many EU layouts) as normal input, not
+  // a Ctrl/Alt shortcut, so // and @@ trigger regardless of keyboard layout.
+  const altGraph = typeof e.getModifierState === 'function' && e.getModifierState('AltGraph');
+  const isChar = e.key.length === 1 && !e.metaKey && (!e.ctrlKey || altGraph) && (!e.altKey || altGraph);
+
+  // Detect // and @@ triggers — first char goes through normally, a matching second
+  // char within 300ms activates. Suppress if a non-whitespace character was typed
+  // just before the first char (e.g. s//, a@@, ://).
   // This is a key-history heuristic, not a true terminal-state check.
-  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && getPrompts().length > 0) {
+  const trigMode = TRIGGER_MODES[e.key];
+  if (trigMode && isChar && triggerAvailable(trigMode)) {
     const now = Date.now();
-    if (now - lastSlashTime < 300) {
-      // Second / — erase the first / from terminal, open autocomplete
-      lastSlashTime = 0;
+    if (e.key === lastTriggerKey && now - lastTriggerTime < 300) {
+      // Second matching char — erase the first from the terminal, open the menu
+      lastTriggerTime = 0;
+      lastTriggerKey = '';
       lastKeyWasPrintable = false;
       e.preventDefault();
-      if (state.active) send({ type: 'input', id: state.active, data: '\x7f' }); // backspace to remove first /
+      if (state.active) send({ type: 'input', id: state.active, data: '\x7f' }); // backspace to remove first char
+      mode = trigMode;
       showDropdown();
       return false;
     }
-    // First / — only start timer if previous key wasn't a non-whitespace character
+    // First char — only arm the timer if the previous key wasn't a non-whitespace character
     if (!lastKeyWasPrintable) {
-      lastSlashTime = now;
+      lastTriggerTime = now;
+      lastTriggerKey = e.key;
     }
-    // / is itself a non-whitespace char — keep the flag hot so s/// doesn't trigger on 3rd slash
+    // The trigger char is itself non-whitespace — keep the flag hot so s/// / a@@@ don't re-trigger
     lastKeyWasPrintable = true;
     return true;
   }
 
-  // Any other key resets the slash timer
-  lastSlashTime = 0;
-  // Track non-whitespace printable keys; whitespace (space, tab) should not block standalone //
-  lastKeyWasPrintable = e.key.length === 1 && e.key.trim() !== '' && !e.ctrlKey && !e.metaKey && !e.altKey;
+  // Any other key resets the trigger timer
+  lastTriggerTime = 0;
+  lastTriggerKey = '';
+  // Track non-whitespace printable keys; whitespace (space, tab) should not block a standalone // or @@
+  lastKeyWasPrintable = isChar && e.key.trim() !== '';
   return true;
 }

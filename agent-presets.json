@@ -104,6 +104,20 @@
     }
   },
   {
+    "presetId": "antigravity",
+    "name": "Antigravity",
+    "icon": "/img/antigravity.svg",
+    "command": "agy",
+    "lineage": "claude-code",
+    "finalizeOnCapture": true,
+    "installCmd": "agy update",
+    "isAgent": true,
+    "canResume": false,
+    "resumeCommand": null,
+    "sessionIdPattern": null,
+    "outputMarker": "⏺"
+  },
+  {
     "presetId": "clideck-agent",
     "name": "Clideck Agent",
     "icon": "/img/clideck-agent.svg",

@@ -8,7 +8,7 @@ const sessions = require('./sessions');
 const themes = require('./themes');
 const presets = JSON.parse(readFileSync(join(__dirname, 'agent-presets.json'), 'utf8'));
 const { listDirs, binName, defaultShell } = require('./utils');
-const { presetForCommand: findPresetForCommand } = require('./preset-utils');
+const { presetForCommand: findPresetForCommand, menuStartsWork } = require('./preset-utils');
 const { PORT } = require('./runtime');
 for (const p of presets) if (p.presetId === 'shell') p.command = defaultShell;
 function isPresetEnabled(preset) {
@@ -262,11 +262,11 @@ function detectTelemetryConfig(c) {
           repairAllowed = repairAllowed || hasAnyExistingHook(hooks, 'claude-hook.js');
           detected = hasExistingHook(hooks.UserPromptSubmit, 'claude-hook.js', 'start')
                   && hasExistingHook(hooks.Stop, 'claude-hook.js', 'stop')
-                  && hasExistingHook(hooks.StopFailure, 'claude-hook.js', 'stop')
                   && hasExistingHook(hooks.SessionStart, 'claude-hook.js', 'session-start')
                   && hasExistingHook(hooks.SessionEnd, 'claude-hook.js', 'session-end')
                   && hasExistingHook(hooks.PreToolUse, 'claude-hook.js', 'menu')
-                  && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && hasExistingHook([h], 'claude-hook.js', 'idle'));
+                  && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && hasExistingHook([h], 'claude-hook.js', 'idle'))
+                  && !hooks.StopFailure;
           if (detected && cmd.telemetrySetupConsent !== true) {
             cmd.telemetrySetupConsent = true;
             changed = true;
@@ -399,6 +399,12 @@ function onConnection(ws) {
           if (!sess.working && sess._finalizeOnIdle) {
             sess._finalizeOnIdle = false;
             transcript.commitAgentCandidate(msg.id, sess.presetId);
+          } else if (sess._finalizeOnCapture && msg.settled) {
+            // Agents with no push status (e.g. antigravity) never hit the idle
+            // path above. The client only sends settled buffers after render
+            // silence, so commit each one — commitAgentCandidate skips empty and
+            // duplicate text, making repeated captures idempotent.
+            transcript.commitAgentCandidate(msg.id, sess.presetId);
           }
           // Auto-approve: send Enter immediately when menu detected
           if (choices && plugins.shouldAutoApproveMenu(msg.id)) {
@@ -407,7 +413,7 @@ function onConnection(ws) {
           if (choices) transcript.commitAgentCandidate(msg.id, sess.presetId);
           if (key !== (sess._menuKey || '')) {
             sess._menuKey = key;
-            sess._menuStartsWork = !(sess.presetId === 'claude-code' && !msg.menuVersion);
+            sess._menuStartsWork = menuStartsWork(sess.presetId, !!msg.menuVersion, sess._finalizeOnCapture);
             sessions.broadcast({ type: 'session.menu', id: msg.id, choices: choices || [] });
             if (choices) {
               if (sess.presetId === 'claude-code' && msg.menuVersion) sess._menuActiveVersion = msg.menuVersion;
@@ -437,6 +443,12 @@ function onConnection(ws) {
       case 'config.update':
         delete msg.config.pluginsDir;
         delete msg.config.version;
+        // The client only ever sees the filtered command list — keep the
+        // commands hidden from it so a settings save can't delete them.
+        if (msg.config.commands) {
+          const visibleIds = new Set(filterClientCommands(cfg.commands).map(c => c.id));
+          msg.config.commands.push(...cfg.commands.filter(c => !visibleIds.has(c.id)));
+        }
         cfg = { ...cfg, ...msg.config };
         detectTelemetryConfig(cfg);
         config.save(cfg);
@@ -795,24 +807,23 @@ function applyTelemetryConfig(preset, cmd = null) {
       const hasClideck = (arr, path) => arr?.some(h => h.hooks?.some(x => x.command === hookCmd(path)));
       if (hasClideck(hooks.UserPromptSubmit, 'start')
           && hasClideck(hooks.Stop, 'stop')
-          && hasClideck(hooks.StopFailure, 'stop')
           && hasClideck(hooks.SessionStart, 'session-start')
           && hasClideck(hooks.SessionEnd, 'session-end')
           && hasClideck(hooks.PreToolUse, 'menu')
-          && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && h.hooks?.some(x => x.command === hookCmd('idle')))) {
+          && hooks.Notification?.some(h => h.matcher === 'idle_prompt' && h.hooks?.some(x => x.command === hookCmd('idle')))
+          && !hooks.StopFailure) {
         return { success: true, message: 'Already configured' };
       }
       const stripOld = (arr) => (arr || []).filter(h => !h.hooks?.some(x => x.url?.includes('/hook/claude/') || x.command?.includes('claude-hook.js')));
       hooks.UserPromptSubmit = stripOld(hooks.UserPromptSubmit);
       hooks.Stop = stripOld(hooks.Stop);
-      hooks.StopFailure = stripOld(hooks.StopFailure);
+      delete hooks.StopFailure;
       hooks.SessionStart = stripOld(hooks.SessionStart);
       hooks.SessionEnd = stripOld(hooks.SessionEnd);
       hooks.PreToolUse = stripOld(hooks.PreToolUse);
       hooks.Notification = stripOld(hooks.Notification);
       if (!hasClideck(hooks.UserPromptSubmit, 'start')) hooks.UserPromptSubmit = [...(hooks.UserPromptSubmit || []), clideckHook('start')];
       if (!hasClideck(hooks.Stop, 'stop')) hooks.Stop = [...(hooks.Stop || []), clideckHook('stop')];
-      if (!hasClideck(hooks.StopFailure, 'stop')) hooks.StopFailure = [...(hooks.StopFailure || []), clideckHook('stop')];
       if (!hasClideck(hooks.SessionStart, 'session-start')) hooks.SessionStart = [...(hooks.SessionStart || []), clideckHook('session-start')];
       if (!hasClideck(hooks.SessionEnd, 'session-end')) hooks.SessionEnd = [...(hooks.SessionEnd || []), clideckHook('session-end')];
       if (!hasClideck(hooks.Notification, 'idle')) hooks.Notification = [...(hooks.Notification || []), { matcher: 'idle_prompt', ...clideckHook('idle') }];
@@ -913,7 +924,8 @@ function removeTelemetryConfig(preset, cmd = null) {
       let settings = {};
       try { settings = JSON.parse(readFileSync(configPath, 'utf8')); } catch {}
       if (!settings.hooks) return { success: true, message: 'No hooks to remove' };
-      for (const event of ['UserPromptSubmit', 'Stop', 'StopFailure', 'SessionStart', 'SessionEnd', 'Notification', 'PreToolUse']) {
+      delete settings.hooks.StopFailure;
+      for (const event of ['UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd', 'Notification', 'PreToolUse']) {
         const arr = settings.hooks[event];
         if (!arr) continue;
         settings.hooks[event] = arr.filter(h => !h.hooks?.some(x => x.url?.includes('/hook/claude/') || x.command?.includes('claude-hook.js')));

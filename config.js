@@ -47,6 +47,8 @@ const DEFAULTS = {
   notifySoundEnabled: true,
   notifySound: 'soft-beep',
   notifyMinWork: 0,
+  askDispatchSoundEnabled: true,
+  askDispatchSound: 'agent-dispatch-ambient',
   defaultTheme: 'catppuccin-mocha',
   defaultShell,
   prompts: [],
@@ -150,14 +152,14 @@ function migrate(cfg) {
 
 function load() {
   if (!existsSync(CONFIG_PATH)) {
-    return {
+    return migrate({
       ...deepCopy(DEFAULTS),
       prompts: deepCopy(STARTER_PROMPTS),
-    };
+    });
   }
   try {
     return migrate({ ...deepCopy(DEFAULTS), ...JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) });
-  } catch { return deepCopy(DEFAULTS); }
+  } catch { return migrate(deepCopy(DEFAULTS)); }
 }
 
 function save(config) {

@@ -1,4 +1,4 @@
-const { sendJson, isLoopback, sameProject, projectName } = require('./http-util');
+const { sendJson, isLoopback, sameProject, projectName, sessionAddress } = require('./http-util');
 
 function agentRow(id, s, callerId, projects) {
   const project = projectName(projects, s.projectId);
@@ -8,7 +8,7 @@ function agentRow(id, s, callerId, projects) {
     preset: s.presetId || 'shell',
     projectId: s.projectId || null,
     project,
-    address: s.projectId ? `@${project}/${s.name || id.slice(0, 8)}` : s.name || id.slice(0, 8),
+    address: sessionAddress(s, id, projects),
     working: !!s.working,
     lastPreview: s.lastPreview || '',
     lastActivityAt: s.lastActivityAt || null,

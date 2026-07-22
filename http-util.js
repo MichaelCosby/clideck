@@ -17,4 +17,9 @@ function projectName(projects, projectId) {
   return projects.find(p => p.id === projectId)?.name || projectId;
 }
 
-module.exports = { sendJson, isLoopback, sameProject, projectName };
+function sessionAddress(session, id, projects) {
+  const name = session.name || id.slice(0, 8);
+  return session.projectId ? `@${projectName(projects, session.projectId)}/${name}` : name;
+}
+
+module.exports = { sendJson, isLoopback, sameProject, projectName, sessionAddress };
