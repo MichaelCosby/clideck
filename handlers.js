@@ -798,13 +798,18 @@ function applyTelemetryConfig(preset, cmd = null) {
       if (setup.otelOk && !setup.wrongOtel && setup.notifyHelper && hasHooks) {
         return { success: true, message: 'Already configured' };
       }
+      if (!setup.valid) return { success: false, message: `${configPath}: ${setup.error}` };
       const notifyHelperPath = join(__dirname, 'bin', 'notify-helper.js').replace(/\\/g, '/');
-      const nextContent = upsertCodexConfig(content, process.execPath.replace(/\\/g, '/'), notifyHelperPath, port);
+      const { content: nextContent, notifyConflict } = upsertCodexConfig(content, process.execPath.replace(/\\/g, '/'), notifyHelperPath, port);
       const valid = validateCodexConfigToml(nextContent);
       if (!valid.ok) return { success: false, message: valid.error };
       mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, nextContent);
       installCodexHooks(codexHome, process.execPath.replace(/\\/g, '/'), codexHookPath, port);
+      if (notifyConflict) {
+        // Their notifier stays untouched; chaining it is the user's call to make.
+        return { success: false, message: `Configured otel + hooks, but ${configPath} already has its own notify. Add "${notifyHelperPath}" to that chain to get Codex status.` };
+      }
       return { success: true, message: 'Configured. If Codex shows "2 hooks need review", open /hooks and approve the CliDeck hooks once.' };
     }
 

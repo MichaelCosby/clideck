@@ -1,12 +1,13 @@
-// Codex's config.toml is user-owned and can express the same settings in several
-// valid TOML shapes. CliDeck used to read it with substring/single-line regex
-// matching, which caused issue #33: a valid `[otel.exporter.otlp-http]` table
-// read as "not configured", and — worse — writing to such a file produced BROKEN
-// TOML (an orphaned multiline `notify` array, or a duplicate otel table).
+// Codex's config.toml belongs to the user, and CliDeck only manages three
+// settings inside it. Issue #33 started as a detection bug (a valid
+// [otel.exporter.otlp-http] table read as "Failed - configure manually"), but
+// the same text-matching assumptions also made the writer destructive.
 //
-// These are the regressions that must never come back. Detection is asserted
-// through readCodexSetup(), and every write path is asserted by re-parsing its
-// output as real TOML.
+// The rules asserted here, in order of severity:
+//   1. writing must never produce invalid TOML (a broken config.toml stops Codex)
+//   2. writing must never delete or rewrite anything CliDeck did not put there -
+//      other otel keys, per-profile settings, comments, or the user's own notifier
+//   3. detection must understand any valid TOML shape of our settings
 //
 //   node tests/providers/codex-config.test.js
 
@@ -25,13 +26,14 @@ const HELPER = '/lib/clideck/bin/notify-helper.js';
 let failed = 0;
 function check(name, cond, detail) {
   console.log(`  ${cond ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'}  ${name}`);
-  if (!cond) { failed++; if (detail) console.log(`        ${detail}`); }
+  if (!cond) { failed++; if (detail) console.log(`        ${String(detail).replace(/\n/g, '\n        ')}`); }
 }
 function parses(text) {
   try { parse(text); return true; } catch { return false; }
 }
+const upsert = (src) => upsertCodexConfig(src, NODE, HELPER, PORT);
 
-// The exact shape from issue #33 — valid TOML that Codex accepts.
+// The shape from issue #33 — valid TOML that Codex accepts.
 const dottedOtel = [
   '[otel.exporter.otlp-http]',
   'endpoint = "http://localhost:4000"',
@@ -44,9 +46,9 @@ const inlineOtel = [
   'exporter = { otlp-http = { endpoint = "http://localhost:4000", protocol = "json" } }',
 ].join('\n');
 
-// A multiline notify array, wrapped through another notifier — note the nested
-// brackets inside a quoted string, which naive bracket counting would misread.
-const multilineNotify = [
+// A multiline notify chained through another notifier — note the nested brackets
+// inside a quoted string, which naive bracket counting would misread.
+const chainedNotify = [
   'notify = [',
   '  "/opt/SkyComputerUseClient",',
   '  "turn-ended",',
@@ -55,74 +57,111 @@ const multilineNotify = [
   ']',
 ].join('\n');
 
-// --- detection: equivalent TOML shapes must all be understood ------------------
+// --- 1. detection ---------------------------------------------------------------
 console.log('\ndetection (readCodexSetup)');
 for (const [name, src] of [['dotted table', dottedOtel], ['inline table', inlineOtel]]) {
   const setup = readCodexSetup(src, PORT);
   check(`${name}: otel endpoint detected`, setup.otelOk === true);
   check(`${name}: not flagged as the wrong /v1/logs endpoint`, setup.wrongOtel === false);
 }
-check('notify helper found in a multiline array',
-  readCodexSetup(multilineNotify, PORT).notifyHelper === '/lib/clideck/bin/notify-helper.js');
+check('helper found even when chained inside another notifier',
+  readCodexSetup(chainedNotify, PORT).notifyHelper === '/lib/clideck/bin/notify-helper.js');
 check('hooks = true under [features] detected',
   readCodexSetup('[features]\nhooks = true\n', PORT).hooksEnabled === true);
-check('a different port is not accepted',
-  readCodexSetup(dottedOtel, 4111).otelOk === false);
-check('missing otel reports not configured',
-  readCodexSetup('model = "gpt-5"\n', PORT).otelOk === false);
+check('a different port is not accepted', readCodexSetup(dottedOtel, 4111).otelOk === false);
+check('the legacy /v1/logs endpoint is flagged',
+  readCodexSetup('[otel.exporter.otlp-http]\nendpoint = "http://localhost:4000/v1/logs"', PORT).wrongOtel === true);
 
-// --- validation: valid TOML must validate --------------------------------------
+// A string that merely mentions a header must not confuse parsing or writing.
+const stringWithHeader = 'instructions = "mention [otel] literally"\n';
+check('a string containing [otel] still parses', readCodexSetup(stringWithHeader, PORT).valid === true);
+
+// --- 2. validation --------------------------------------------------------------
 console.log('\nvalidation (validateCodexConfigToml)');
-check('multiline notify array is valid', validateCodexConfigToml(multilineNotify).ok === true);
+check('multiline notify array is valid', validateCodexConfigToml(chainedNotify).ok === true);
 check('dotted otel table is valid', validateCodexConfigToml(dottedOtel).ok === true);
+check('a string containing [otel] is valid', validateCodexConfigToml(stringWithHeader).ok === true);
 check('genuinely broken TOML is rejected', validateCodexConfigToml('notify = [\n"a",\n').ok === false);
 
-// --- writing: output must always be parseable TOML -----------------------------
-console.log('\nwriting (upsertCodexConfig)');
+// --- 3. writing produces valid TOML ---------------------------------------------
+console.log('\nwriting produces valid TOML (upsertCodexConfig)');
+const fromDotted = upsert(dottedOtel);
+check('dotted otel: valid TOML (no duplicate table)', parses(fromDotted.content), fromDotted.content);
+const fromString = upsert(stringWithHeader);
+check('string containing [otel]: valid TOML (not split mid-string)', parses(fromString.content), fromString.content);
+check('string containing [otel]: text preserved verbatim',
+  fromString.content.includes('instructions = "mention [otel] literally"'), fromString.content);
+const fromEmpty = upsert('');
+check('empty config: valid TOML', parses(fromEmpty.content), fromEmpty.content);
+check('empty config: reads back as configured',
+  readCodexSetup(fromEmpty.content, PORT).otelOk && readCodexSetup(fromEmpty.content, PORT).hooksEnabled);
 
-const fromDotted = upsertCodexConfig(dottedOtel, NODE, HELPER, PORT);
-check('dotted otel: result is valid TOML (no duplicate table)', parses(fromDotted), fromDotted);
-check('dotted otel: no stale [otel.exporter.otlp-http] left behind',
-  !fromDotted.includes('[otel.exporter.otlp-http]'));
+// --- 4. writing preserves what CliDeck does not own ------------------------------
+console.log('\nwriting preserves user content');
 
-const fromMultiline = upsertCodexConfig(multilineNotify, NODE, HELPER, PORT);
-check('multiline notify: result is valid TOML (no orphaned lines)', parses(fromMultiline), fromMultiline);
-check('multiline notify: old notifier entry is gone',
-  !fromMultiline.includes('SkyComputerUseClient'));
-
-const withComments = [
-  '# my codex config',
-  'model = "gpt-5"',
+const otelExtras = [
+  '[otel]',
+  'environment = "prod"',
+  'log_user_prompt = false',
   '',
+  '[otel.exporter.otlp-http]',
+  'endpoint = "http://localhost:9999"',
+].join('\n');
+const fromExtras = upsert(otelExtras);
+check('other otel keys survive', fromExtras.content.includes('environment = "prod"')
+  && fromExtras.content.includes('log_user_prompt = false'), fromExtras.content);
+check('a stale endpoint is corrected in place',
+  readCodexSetup(fromExtras.content, PORT).otelOk === true && !fromExtras.content.includes('9999'), fromExtras.content);
+check('otel extras: valid TOML', parses(fromExtras.content), fromExtras.content);
+
+const profileNotify = [
   '[profiles.work]',
   'model = "gpt-5-codex"',
+  'notify = ["/my/own/notifier"]',
 ].join('\n');
-const fromComments = upsertCodexConfig(withComments, NODE, HELPER, PORT);
-check('user comments are preserved', fromComments.includes('# my codex config'));
-check('unrelated sections are preserved', fromComments.includes('[profiles.work]'));
-check('commented config: result is valid TOML', parses(fromComments), fromComments);
+const fromProfile = upsert(profileNotify);
+check('per-profile notify is NOT deleted', fromProfile.content.includes('/my/own/notifier'), fromProfile.content);
+check('per-profile section survives', fromProfile.content.includes('[profiles.work]'));
+check('profile config: valid TOML', parses(fromProfile.content), fromProfile.content);
 
-const configured = upsertCodexConfig(fromMultiline, NODE, HELPER, PORT);
-check('upsert is idempotent (second run still valid)', parses(configured));
-check('upsert result reads back as configured',
-  readCodexSetup(configured, PORT).otelOk === true
-  && readCodexSetup(configured, PORT).hooksEnabled === true
-  && !!readCodexSetup(configured, PORT).notifyHelper);
+const withComments = ['# my codex config', 'model = "gpt-5"'].join('\n');
+const fromComments = upsert(withComments);
+check('user comments are preserved', fromComments.content.includes('# my codex config'));
+check('unrelated top-level keys are preserved', fromComments.content.includes('model = "gpt-5"'));
 
-// --- removal --------------------------------------------------------------------
-console.log('\nremoval (stripCodexConfig)');
-const stripped = stripCodexConfig(configured);
-check('strip: result is valid TOML', parses(stripped), stripped);
-check('strip: otel table removed', readCodexSetup(stripped, PORT).otelOk === false);
-check('strip: notify removed', readCodexSetup(stripped, PORT).notifyHelper === null);
+// The user's own notifier chain is theirs — report, never overwrite.
+const foreignNotify = 'notify = ["/opt/my-notifier", "turn-ended"]\n';
+const fromForeign = upsert(foreignNotify);
+check('a foreign notify chain is NOT overwritten', fromForeign.content.includes('/opt/my-notifier'), fromForeign.content);
+check('a foreign notify chain is reported as a conflict', fromForeign.notifyConflict === true);
+check('foreign notify: valid TOML', parses(fromForeign.content), fromForeign.content);
 
-const strippedDotted = stripCodexConfig(dottedOtel + '\n' + multilineNotify);
-check('strip: removes dotted otel + multiline notify too',
-  parses(strippedDotted)
-  && readCodexSetup(strippedDotted, PORT).otelOk === false
-  && readCodexSetup(strippedDotted, PORT).notifyHelper === null, strippedDotted);
-check('strip: keeps unrelated user settings',
-  stripCodexConfig(withComments + '\n' + inlineOtel).includes('[profiles.work]'));
+// An already-chained CliDeck helper needs no edit at all.
+const fromChained = upsert(chainedNotify);
+check('an existing CliDeck chain is left intact',
+  fromChained.content.includes('SkyComputerUseClient') && fromChained.notifyConflict === false, fromChained.content);
+check('chained notify: valid TOML', parses(fromChained.content), fromChained.content);
+
+// --- 5. idempotence + removal ----------------------------------------------------
+console.log('\nidempotence and removal');
+const once = upsert(withComments).content;
+const twice = upsert(once).content;
+check('upsert is idempotent', once === twice, `first:\n${once}\nsecond:\n${twice}`);
+check('configured result reads back as configured',
+  readCodexSetup(once, PORT).otelOk && readCodexSetup(once, PORT).hooksEnabled && !!readCodexSetup(once, PORT).notifyHelper);
+
+const stripped = stripCodexConfig(once);
+check('strip: valid TOML', parses(stripped), stripped);
+check('strip: our settings are gone',
+  readCodexSetup(stripped, PORT).otelOk === false && readCodexSetup(stripped, PORT).notifyHelper === null, stripped);
+check('strip: user content survives',
+  stripped.includes('# my codex config') && stripped.includes('model = "gpt-5"'), stripped);
+
+const strippedExtras = stripCodexConfig(upsert(otelExtras).content);
+check('strip: other otel keys survive',
+  strippedExtras.includes('environment = "prod"') && strippedExtras.includes('log_user_prompt = false'), strippedExtras);
+const strippedProfile = stripCodexConfig(upsert(profileNotify).content);
+check('strip: per-profile notify survives', strippedProfile.includes('/my/own/notifier'), strippedProfile);
 
 if (failed) { console.log(`\n${failed} check(s) failed`); process.exit(1); }
 console.log('\nall codex config checks passed');
