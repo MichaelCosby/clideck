@@ -110,9 +110,17 @@ const otelExtras = [
 const fromExtras = upsert(otelExtras);
 check('other otel keys survive', fromExtras.content.includes('environment = "prod"')
   && fromExtras.content.includes('log_user_prompt = false'), fromExtras.content);
-check('a stale endpoint is corrected in place',
-  readCodexSetup(fromExtras.content, PORT).otelOk === true && !fromExtras.content.includes('9999'), fromExtras.content);
+check('user-owned otel is left byte-for-byte alone', fromExtras.content.includes(otelExtras), fromExtras.content);
+check('user-owned otel is reported as a manual step', fromExtras.manual.includes('otel'));
 check('otel extras: valid TOML', parses(fromExtras.content), fromExtras.content);
+
+// When otel holds nothing but our canonical keys, a stale port IS corrected.
+const staleOwn = ['[otel.exporter.otlp-http]', 'endpoint = "http://localhost:9999"', 'protocol = "json"'].join('\n');
+const fromStale = upsert(staleOwn);
+check('our own stale endpoint is corrected', readCodexSetup(fromStale.content, PORT).otelOk === true
+  && !fromStale.content.includes('9999'), fromStale.content);
+check('correcting our own otel needs no manual step', !fromStale.manual.includes('otel'));
+check('corrected otel: valid TOML', parses(fromStale.content), fromStale.content);
 
 const profileNotify = [
   '[profiles.work]',
@@ -133,13 +141,13 @@ check('unrelated top-level keys are preserved', fromComments.content.includes('m
 const foreignNotify = 'notify = ["/opt/my-notifier", "turn-ended"]\n';
 const fromForeign = upsert(foreignNotify);
 check('a foreign notify chain is NOT overwritten', fromForeign.content.includes('/opt/my-notifier'), fromForeign.content);
-check('a foreign notify chain is reported as a conflict', fromForeign.notifyConflict === true);
+check('a foreign notify chain is reported as manual', fromForeign.manual.includes('notify'));
 check('foreign notify: valid TOML', parses(fromForeign.content), fromForeign.content);
 
 // An already-chained CliDeck helper needs no edit at all.
 const fromChained = upsert(chainedNotify);
 check('an existing CliDeck chain is left intact',
-  fromChained.content.includes('SkyComputerUseClient') && fromChained.notifyConflict === false, fromChained.content);
+  fromChained.content.includes('SkyComputerUseClient') && !fromChained.manual.includes('notify'), fromChained.content);
 check('chained notify: valid TOML', parses(fromChained.content), fromChained.content);
 
 // --- 4b. values that span lines are not mistaken for structure -------------------
@@ -172,11 +180,50 @@ const inlineSiblings = [
   'exporter = { otlp-http = { endpoint = "http://localhost:9999", protocol = "binary", headers = { auth = "x" } } }',
 ].join('\n');
 const fromSiblings = upsert(inlineSiblings);
-check('sibling headers survive an endpoint update',
+check('sibling headers survive untouched',
   fromSiblings.content.includes('headers') && fromSiblings.content.includes('auth = "x"'), fromSiblings.content);
-check('endpoint and protocol are corrected in place',
-  readCodexSetup(fromSiblings.content, PORT).otelOk === true, fromSiblings.content);
+check('an exporter with siblings is left alone, not rewritten',
+  fromSiblings.content.includes(inlineSiblings) && fromSiblings.manual.includes('otel'), fromSiblings.content);
 check('inline siblings: valid TOML', parses(fromSiblings.content), fromSiblings.content);
+
+// A second exporter must never have its endpoint or protocol taken over.
+const grpcSibling = [
+  '[otel]',
+  'exporter = { otlp-http = { protocol = "json" }, otlp-grpc = { endpoint = "http://grpc.internal:4317" } }',
+].join('\n');
+const fromGrpc = upsert(grpcSibling);
+check('a sibling exporter keeps its own endpoint',
+  fromGrpc.content.includes('http://grpc.internal:4317'), fromGrpc.content);
+check('a sibling exporter is reported, not rewritten', fromGrpc.manual.includes('otel'));
+check('sibling exporter: valid TOML', parses(fromGrpc.content), fromGrpc.content);
+
+// --- 4e. headers with comments or quoted keys -------------------------------------
+console.log('\nheader spellings');
+const commentedHeader = [
+  '[otel] # telemetry',
+  'exporter = { otlp-http = { endpoint = "http://localhost:9999", protocol = "json" } }',
+].join('\n');
+const fromCommented = upsert(commentedHeader);
+check('header with a trailing comment: valid TOML (no duplicate table)',
+  parses(fromCommented.content), fromCommented.content);
+check('header with a trailing comment: reads back as configured',
+  readCodexSetup(fromCommented.content, PORT).otelOk === true, fromCommented.content);
+check('header with a trailing comment: no stale otel table left behind',
+  (fromCommented.content.match(/\[otel/g) || []).length === 1, fromCommented.content);
+
+// A comment on the canonical table survives, because that table is edited in place.
+const commentedCanonical = ['[otel.exporter.otlp-http] # telemetry', 'endpoint = "http://localhost:9999"', 'protocol = "json"'].join('\n');
+const fromCommentedCanonical = upsert(commentedCanonical);
+check('comment on our own table is preserved',
+  fromCommentedCanonical.content.includes('# telemetry'), fromCommentedCanonical.content);
+check('comment on our own table: endpoint still corrected',
+  readCodexSetup(fromCommentedCanonical.content, PORT).otelOk === true, fromCommentedCanonical.content);
+
+const quotedHeader = ['[otel.exporter."otlp-http"]', 'endpoint = "http://localhost:9999"', 'protocol = "json"'].join('\n');
+const fromQuoted = upsert(quotedHeader);
+check('quoted key header: valid TOML (no duplicate table)', parses(fromQuoted.content), fromQuoted.content);
+check('quoted key header: reads back as configured',
+  readCodexSetup(fromQuoted.content, PORT).otelOk === true, fromQuoted.content);
 
 // --- 4d. protocol and repair gating -----------------------------------------------
 console.log('\nhealth gating');
@@ -199,26 +246,43 @@ check('upsert is idempotent', once === twice, `first:\n${once}\nsecond:\n${twice
 check('configured result reads back as configured',
   readCodexSetup(once, PORT).otelOk && readCodexSetup(once, PORT).hooksEnabled && !!readCodexSetup(once, PORT).notifyHelper);
 
-const stripped = stripCodexConfig(once);
+const stripped = stripCodexConfig(once).content;
 check('strip: valid TOML', parses(stripped), stripped);
 check('strip: our settings are gone',
   readCodexSetup(stripped, PORT).otelOk === false && readCodexSetup(stripped, PORT).notifyHelper === null, stripped);
 check('strip: user content survives',
   stripped.includes('# my codex config') && stripped.includes('model = "gpt-5"'), stripped);
 
-const strippedExtras = stripCodexConfig(upsert(otelExtras).content);
+const strippedExtras = stripCodexConfig(upsert(otelExtras).content).content;
 check('strip: other otel keys survive',
   strippedExtras.includes('environment = "prod"') && strippedExtras.includes('log_user_prompt = false'), strippedExtras);
-const strippedProfile = stripCodexConfig(upsert(profileNotify).content);
+const strippedProfile = stripCodexConfig(upsert(profileNotify).content).content;
 check('strip: per-profile notify survives', strippedProfile.includes('/my/own/notifier'), strippedProfile);
 
 // Removing CliDeck must never dismantle a notifier the user built themselves.
-const strippedChain = stripCodexConfig(chainedNotify);
+const strippedChain = stripCodexConfig(chainedNotify).content;
 check('strip: a user-built notify chain is NOT destroyed',
   strippedChain.includes('SkyComputerUseClient'), strippedChain);
 check('strip: chained file stays valid TOML', parses(strippedChain), strippedChain);
-const strippedSiblings = stripCodexConfig(upsert(inlineSiblings).content);
+const strippedSiblings = stripCodexConfig(upsert(inlineSiblings).content).content;
 check('strip: sibling exporter settings survive', strippedSiblings.includes('auth = "x"'), strippedSiblings);
+
+// Removal must never take an exporter CliDeck never wrote.
+const customExporter = '[otel]\nexporter = { otlp-custom = { endpoint = "http://mine:1234" } }\n';
+const strippedCustom = stripCodexConfig(customExporter);
+check('strip: a custom exporter is NOT deleted', strippedCustom.content.includes('otlp-custom'), strippedCustom.content);
+check('strip: a custom exporter is reported as manual', strippedCustom.manual.includes('otel'));
+check('strip: custom exporter file stays valid TOML', parses(strippedCustom.content), strippedCustom.content);
+
+// Leaving a user-owned table means saying so, not silently half-cleaning it.
+const strippedHeaders = stripCodexConfig(inlineSiblings);
+check('strip: a user-owned exporter is left intact and reported',
+  strippedHeaders.content.includes('auth = "x"') && strippedHeaders.manual.includes('otel'), strippedHeaders.content);
+
+// Our own canonical otel is removed completely, leaving nothing behind.
+const strippedOwn = stripCodexConfig(upsert('').content);
+check('strip: our own otel is fully removed',
+  !strippedOwn.content.includes('localhost:4000') && strippedOwn.manual.length === 0, strippedOwn.content);
 
 if (failed) { console.log(`\n${failed} check(s) failed`); process.exit(1); }
 console.log('\nall codex config checks passed');

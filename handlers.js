@@ -802,15 +802,27 @@ function applyTelemetryConfig(preset, cmd = null) {
       }
       if (!setup.valid) return { success: false, message: `${configPath}: ${setup.error}` };
       const notifyHelperPath = join(__dirname, 'bin', 'notify-helper.js').replace(/\\/g, '/');
-      const { content: nextContent, notifyConflict } = upsertCodexConfig(content, process.execPath.replace(/\\/g, '/'), notifyHelperPath, port);
+      const { content: nextContent, manual } = upsertCodexConfig(content, process.execPath.replace(/\\/g, '/'), notifyHelperPath, port);
       const valid = validateCodexConfigToml(nextContent);
       if (!valid.ok) return { success: false, message: valid.error };
       mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, nextContent);
       installCodexHooks(codexHome, process.execPath.replace(/\\/g, '/'), codexHookPath, port);
-      if (notifyConflict) {
-        // Their notifier stays untouched; chaining it is the user's call to make.
-        return { success: false, message: `Configured otel + hooks, but ${configPath} already has its own notify. Add "${notifyHelperPath}" to that chain to get Codex status.` };
+      // Confirm what we wrote actually reads back as configured, rather than
+      // trusting that the edit did what it intended.
+      const after = readCodexSetup(nextContent, port);
+      const todo = [...manual];
+      if (!after.otelOk && !todo.includes('otel')) todo.push('otel');
+      if (!after.notifyHelper && !todo.includes('notify')) todo.push('notify');
+      if (!after.hooksEnabled) todo.push('hooks');
+      if (todo.length) {
+        // Settings the user owns are left exactly as they were — say what to add.
+        const steps = {
+          otel: `[${'otel.exporter.otlp-http'}] with endpoint = "http://localhost:${port}" and protocol = "json"`,
+          notify: `"${notifyHelperPath}" in the notify chain`,
+          hooks: 'hooks = true under [features]',
+        };
+        return { success: false, message: `${configPath} has its own settings CliDeck did not change. Add manually: ${todo.map(k => steps[k]).join('; ')}.` };
       }
       return { success: true, message: 'Configured. If Codex shows "2 hooks need review", open /hooks and approve the CliDeck hooks once.' };
     }
@@ -898,8 +910,12 @@ function removeTelemetryConfig(preset, cmd = null) {
       const configPath = join(codexHome, 'config.toml');
       if (!existsSync(configPath)) return { success: true, message: 'No config file to clean' };
       const content = readFileSync(configPath, 'utf8');
-      writeFileSync(configPath, stripCodexConfig(content));
+      const { content: cleaned, manual } = stripCodexConfig(content);
+      writeFileSync(configPath, cleaned);
       removeCodexHooks(codexHome);
+      if (manual.length) {
+        return { success: true, message: `Removed CliDeck hooks from ${configPath}. Left your own ${manual.join(' and ')} settings untouched — remove them by hand if you want them gone.` };
+      }
       return { success: true, message: `Removed otel + CliDeck hooks from ${configPath}` };
     }
 
