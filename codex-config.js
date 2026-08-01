@@ -92,6 +92,9 @@ function analyzeLines(lines) {
     let i = 0;
     while (i < line.length) {
       if (multiline) {
+        // Basic multiline strings honour backslash escapes, so an escaped quote
+        // is content, not the start of a terminator. Literal ''' strings do not.
+        if (multiline === '"""' && line[i] === '\\') { i += 2; continue; }
         if (line.startsWith(multiline, i)) { multiline = null; i += 3; continue; }
         i++;
         continue;
@@ -357,7 +360,9 @@ function upsertCodexConfig(content, nodePath, notifyHelperPath, port) {
 
 // Remove only what CliDeck wrote. Anything the user owns is left intact and
 // reported, so removal never half-edits someone else's config silently.
-function stripCodexConfig(content) {
+// `keepHooksFeature` is set when hooks other than CliDeck's remain in hooks.json:
+// features.hooks is Codex's global switch, so clearing it would disable those too.
+function stripCodexConfig(content, options = {}) {
   const parsed = parseCodexToml(content);
   const data = parsed.data || {};
   const lines = parsed.text.split('\n');
@@ -370,7 +375,8 @@ function stripCodexConfig(content) {
     manual.push('notify');
   }
 
-  for (const key of ['hooks', 'codex_hooks']) {
+  const featureKeys = options.keepHooksFeature ? ['codex_hooks'] : ['hooks', 'codex_hooks'];
+  for (const key of featureKeys) {
     // Re-locate each time: every removal shifts the lines after it.
     const features = scanRegions(lines).find(r => r.path === 'features');
     if (!features) break;

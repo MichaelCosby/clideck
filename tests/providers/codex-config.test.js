@@ -168,6 +168,23 @@ check('multiline string: settings written outside it, and effective',
   readCodexSetup(fromMultilineString.content, PORT).otelOk === true
   && readCodexSetup(fromMultilineString.content, PORT).hooksEnabled === true, fromMultilineString.content);
 
+// A basic multiline string honours \ escapes, so an escaped quote is content and
+// must not be read as the closing delimiter.
+const escapedQuotes = [
+  'developer_instructions = """',
+  'Say \\""" to quote it.',
+  'More guidance.',
+  '"""',
+].join('\n');
+const fromEscaped = upsert(escapedQuotes);
+check('escaped quotes: string preserved verbatim',
+  fromEscaped.content.includes(escapedQuotes), fromEscaped.content);
+check('escaped quotes: notify stays a top-level key, not swallowed by a table',
+  parse(fromEscaped.content).notify !== undefined, fromEscaped.content);
+check('escaped quotes: reads back as configured',
+  readCodexSetup(fromEscaped.content, PORT).otelOk === true
+  && readCodexSetup(fromEscaped.content, PORT).hooksEnabled === true, fromEscaped.content);
+
 const literalBlock = ["raw = '''", '[otel]', "'''"].join('\n');
 const fromLiteral = upsert(literalBlock);
 check("literal ''' block is left alone", fromLiteral.content.includes(literalBlock), fromLiteral.content);
@@ -283,6 +300,15 @@ check('strip: a user-owned exporter is left intact and reported',
 const strippedOwn = stripCodexConfig(upsert('').content);
 check('strip: our own otel is fully removed',
   !strippedOwn.content.includes('localhost:4000') && strippedOwn.manual.length === 0, strippedOwn.content);
+
+// features.hooks is Codex's global switch: clearing it would disable hooks that
+// belong to other tools, so it stays when any of those remain.
+const configured2 = upsert('').content;
+check('strip: hooks switch is cleared when only CliDeck used it',
+  readCodexSetup(stripCodexConfig(configured2).content, PORT).hooksEnabled === false);
+check('strip: hooks switch is KEPT when other hooks remain',
+  readCodexSetup(stripCodexConfig(configured2, { keepHooksFeature: true }).content, PORT).hooksEnabled === true,
+  stripCodexConfig(configured2, { keepHooksFeature: true }).content);
 
 if (failed) { console.log(`\n${failed} check(s) failed`); process.exit(1); }
 console.log('\nall codex config checks passed');

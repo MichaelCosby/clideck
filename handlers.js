@@ -30,7 +30,7 @@ function filterClientCommands(commands) {
 const transcript = require('./transcript');
 const plugins = require('./plugin-loader');
 const { upsertCodexConfig, stripCodexConfig, validateCodexConfigToml, readCodexSetup } = require('./codex-config');
-const { installCodexHooks, removeCodexHooks, codexHooksHealthy } = require('./codex-hooks');
+const { installCodexHooks, removeCodexHooks, codexHooksHealthy, codexHooksRemain } = require('./codex-hooks');
 
 const opencodePluginDir = join(
   process.platform === 'win32' ? (process.env.APPDATA || join(os.homedir(), 'AppData', 'Roaming')) : join(os.homedir(), '.config'),
@@ -506,6 +506,9 @@ function onConnection(ws) {
         config.save(cfg);
         plugins.notifyConfig(cfg);
         sessions.broadcast({ type: 'config', config: configForClient() });
+        // Settings we deliberately did not touch can keep sending events, so the
+        // user has to hear about it rather than see a silent "disabled".
+        if (result?.warning) ws.send(JSON.stringify({ type: 'error', message: result.warning }));
         break;
       }
 
@@ -797,7 +800,10 @@ function applyTelemetryConfig(preset, cmd = null) {
       const setup = readCodexSetup(content, port);
       const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
       const hasHooks = setup.hooksEnabled && codexHooksHealthy(codexHome, codexHookPath, port);
-      if (setup.otelOk && !setup.wrongOtel && setup.notifyHelper && hasHooks && !setup.needsRepair) {
+      // The helper path must still exist — a stale one (moved or reinstalled
+      // CliDeck) is configured on paper but silently sends nothing.
+      const notifyLive = !!setup.notifyHelper && existsSync(setup.notifyHelper);
+      if (setup.otelOk && !setup.wrongOtel && notifyLive && hasHooks && !setup.needsRepair) {
         return { success: true, message: 'Already configured' };
       }
       if (!setup.valid) return { success: false, message: `${configPath}: ${setup.error}` };
@@ -813,7 +819,7 @@ function applyTelemetryConfig(preset, cmd = null) {
       const after = readCodexSetup(nextContent, port);
       const todo = [...manual];
       if (!after.otelOk && !todo.includes('otel')) todo.push('otel');
-      if (!after.notifyHelper && !todo.includes('notify')) todo.push('notify');
+      if ((!after.notifyHelper || !existsSync(after.notifyHelper)) && !todo.includes('notify')) todo.push('notify');
       if (!after.hooksEnabled) todo.push('hooks');
       if (todo.length) {
         // Settings the user owns are left exactly as they were — say what to add.
@@ -910,11 +916,16 @@ function removeTelemetryConfig(preset, cmd = null) {
       const configPath = join(codexHome, 'config.toml');
       if (!existsSync(configPath)) return { success: true, message: 'No config file to clean' };
       const content = readFileSync(configPath, 'utf8');
-      const { content: cleaned, manual } = stripCodexConfig(content);
-      writeFileSync(configPath, cleaned);
       removeCodexHooks(codexHome);
+      // features.hooks is Codex's global switch — leave it on if other hooks use it.
+      const { content: cleaned, manual } = stripCodexConfig(content, { keepHooksFeature: codexHooksRemain(codexHome) });
+      writeFileSync(configPath, cleaned);
       if (manual.length) {
-        return { success: true, message: `Removed CliDeck hooks from ${configPath}. Left your own ${manual.join(' and ')} settings untouched — remove them by hand if you want them gone.` };
+        return {
+          success: true,
+          warning: `${configPath} still has your own ${manual.join(' and ')} settings — CliDeck left them alone, so Codex may keep sending events until you remove them by hand.`,
+          message: `Removed CliDeck hooks from ${configPath}, kept your own ${manual.join(' and ')} settings`,
+        };
       }
       return { success: true, message: `Removed otel + CliDeck hooks from ${configPath}` };
     }
