@@ -6,16 +6,20 @@ const { parse } = require('smol-toml');
 //   READ   parse real TOML, so any valid shape of those settings is understood
 //          ([otel.exporter.otlp-http] and [otel] + inline table are the same
 //          config, and CliDeck must not care which one the user wrote).
-//   WRITE  change only those three settings, in place. Never reorder the file,
-//          never rewrite text CliDeck did not put there, and never delete a key
-//          just because it sits near one of ours. A config we corrupt is a
-//          config Codex can no longer start with.
+//   WRITE  change only those settings, in place. Never reorder the file, never
+//          rewrite text CliDeck did not put there, and never delete a key just
+//          because it sits near one of ours. A config we corrupt is a config
+//          Codex can no longer start with.
 //
-// Two consequences worth stating, because both were bugs before:
-//   - an assignment can span lines (`notify = [` ... `]`), so replacing one means
-//     replacing its whole value, not its first line
-//   - if the user already routes notify through their own notifier, that chain is
-//     theirs; CliDeck reports the conflict instead of overwriting it.
+// Values can span lines as arrays (`notify = [` ... `]`) or as """ / ''' strings,
+// so every edit works off a scanner that knows where a value starts and ends. A
+// line inside a value is never a header and never an assignment, however much it
+// looks like one — a multiline instructions string may legitimately contain the
+// text "[features]".
+//
+// What is ours to change is also deliberately narrow: settings the user already
+// owns (a notifier chain, sibling exporter keys, other otel settings) are read
+// and reported, never overwritten.
 
 // --- reading -----------------------------------------------------------------
 
@@ -59,61 +63,96 @@ function findNotifyHelper(notify) {
   return null;
 }
 
+// True only for a notify array CliDeck wrote itself: [node, helper, port].
+// Anything longer is a chain the user built and must not be removed.
+function isOwnNotify(notify) {
+  return Array.isArray(notify)
+    && notify.length === 3
+    && typeof notify[1] === 'string'
+    && notify[1].includes('notify-helper');
+}
+
 // Semantic view of the config — what is actually configured, regardless of which
 // valid TOML shape expressed it.
 function readCodexSetup(content, port) {
   const parsed = parseCodexToml(content);
   if (!parsed.ok) {
-    return { valid: false, error: parsed.error, otelOk: false, wrongOtel: false, notifyHelper: null, hooksEnabled: false };
+    return { valid: false, error: parsed.error, needsRepair: false, otelOk: false, wrongOtel: false, notifyHelper: null, hooksEnabled: false };
   }
   const data = parsed.data || {};
-  const endpoint = data.otel?.exporter?.['otlp-http']?.endpoint;
+  const otlp = data.otel?.exporter?.['otlp-http'];
+  const endpoint = otlp?.endpoint;
   const hasEndpoint = typeof endpoint === 'string';
   const notify = Array.isArray(data.notify) ? data.notify : [];
   return {
     valid: true,
-    otelOk: hasEndpoint && endpoint.includes(`localhost:${port}`) && !endpoint.includes('/v1/logs'),
+    // The file parses only after repair, so what is on disk is still broken for
+    // Codex; it cannot count as configured until the repair is written back.
+    needsRepair: !!parsed.repaired,
+    // CliDeck's OTLP receiver only decodes JSON, so any other protocol means
+    // status would silently never arrive.
+    otelOk: hasEndpoint && endpoint.includes(`localhost:${port}`) && !endpoint.includes('/v1/logs') && otlp?.protocol === 'json',
     wrongOtel: hasEndpoint && endpoint.includes('/v1/logs'),
     notifyHelper: findNotifyHelper(notify),
+    ownNotify: isOwnNotify(data.notify),
     hooksEnabled: data.features?.hooks === true,
   };
 }
 
 // --- line model for in-place edits -------------------------------------------
 
-// Net bracket depth of a line, ignoring brackets inside strings or comments —
-// notify values legitimately contain text like "[\"node\",\"...\"]".
-function bracketDelta(line) {
-  let depth = 0, inBasic = false, inLiteral = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inBasic) {
-      if (ch === '\\') { i++; continue; }
-      if (ch === '"') inBasic = false;
-      continue;
+// State at the start of each line: bracket depth, and whether we are inside a
+// multiline string. Index `lines.length` holds the end-of-file state, so a value
+// that runs to the last line still has a terminator to compare against.
+function analyzeLines(lines) {
+  const state = [];
+  let depth = 0;
+  let multiline = null;
+  for (const line of lines) {
+    state.push({ depth, inString: !!multiline });
+    let i = 0;
+    while (i < line.length) {
+      if (multiline) {
+        if (line.startsWith(multiline, i)) { multiline = null; i += 3; continue; }
+        i++;
+        continue;
+      }
+      if (line.startsWith('"""', i)) { multiline = '"""'; i += 3; continue; }
+      if (line.startsWith("'''", i)) { multiline = "'''"; i += 3; continue; }
+      const ch = line[i];
+      if (ch === '"') {
+        i++;
+        while (i < line.length) {
+          if (line[i] === '\\') { i += 2; continue; }
+          if (line[i] === '"') { i++; break; }
+          i++;
+        }
+        continue;
+      }
+      if (ch === "'") {
+        i++;
+        while (i < line.length && line[i] !== "'") i++;
+        i++;
+        continue;
+      }
+      if (ch === '#') break;
+      if (ch === '[') depth++;
+      else if (ch === ']') depth = Math.max(0, depth - 1);
+      i++;
     }
-    if (inLiteral) {
-      if (ch === "'") inLiteral = false;
-      continue;
-    }
-    if (ch === '"') { inBasic = true; continue; }
-    if (ch === "'") { inLiteral = true; continue; }
-    if (ch === '#') break;
-    if (ch === '[') depth++;
-    else if (ch === ']') depth--;
   }
-  return depth;
+  state.push({ depth, inString: !!multiline });
+  return state;
 }
 
-// Split into the top-level region plus one region per section header. Header
-// detection only runs at bracket depth 0, so lines inside a multiline array are
-// never mistaken for headers.
+// The top-level region plus one region per section header. Only lines that begin
+// outside any value can be headers.
 function scanRegions(lines) {
+  const state = analyzeLines(lines);
   const marks = [];
-  let depth = 0;
   for (let i = 0; i < lines.length; i++) {
-    if (depth === 0 && /^\s*\[\[?[^[\]]+\]\]?\s*$/.test(lines[i])) marks.push(i);
-    depth = Math.max(0, depth + bracketDelta(lines[i]));
+    if (state[i].depth || state[i].inString) continue;
+    if (/^\s*\[\[?[^[\]]+\]\]?\s*$/.test(lines[i])) marks.push(i);
   }
   const regions = [{ header: null, start: 0, end: marks.length ? marks[0] : lines.length }];
   marks.forEach((start, idx) => {
@@ -128,12 +167,13 @@ function scanRegions(lines) {
 
 // Locate a `key = ...` assignment within a region, spanning multiline values.
 function findAssignment(lines, key, from, to) {
+  const state = analyzeLines(lines);
   const re = new RegExp(`^\\s*${key}\\s*=`);
   for (let i = from; i < to; i++) {
+    if (state[i].depth || state[i].inString) continue;
     if (!re.test(lines[i])) continue;
-    let depth = bracketDelta(lines[i]);
     let end = i;
-    while (depth > 0 && end + 1 < to) { end++; depth += bracketDelta(lines[end]); }
+    while (end + 1 < to && (state[end + 1].depth > 0 || state[end + 1].inString)) end++;
     return { start: i, end };
   }
   return null;
@@ -141,9 +181,10 @@ function findAssignment(lines, key, from, to) {
 
 // Replace an assignment in place, or insert it just after the region header.
 function setKey(lines, region, key, newLine) {
-  const found = findAssignment(lines, key, region.start + (region.header ? 1 : 0), region.end);
+  const body = region.start + (region.header ? 1 : 0);
+  const found = findAssignment(lines, key, body, region.end);
   if (found) lines.splice(found.start, found.end - found.start + 1, newLine);
-  else lines.splice(region.start + (region.header ? 1 : 0), 0, newLine);
+  else lines.splice(body, 0, newLine);
 }
 
 function regionFor(lines, header) {
@@ -162,35 +203,56 @@ function ensureHooks(lines) {
   setKey(lines, features, 'hooks', 'hooks = true');
 }
 
+// Rewrite only the otlp-http endpoint/protocol inside an inline exporter table,
+// leaving sibling settings (headers, other exporters) exactly as they are.
+function patchExporter(text, url) {
+  const at = text.indexOf('otlp-http');
+  if (at === -1) {
+    return text.replace(/=\s*\{/, `= { otlp-http = { endpoint = "${url}", protocol = "json" },`);
+  }
+  const head = text.slice(0, at);
+  let tail = text.slice(at);
+  tail = /endpoint\s*=\s*"[^"]*"/.test(tail)
+    ? tail.replace(/(endpoint\s*=\s*)"[^"]*"/, `$1"${url}"`)
+    : tail.replace(/(otlp-http\s*=\s*\{)/, `$1 endpoint = "${url}",`);
+  tail = /protocol\s*=\s*"[^"]*"/.test(tail)
+    ? tail.replace(/(protocol\s*=\s*)"[^"]*"/, '$1"json"')
+    : tail.replace(/(otlp-http\s*=\s*\{)/, '$1 protocol = "json",');
+  return head + tail;
+}
+
 function ensureOtel(lines, port) {
-  const endpoint = `"http://localhost:${port}"`;
+  const url = `http://localhost:${port}`;
 
   const dotted = regionFor(lines, '[otel.exporter.otlp-http]');
   if (dotted) {
-    setKey(lines, dotted, 'endpoint', `endpoint = ${endpoint}`);
+    setKey(lines, dotted, 'endpoint', `endpoint = "${url}"`);
     setKey(lines, regionFor(lines, '[otel.exporter.otlp-http]'), 'protocol', 'protocol = "json"');
     return;
   }
 
   const otel = regionFor(lines, '[otel]');
-  if (otel && findAssignment(lines, 'exporter', otel.start + 1, otel.end)) {
-    setKey(lines, otel, 'exporter', `exporter = { otlp-http = { endpoint = ${endpoint}, protocol = "json" } }`);
+  const exporter = otel && findAssignment(lines, 'exporter', otel.start + 1, otel.end);
+  if (exporter) {
+    const text = lines.slice(exporter.start, exporter.end + 1).join('\n');
+    lines.splice(exporter.start, exporter.end - exporter.start + 1, ...patchExporter(text, url).split('\n'));
     return;
   }
 
   const top = scanRegions(lines)[0];
   if (findAssignment(lines, 'otel\\.exporter\\.otlp-http\\.endpoint', top.start, top.end)) {
-    setKey(lines, top, 'otel\\.exporter\\.otlp-http\\.endpoint', `otel.exporter.otlp-http.endpoint = ${endpoint}`);
+    setKey(lines, top, 'otel\\.exporter\\.otlp-http\\.endpoint', `otel.exporter.otlp-http.endpoint = "${url}"`);
+    setKey(lines, scanRegions(lines)[0], 'otel\\.exporter\\.otlp-http\\.protocol', 'otel.exporter.otlp-http.protocol = "json"');
     return;
   }
 
-  // No otel exporter configured yet — add one without touching other otel keys.
+  // Nothing configured yet — add a table without touching other otel keys.
   if (lines.length && lines[lines.length - 1].trim()) lines.push('');
-  lines.push('[otel.exporter.otlp-http]', `endpoint = ${endpoint}`, 'protocol = "json"');
+  lines.push('[otel.exporter.otlp-http]', `endpoint = "${url}"`, 'protocol = "json"');
 }
 
-// Returns { content, notifyConflict }. A foreign notify is left untouched and
-// reported, because overwriting it would silently break the user's own notifier.
+// Returns { content, notifyConflict }. A notify chain the user owns is left
+// untouched and reported, because overwriting it would break their notifier.
 function upsertCodexConfig(content, nodePath, notifyHelperPath, port) {
   const parsed = parseCodexToml(content);
   const setup = readCodexSetup(content, port);
@@ -215,17 +277,17 @@ function upsertCodexConfig(content, nodePath, notifyHelperPath, port) {
   return { content: lines.join('\n').trimEnd() + '\n', notifyConflict };
 }
 
-// Remove only the settings CliDeck manages, then drop tables that our removal
-// left empty. A user's own keys and notifier chain stay exactly as they were.
+// Remove only the settings CliDeck wrote, then drop tables that our removal left
+// empty. A notify chain the user built keeps CliDeck in it: taking our helper out
+// of someone else's argv is their edit to make, not ours.
 function stripCodexConfig(content) {
   const parsed = parseCodexToml(content);
   const lines = parsed.text.split('\n');
 
-  const top = scanRegions(lines)[0];
-  const notify = findAssignment(lines, 'notify', top.start, top.end);
-  if (notify) {
-    const text = lines.slice(notify.start, notify.end + 1).join('\n');
-    if (text.includes('notify-helper')) lines.splice(notify.start, notify.end - notify.start + 1);
+  if (isOwnNotify(parsed.data?.notify)) {
+    const top = scanRegions(lines)[0];
+    const notify = findAssignment(lines, 'notify', top.start, top.end);
+    if (notify) lines.splice(notify.start, notify.end - notify.start + 1);
   }
 
   const features = regionFor(lines, '[features]');
@@ -245,10 +307,14 @@ function stripCodexConfig(content) {
   const otel = regionFor(lines, '[otel]');
   if (otel) {
     const exporter = findAssignment(lines, 'exporter', otel.start + 1, otel.end);
-    if (exporter) lines.splice(exporter.start, exporter.end - exporter.start + 1);
+    // Only drop an exporter that is ours alone; siblings mean it is the user's.
+    if (exporter) {
+      const text = lines.slice(exporter.start, exporter.end + 1).join('\n');
+      if (!/headers|otlp-grpc/.test(text)) lines.splice(exporter.start, exporter.end - exporter.start + 1);
+    }
   }
 
-  // Drop headers whose body is now empty — but only ones we just emptied.
+  // Drop headers whose body our removal just emptied.
   for (const header of ['[otel.exporter.otlp-http]', '[otel]', '[features]']) {
     const region = regionFor(lines, header);
     if (region && lines.slice(region.start + 1, region.end).every(l => !l.trim())) {

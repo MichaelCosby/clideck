@@ -188,6 +188,8 @@ function hasAnyExistingHook(hooks, hookFile) {
 
 function codexConfigLooksHealthy(content, port, codexHome) {
   const setup = readCodexSetup(content, port);
+  // needsRepair means the file on disk still does not parse for Codex itself.
+  if (!setup.valid || setup.needsRepair) return false;
   if (!setup.otelOk || setup.wrongOtel || !setup.hooksEnabled) return false;
   const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
   if (!codexHooksHealthy(codexHome, codexHookPath, port)) return false;
@@ -795,7 +797,7 @@ function applyTelemetryConfig(preset, cmd = null) {
       const setup = readCodexSetup(content, port);
       const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
       const hasHooks = setup.hooksEnabled && codexHooksHealthy(codexHome, codexHookPath, port);
-      if (setup.otelOk && !setup.wrongOtel && setup.notifyHelper && hasHooks) {
+      if (setup.otelOk && !setup.wrongOtel && setup.notifyHelper && hasHooks && !setup.needsRepair) {
         return { success: true, message: 'Already configured' };
       }
       if (!setup.valid) return { success: false, message: `${configPath}: ${setup.error}` };

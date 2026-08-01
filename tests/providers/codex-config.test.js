@@ -142,6 +142,55 @@ check('an existing CliDeck chain is left intact',
   fromChained.content.includes('SkyComputerUseClient') && fromChained.notifyConflict === false, fromChained.content);
 check('chained notify: valid TOML', parses(fromChained.content), fromChained.content);
 
+// --- 4b. values that span lines are not mistaken for structure -------------------
+console.log('\nmultiline values are never treated as structure');
+
+const multilineString = [
+  'developer_instructions = """',
+  'Some guidance.',
+  '[features]',
+  'notify = do the thing',
+  '"""',
+].join('\n');
+const fromMultilineString = upsert(multilineString);
+check('multiline string: valid TOML', parses(fromMultilineString.content), fromMultilineString.content);
+check('multiline string: contents left byte-for-byte alone',
+  fromMultilineString.content.includes(multilineString), fromMultilineString.content);
+check('multiline string: settings written outside it, and effective',
+  readCodexSetup(fromMultilineString.content, PORT).otelOk === true
+  && readCodexSetup(fromMultilineString.content, PORT).hooksEnabled === true, fromMultilineString.content);
+
+const literalBlock = ["raw = '''", '[otel]', "'''"].join('\n');
+const fromLiteral = upsert(literalBlock);
+check("literal ''' block is left alone", fromLiteral.content.includes(literalBlock), fromLiteral.content);
+check('literal block: valid TOML', parses(fromLiteral.content), fromLiteral.content);
+
+// --- 4c. sibling exporter settings ------------------------------------------------
+console.log('\ninline exporter siblings');
+const inlineSiblings = [
+  '[otel]',
+  'exporter = { otlp-http = { endpoint = "http://localhost:9999", protocol = "binary", headers = { auth = "x" } } }',
+].join('\n');
+const fromSiblings = upsert(inlineSiblings);
+check('sibling headers survive an endpoint update',
+  fromSiblings.content.includes('headers') && fromSiblings.content.includes('auth = "x"'), fromSiblings.content);
+check('endpoint and protocol are corrected in place',
+  readCodexSetup(fromSiblings.content, PORT).otelOk === true, fromSiblings.content);
+check('inline siblings: valid TOML', parses(fromSiblings.content), fromSiblings.content);
+
+// --- 4d. protocol and repair gating -----------------------------------------------
+console.log('\nhealth gating');
+check('protocol = "binary" is NOT accepted (receiver only decodes JSON)',
+  readCodexSetup('[otel.exporter.otlp-http]\nendpoint = "http://localhost:4000"\nprotocol = "binary"\n', PORT).otelOk === false);
+check('protocol = "json" is accepted', readCodexSetup(dottedOtel, PORT).otelOk === true);
+
+const glued = 'model = "gpt-5"[features]\nhooks = true\n';
+check('a file that only parses after repair is flagged needsRepair',
+  readCodexSetup(glued, PORT).needsRepair === true);
+check('a healthy file is not flagged needsRepair', readCodexSetup(dottedOtel, PORT).needsRepair === false);
+check('configuring a repairable file writes the repair',
+  parses(upsert(glued).content) && !upsert(glued).content.includes('"gpt-5"[features]'), upsert(glued).content);
+
 // --- 5. idempotence + removal ----------------------------------------------------
 console.log('\nidempotence and removal');
 const once = upsert(withComments).content;
@@ -162,6 +211,14 @@ check('strip: other otel keys survive',
   strippedExtras.includes('environment = "prod"') && strippedExtras.includes('log_user_prompt = false'), strippedExtras);
 const strippedProfile = stripCodexConfig(upsert(profileNotify).content);
 check('strip: per-profile notify survives', strippedProfile.includes('/my/own/notifier'), strippedProfile);
+
+// Removing CliDeck must never dismantle a notifier the user built themselves.
+const strippedChain = stripCodexConfig(chainedNotify);
+check('strip: a user-built notify chain is NOT destroyed',
+  strippedChain.includes('SkyComputerUseClient'), strippedChain);
+check('strip: chained file stays valid TOML', parses(strippedChain), strippedChain);
+const strippedSiblings = stripCodexConfig(upsert(inlineSiblings).content);
+check('strip: sibling exporter settings survive', strippedSiblings.includes('auth = "x"'), strippedSiblings);
 
 if (failed) { console.log(`\n${failed} check(s) failed`); process.exit(1); }
 console.log('\nall codex config checks passed');
