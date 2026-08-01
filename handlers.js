@@ -29,7 +29,7 @@ function filterClientCommands(commands) {
 }
 const transcript = require('./transcript');
 const plugins = require('./plugin-loader');
-const { upsertCodexConfig, validateCodexConfigToml } = require('./codex-config');
+const { upsertCodexConfig, stripCodexConfig, validateCodexConfigToml, readCodexSetup } = require('./codex-config');
 const { installCodexHooks, removeCodexHooks, codexHooksHealthy } = require('./codex-hooks');
 
 const opencodePluginDir = join(
@@ -186,29 +186,12 @@ function hasAnyExistingHook(hooks, hookFile) {
   })));
 }
 
-function codexHooksFeatureEnabled(content) {
-  let inFeatures = false;
-  for (const line of String(content || '').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (/^\[.*\]$/.test(trimmed)) {
-      inFeatures = trimmed === '[features]';
-      continue;
-    }
-    if (inFeatures && /^\s*hooks\s*=\s*true\s*$/.test(line)) return true;
-  }
-  return false;
-}
-
 function codexConfigLooksHealthy(content, port, codexHome) {
-  if (!content.includes('[otel]') || !content.includes(`localhost:${port}`)) return false;
+  const setup = readCodexSetup(content, port);
+  if (!setup.otelOk || setup.wrongOtel || !setup.hooksEnabled) return false;
   const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
-  if (!codexHooksFeatureEnabled(content)) return false;
   if (!codexHooksHealthy(codexHome, codexHookPath, port)) return false;
-  const notifyLine = content.match(/^\s*notify\s*=\s*\[(.+)\]\s*$/m)?.[1] || '';
-  if (!notifyLine.includes('notify-helper')) return false;
-  const quoted = [...notifyLine.matchAll(/"([^"]+)"/g)].map(m => m[1]);
-  const helperPath = quoted.find(v => v.includes('notify-helper'));
-  return !!helperPath && existsSync(helperPath);
+  return !!setup.notifyHelper && existsSync(setup.notifyHelper);
 }
 
 function opencodeBridgeLooksHealthy() {
@@ -809,13 +792,10 @@ function applyTelemetryConfig(preset, cmd = null) {
       const configPath = join(codexHome, 'config.toml');
       let content = '';
       if (existsSync(configPath)) content = readFileSync(configPath, 'utf8');
-      const hasOtel = content.includes('[otel]');
-      const hasCurrentOtel = content.includes(`localhost:${port}`);
-      const hasNotify = /^\s*notify\s*=.*notify-helper/m.test(content);
-      const hasWrongOtel = content.includes(`endpoint = "http://localhost:${port}/v1/logs"`);
+      const setup = readCodexSetup(content, port);
       const codexHookPath = join(__dirname, 'bin', 'codex-hook.js').replace(/\\/g, '/');
-      const hasHooks = codexHooksFeatureEnabled(content) && codexHooksHealthy(codexHome, codexHookPath, port);
-      if (hasOtel && hasCurrentOtel && hasNotify && !hasWrongOtel && hasHooks) {
+      const hasHooks = setup.hooksEnabled && codexHooksHealthy(codexHome, codexHookPath, port);
+      if (setup.otelOk && !setup.wrongOtel && setup.notifyHelper && hasHooks) {
         return { success: true, message: 'Already configured' };
       }
       const notifyHelperPath = join(__dirname, 'bin', 'notify-helper.js').replace(/\\/g, '/');
@@ -910,11 +890,8 @@ function removeTelemetryConfig(preset, cmd = null) {
       const codexHome = configRootFor(preset, cmd);
       const configPath = join(codexHome, 'config.toml');
       if (!existsSync(configPath)) return { success: true, message: 'No config file to clean' };
-      let content = readFileSync(configPath, 'utf8');
-      content = content.replace(/\n?\[otel\][^\[]*/, '');
-      content = content.replace(/\n?notify\s*=\s*\[.*?notify-helper.*?\]\s*/g, '');
-      content = content.replace(/\n?codex_hooks\s*=\s*(true|false)\s*/g, '\n');
-      writeFileSync(configPath, content.trimEnd() + '\n');
+      const content = readFileSync(configPath, 'utf8');
+      writeFileSync(configPath, stripCodexConfig(content));
       removeCodexHooks(codexHome);
       return { success: true, message: `Removed otel + CliDeck hooks from ${configPath}` };
     }
