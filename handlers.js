@@ -493,22 +493,32 @@ function onConnection(ws) {
         } else {
           result = removeTelemetryConfig(preset, targetCmd);
         }
-        // Update all matching commands in config
+        // Update all matching commands in config. A failed removal leaves the
+        // state alone: the agent is still configured to report, so showing it as
+        // disabled would hide live tracking.
         for (const cmd of cfg.commands) {
           if (targetCmd ? cmd.id === targetCmd.id : presetForCommand(cmd)?.presetId === preset.presetId) {
-            cmd.telemetryEnabled = enable && result.success;
-            cmd.telemetrySetupConsent = enable && result.success;
-            cmd.telemetryStatus = enable
-              ? (result.success ? { ok: true } : { ok: false, error: result.message })
-              : null;
+            if (enable) {
+              cmd.telemetryEnabled = result.success;
+              cmd.telemetrySetupConsent = result.success;
+              cmd.telemetryStatus = result.success ? { ok: true } : { ok: false, error: result.message };
+            } else if (result.success) {
+              cmd.telemetryEnabled = false;
+              cmd.telemetrySetupConsent = false;
+              cmd.telemetryStatus = null;
+            }
           }
         }
         config.save(cfg);
         plugins.notifyConfig(cfg);
         sessions.broadcast({ type: 'config', config: configForClient() });
-        // Settings we deliberately did not touch can keep sending events, so the
-        // user has to hear about it rather than see a silent "disabled".
-        if (result?.warning) ws.send(JSON.stringify({ type: 'error', message: result.warning }));
+        // Anything still able to send events has to be said out loud, whether the
+        // removal failed outright or deliberately preserved the user's settings.
+        if (!result.success) {
+          ws.send(JSON.stringify({ type: 'error', message: result.message || 'Failed to update telemetry configuration.' }));
+        } else if (result.warning) {
+          ws.send(JSON.stringify({ type: 'error', message: result.warning }));
+        }
         break;
       }
 
@@ -914,9 +924,11 @@ function removeTelemetryConfig(preset, cmd = null) {
     if (preset.presetId === 'codex') {
       const codexHome = configRootFor(preset, cmd);
       const configPath = join(codexHome, 'config.toml');
-      if (!existsSync(configPath)) return { success: true, message: 'No config file to clean' };
-      const content = readFileSync(configPath, 'utf8');
+      // Hooks live in their own file, so they must go even when there is no
+      // config.toml — otherwise they keep firing after the UI says tracking is off.
       removeCodexHooks(codexHome);
+      if (!existsSync(configPath)) return { success: true, message: `Removed CliDeck hooks from ${codexHome}` };
+      const content = readFileSync(configPath, 'utf8');
       // features.hooks is Codex's global switch — leave it on if other hooks use it.
       const { content: cleaned, manual } = stripCodexConfig(content, { keepHooksFeature: codexHooksRemain(codexHome) });
       writeFileSync(configPath, cleaned);

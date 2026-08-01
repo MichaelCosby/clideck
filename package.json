@@ -14,7 +14,8 @@
     "smoke:menu": "node tests/providers/menu-detection.test.js",
     "smoke:capture": "node tests/providers/antigravity-capture.test.js",
     "smoke:menu-status": "node tests/providers/menu-status.test.js",
-    "smoke:codex-config": "node tests/providers/codex-config.test.js"
+    "smoke:codex-config": "node tests/providers/codex-config.test.js",
+    "smoke:codex-hooks": "node tests/providers/codex-hooks.test.js"
   },
   "keywords": [
     "terminal",
