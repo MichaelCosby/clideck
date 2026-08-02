@@ -254,17 +254,26 @@ function pastePrompt(text) {
 // `clideck agents` / copySessionName). Built from the live session list on demand.
 function getAgents() {
   const projects = state.cfg.projects || [];
+  // Sessions sharing the active session's project come first: when you are working
+  // inside a project, the agent you want to mention is nearly always in it.
+  const current = state.terms.get(state.active)?.projectId || null;
   const out = [];
   for (const [id, entry] of state.terms) {
     const name = document.querySelector(`.group[data-id="${id}"] .name`)?.textContent?.trim();
     if (!name) continue;
     const project = entry.projectId ? projects.find(p => p.id === entry.projectId) : null;
-    out.push({ id, name, address: project?.name ? `@${project.name}/${name}` : name });
+    out.push({
+      id,
+      name,
+      address: project?.name ? `@${project.name}/${name}` : name,
+      sameProject: !!current && entry.projectId === current,
+    });
   }
-  return out;
+  // Stable sort, so sidebar order is preserved within each group.
+  return out.sort((a, b) => Number(b.sameProject) - Number(a.sameProject));
 }
 
-// Rank name matches above address-only matches, like searchPrompts.
+// Project first, then name matches above address-only matches like searchPrompts.
 function searchAgents(filter) {
   const q = (filter || '').toLowerCase().trim();
   const all = getAgents();
@@ -275,7 +284,7 @@ function searchAgents(filter) {
       return { a, i, rank };
     })
     .filter(m => m.rank)
-    .sort((x, y) => y.rank - x.rank || x.i - y.i)
+    .sort((x, y) => Number(y.a.sameProject) - Number(x.a.sameProject) || y.rank - x.rank || x.i - y.i)
     .map(m => m.a);
 }
 
