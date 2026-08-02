@@ -92,6 +92,17 @@ export function renderPrompts() {
   renderPromptList(prompts, '');
 }
 
+// A prompt may be tagged with a project. Tagged ones surface first while you work
+// in that project; untagged prompts stay global and are always listed, just after.
+// With no project on the active session there is nothing to prefer, so order stands.
+function orderByProject(prompts) {
+  const current = state.terms.get(state.active)?.projectId || null;
+  if (!current) return prompts;
+  // Stable sort — ranking and library order are preserved inside each group.
+  return prompts.slice().sort((a, b) =>
+    Number(b.projectId === current) - Number(a.projectId === current));
+}
+
 // Rank matches so title (name) hits outrank body-only hits — the name is why the
 // prompt exists, so //programmer lists every name match before any text-only match.
 function searchPrompts(prompts, filter) {
@@ -123,10 +134,14 @@ function renderPromptList(prompts, filter) {
   } else {
     list.innerHTML = filtered.map((p, i) => {
       const idx = prompts.indexOf(p);
+      const project = p.projectId ? (state.cfg.projects || []).find(x => x.id === p.projectId) : null;
       return `
       <div class="prompt-row group flex items-start gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-800/40 transition-colors ${i > 0 ? 'border-t border-slate-700/30' : ''}" data-idx="${idx}">
         <div class="flex-1 min-w-0">
-          <div class="text-[13px] font-medium text-slate-200 truncate">${esc(p.name)}</div>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-[13px] font-medium text-slate-200 truncate">${esc(p.name)}</span>
+            ${project ? `<span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 text-[10px] leading-none">${esc(project.name)}</span>` : ''}
+          </div>
           <div class="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">${esc(p.text)}</div>
         </div>
         <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5">
@@ -165,6 +180,7 @@ function openHelp() {
       <button id="ph-close" class="text-slate-500 hover:text-slate-300 transition-colors" title="Close">✕</button>
     </div>
     <p class="mb-2">Save reusable prompts — coding guidance, reviewer notes, project intros. In any terminal, type <kbd class="px-1 py-0.5 rounded bg-slate-700/60 text-slate-300 font-mono text-[10px]">//</kbd> then a few letters to search and paste one (title matches rank first).</p>
+    <p class="mb-2">Give a prompt a project to list it first while you work there. Prompts with no project stay available everywhere.</p>
     <p class="mb-1 text-slate-300">Placeholders — filled from the active session on paste:</p>
     <ul class="space-y-1">
       <li><code class="px-1 py-0.5 rounded bg-slate-900 text-slate-300 font-mono">{{session_name}}</code> → the session's name</li>
@@ -189,6 +205,12 @@ function openEditor(idx) {
       class="w-full px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-md text-slate-200 placeholder-slate-500 outline-none focus:border-blue-500 transition-colors mb-2">
     <textarea id="pe-text" rows="4" placeholder="Prompt text to paste into terminal"
       class="w-full max-w-full px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-md text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500 transition-colors resize-y leading-relaxed font-mono mb-2" style="min-height:5lh">${esc(existing?.text || '')}</textarea>
+    <select id="pe-project"
+      class="w-full px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-md text-slate-300 outline-none focus:border-blue-500 transition-colors mb-2">
+      <option value="">No project — listed everywhere</option>
+      ${(state.cfg.projects || []).map(p => `
+        <option value="${esc(p.id)}" ${existing?.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+    </select>
     <div class="flex items-center gap-2">
       <button id="pe-save" class="px-4 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors">${existing ? 'Save' : 'Add'}</button>
       <button id="pe-cancel" class="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">Cancel</button>
@@ -205,11 +227,14 @@ function openEditor(idx) {
     const name = nameInput.value.trim();
     const text = textInput.value.trim();
     if (!name || !text) return;
+    // Empty select means global — store null rather than '' so the field reads
+    // the same whether a prompt predates projects or was set back to global.
+    const projectId = card.querySelector('#pe-project').value || null;
     if (!state.cfg.prompts) state.cfg.prompts = [];
     if (existing) {
-      state.cfg.prompts[idx] = { ...existing, name, text };
+      state.cfg.prompts[idx] = { ...existing, name, text, projectId };
     } else {
-      state.cfg.prompts.push({ id: randomUUID(), name, text });
+      state.cfg.prompts.push({ id: randomUUID(), name, text, projectId });
     }
     save();
     closeEditor();
@@ -314,7 +339,7 @@ const AUTOCOMPLETE_MODES = {
   prompt: {
     label: 'Prompts', prefix: '//', empty: 'No matching prompts',
     hint: 'Type <kbd>//</kbd> to search your prompt library', action: 'paste',
-    matches: () => searchPrompts(getPrompts(), buffer),
+    matches: () => orderByProject(searchPrompts(getPrompts(), buffer)),
     main: m => m.name, sub: m => truncate(m.text, 80),
     complete: m => pastePrompt(m.text),
   },
