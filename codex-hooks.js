@@ -91,4 +91,16 @@ function codexHooksHealthy(codexHome, helperPath, port) {
   }
 }
 
-module.exports = { installCodexHooks, removeCodexHooks, codexHooksHealthy };
+// Any hooks left in hooks.json after ours are gone — third-party hooks that
+// still need Codex's features.hooks switch left on.
+function codexHooksRemain(codexHome) {
+  try {
+    const doc = readHooksFile(join(codexHome, 'hooks.json'));
+    return Object.values(doc.hooks || {}).some(groups =>
+      (Array.isArray(groups) ? groups : []).some(group => (group?.hooks || []).length));
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { installCodexHooks, removeCodexHooks, codexHooksHealthy, codexHooksRemain };
