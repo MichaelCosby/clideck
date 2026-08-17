@@ -9,6 +9,7 @@ function agentRow(id, s, callerId, projects) {
     projectId: s.projectId || null,
     project,
     address: sessionAddress(s, id, projects),
+    cwd: s.cwd || null,
     working: !!s.working,
     lastPreview: s.lastPreview || '',
     lastActivityAt: s.lastActivityAt || null,

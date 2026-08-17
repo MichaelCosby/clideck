@@ -9,6 +9,7 @@ function usage() {
     'Usage:',
     '  clideck [--host <host>] [--port <port>]',
     '  clideck agents [--json] [--all]',
+    '  clideck create [--preset <id>] [--command <id>] [--name <name>] [--cwd <path>] [--json]',
     '  clideck ask status [--json] [--all]',
     '  clideck ask --session <name-or-id> --message <text> [--timeout 10m]',
     '',
@@ -23,6 +24,12 @@ function usage() {
     '    Lists active sessions in the same project as the caller session.',
     '    Use this first when an agent needs to discover who it can ask.',
     '    Add --all to list cross-project targets with @project/session ask addresses.',
+    '',
+    '  clideck create',
+    '    Spawns a new sibling session from inside a running session.',
+    '    Defaults to the caller\'s own preset and cwd/worktree, so a plain `clideck create`',
+    '    launches another agent of the same kind alongside you.',
+    '    Use --cwd to launch into a different worktree, or --preset to launch a different agent.',
     '',
     '  clideck ask',
     '    Use from inside a CliDeck session when one agent needs an answer from another session.',
@@ -48,6 +55,8 @@ function usage() {
     '  clideck agents',
     '  clideck agents --json',
     '  clideck agents --all',
+    '  clideck create',
+    '  clideck create --preset codex --name "Reviewer" --cwd ../other-worktree',
     '  clideck ask status',
     '  clideck ask status --all',
     '  clideck ask --session "Reviewer" --message "Review my changes and return only findings."',
@@ -68,6 +77,8 @@ function usage() {
 
 if (args[0] === 'agents') {
   require('../clideck-agents-cli').run(args.slice(1));
+} else if (args[0] === 'create') {
+  require('../clideck-create-cli').run(args.slice(1));
 } else if (args[0] === 'ask') {
   require('../clideck-ask-cli').run(args.slice(1));
 } else if (args.includes('--help') || args.includes('-h')) {

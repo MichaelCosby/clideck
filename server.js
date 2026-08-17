@@ -284,6 +284,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Sibling-session creation bridge used by the `clideck create` CLI command.
+  if (req.method === 'POST' && req.url === '/api/session/create') {
+    require('./session-create-api').handleHttp(req, res, sessions, () => config.load());
+    return;
+  }
+
 
   // DEBUG: log any POST (agents might use /v1/traces, /v1/metrics, or other paths)
   if (req.method === 'POST') {
