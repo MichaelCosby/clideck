@@ -153,8 +153,8 @@ function connect() {
         }
         if (entry.activationState === 'awaiting_replay') {
           if (msg.replay) {
-            entry.term.write(msg.data);
-            for (const d of entry.pendingData) { if (!entry.queue(d)) entry.term.write(d); }
+            entry.writeChunk(msg.data, true);
+            for (const d of entry.pendingData) { if (!entry.queue(d)) entry.writeChunk(d); }
             entry.pendingData = [];
             entry.activationState = 'active';
             updatePreview(msg.id);
@@ -163,7 +163,7 @@ function connect() {
           }
           break;
         }
-        if (!entry.queue(msg.data)) entry.term.write(msg.data);
+        if (!entry.queue(msg.data, !!msg.replay)) entry.writeChunk(msg.data, !!msg.replay);
         updatePreview(msg.id);
         markUnread(msg.id);
         break;
@@ -206,15 +206,15 @@ function connect() {
         if (entry.activationState === 'awaiting_replay') {
           if (msg.replay) {
             console.log(`[session.history] id=${msg.id} replay complete, activationState → active`);
-            if (!entry.queue(historyText)) entry.term.write(historyText);
-            for (const d of entry.pendingData) { if (!entry.queue(d)) entry.term.write(d); }
+            if (!entry.queue(historyText, true)) entry.writeChunk(historyText, true);
+            for (const d of entry.pendingData) { if (!entry.queue(d)) entry.writeChunk(d); }
             entry.pendingData = [];
             entry.activationState = 'active';
             updatePreview(msg.id);
           }
           break;
         }
-        if (!entry.queue(historyText)) entry.term.write(historyText);
+        if (!entry.queue(historyText, !!msg.replay)) entry.writeChunk(historyText, !!msg.replay);
         updatePreview(msg.id);
         break;
       }

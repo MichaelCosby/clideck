@@ -743,8 +743,13 @@ export function activateTerminal(id) {
   const refreshJumpLatest = () => updateJumpLatestButton(id, term, jumpLatestBtn);
   term.onScroll(refreshJumpLatest);
   term.onWriteParsed(refreshJumpLatest);
-  attachToTerminal(term, presetId);
-
+  let replayWrites = 0;
+  const writeChunk = (data, replay = false) => {
+    if (!replay) { term.write(data); return; }
+    replayWrites += 1;
+    term.write(data, () => { replayWrites -= 1; });
+  };
+  attachToTerminal(term, presetId, () => replayWrites > 0);
   const onContextMenu = (e) => {
     if (e.shiftKey) return;
     e.preventDefault();
@@ -770,7 +775,7 @@ export function activateTerminal(id) {
       fitted = true;
       fit.fit();
       send({ type: 'resize', id, cols: term.cols, rows: term.rows });
-      for (const chunk of pending) term.write(chunk);
+      for (const chunk of pending) writeChunk(chunk.data, chunk.replay);
       pending = null;
       updatePreview(id);
       refreshJumpLatest();
@@ -793,7 +798,7 @@ export function activateTerminal(id) {
         return;
       }
       fitted = true;
-      for (const chunk of pending) term.write(chunk);
+      for (const chunk of pending) writeChunk(chunk.data, chunk.replay);
       pending = null;
       updatePreview(id);
       refreshJumpLatest();
@@ -804,7 +809,8 @@ export function activateTerminal(id) {
   Object.assign(entry, {
     term, fit, ro, cancelFitRaf, onContextMenu,
     activationState: 'awaiting_replay',
-    queue: (data) => { if (!fitted) { pending.push(data); return true; } return false; },
+    queue: (data, replay = false) => { if (!fitted) { pending.push({ data, replay }); return true; } return false; },
+    writeChunk,
   });
 
   // Expose capture helpers for setStatus etc.
