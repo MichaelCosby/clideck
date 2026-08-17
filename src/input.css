@@ -29,7 +29,8 @@
     --color-sidebar-input: #0f1010;
     --color-sidebar-border: #2e2f2f;
     --color-chat-hover: #2e2f2f;
-    --color-chat-active: #2e2f2f;
+    --color-chat-active: rgba(59, 130, 246, 0.18);
+    --color-chat-active-border: #60a5fa;
     --color-rail-badge-bg: #5cbd6d;
     --color-rail-badge-text: #0a0a0a;
   }
@@ -57,7 +58,8 @@
     --color-sidebar-input: #ffffff;
     --color-sidebar-border: #e0deda;
     --color-chat-hover: #f6f5f5;
-    --color-chat-active: #eff0f0;
+    --color-chat-active: rgba(59, 130, 246, 0.12);
+    --color-chat-active-border: #2563eb;
     --color-rail-badge-bg: #51a868;
     --color-rail-badge-text: #ffffff;
   }
@@ -202,7 +204,10 @@
 #sidebar { background-color: var(--color-sidebar) !important; border-right-color: var(--color-separator) !important; }
 #sidebar input[type="text"], #sidebar select { background-color: var(--color-sidebar-input) !important; border-color: var(--color-sidebar-border) !important; }
 .group:hover { background-color: var(--color-chat-hover) !important; }
-.group.active-session { background-color: var(--color-chat-active) !important; }
+.group.active-session {
+  background-color: var(--color-chat-active) !important;
+  box-shadow: inset 3px 0 0 0 var(--color-chat-active-border) !important;
+}
 
 /* ── Theme toggle button ── */
 
