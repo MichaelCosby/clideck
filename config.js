@@ -39,7 +39,7 @@ const DEFAULTS = {
     {
       id: '1', label: 'Shell', icon: 'terminal', command: defaultShell, enabled: true,
       defaultPath: '', isAgent: false, canResume: false, resumeCommand: null, sessionIdPattern: null,
-      env: {},
+      copyOnSelect: false, env: {},
     },
   ],
   confirmClose: true,
@@ -115,6 +115,7 @@ function migrate(cfg) {
     if (cmd.resumeCommand === undefined)    cmd.resumeCommand = preset?.resumeCommand || null;
     if (cmd.sessionIdPattern === undefined) cmd.sessionIdPattern = preset?.sessionIdPattern || null;
     if (cmd.outputMarker === undefined)     cmd.outputMarker = preset?.outputMarker || null;
+    if (cmd.copyOnSelect === undefined)     cmd.copyOnSelect = false;
     if (!cmd.env || typeof cmd.env !== 'object' || Array.isArray(cmd.env)) cmd.env = {};
     // Claude Code telemetry is built-in, always on
     if (preset?.telemetryEnabled === true) cmd.telemetryEnabled = true;
@@ -142,7 +143,7 @@ function migrate(cfg) {
         isAgent: preset.isAgent, canResume: preset.canResume,
         resumeCommand: preset.resumeCommand, sessionIdPattern: preset.sessionIdPattern,
         outputMarker: preset.outputMarker || null,
-        env: {},
+        copyOnSelect: false, env: {},
       });
     }
   }

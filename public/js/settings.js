@@ -42,7 +42,7 @@ function captureSettingsFocus() {
   const card = active.closest('.agent-card');
   if (card) {
     snapshot.cardIdx = card.dataset.idx || null;
-    for (const cls of ['agent-name', 'agent-command', 'agent-enabled', 'agent-is-agent', 'agent-can-resume', 'agent-resume-cmd']) {
+    for (const cls of ['agent-name', 'agent-command', 'agent-enabled', 'agent-is-agent', 'agent-copy-on-select', 'agent-can-resume', 'agent-resume-cmd']) {
       if (active.classList.contains(cls)) {
         snapshot.selector = `.${cls}`;
         break;
@@ -266,6 +266,13 @@ function renderAgentList() {
           <input type="checkbox" ${c.isAgent ? 'checked' : ''} class="agent-is-agent accent-blue-500">
           AI Agent
           <span class="text-xs text-slate-500">(enables resume support)</span>
+        </label>
+      </div>
+      <div class="mb-3">
+        <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+          <input type="checkbox" ${c.copyOnSelect ? 'checked' : ''} class="agent-copy-on-select accent-blue-500">
+          Copy selection to clipboard
+          <span class="text-xs text-slate-500">(copies text to the clipboard as soon as you select it)</span>
         </label>
       </div>
       <div class="agent-resume-section ${c.isAgent ? '' : 'hidden'} pl-4 border-l-2 border-slate-700 space-y-3">
@@ -626,6 +633,7 @@ function saveConfig() {
       enabled: card.querySelector('.agent-enabled').checked,
       defaultPath: existing.defaultPath || '',
       isAgent: card.querySelector('.agent-is-agent').checked,
+      copyOnSelect: card.querySelector('.agent-copy-on-select').checked,
       canResume: card.querySelector('.agent-can-resume').checked,
       resumeCommand: card.querySelector('.agent-resume-cmd')?.value.trim() || null,
       sessionIdPattern: existing.sessionIdPattern || preset?.sessionIdPattern || null,

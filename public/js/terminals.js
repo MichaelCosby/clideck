@@ -1,5 +1,5 @@
 import { state, send } from './state.js';
-import { esc, miniMarkdown, resolveIconPath } from './utils.js';
+import { esc, miniMarkdown, resolveIconPath, debounce } from './utils.js';
 import { resolveTheme, resolveAccent, applyTheme } from './profiles.js';
 import { attachToTerminal, registerHotkey } from './hotkeys.js';
 import { closeDropdown } from './prompts.js';
@@ -743,6 +743,11 @@ export function activateTerminal(id) {
   const refreshJumpLatest = () => updateJumpLatestButton(id, term, jumpLatestBtn);
   term.onScroll(refreshJumpLatest);
   term.onWriteParsed(refreshJumpLatest);
+  term.onSelectionChange(debounce(() => {
+    if (!term.hasSelection()) return;
+    if (!state.cfg.commands.find(c => c.id === commandId)?.copyOnSelect) return;
+    navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+  }, 150));
   let replayWrites = 0;
   const writeChunk = (data, replay = false) => {
     if (!replay) { term.write(data); return; }
