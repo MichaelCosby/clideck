@@ -183,6 +183,16 @@ function connect() {
       case 'session.dispatch':
         playAskDispatchSound(msg);
         break;
+      case 'session.procInfo': {
+        const name = document.querySelector(`.group[data-id="${msg.id}"] .name`)?.textContent?.trim() || 'Session';
+        if (msg.error) {
+          showToast(`${name}: ${msg.error}`, { title: 'Process info', type: 'error', duration: 4000 });
+        } else {
+          const mb = (kb) => kb ? `${(kb / 1024).toFixed(1)} MB` : '—';
+          showToast(`pid ${msg.pid} · RSS ${mb(msg.rssKb)} · VSZ ${mb(msg.vszKb)}`, { title: name, duration: 6000 });
+        }
+        break;
+      }
       // Server requests terminal capture (e.g. after PermissionRequest hook)
       case 'terminal.capture': {
         const ce = state.terms.get(msg.id);

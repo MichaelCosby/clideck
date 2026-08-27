@@ -465,6 +465,10 @@ function openMenu(sessionId, anchor) {
       <span class="flex-shrink-0 text-slate-400"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v5h4.5M20 20v-5h-4.5M4 9a9 9 0 0 1 15.36-5.36M20 15a9 9 0 0 1-15.36 5.36"/></svg></span>
       Refresh session
     </button>
+    <button class="menu-action flex items-center gap-2.5 w-full px-3 py-2 text-sm text-slate-300 hover:bg-slate-700 transition-colors text-left" data-action="procinfo">
+      <span class="flex-shrink-0 text-slate-400"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h.01M9 12h6M9 15h6"/></svg></span>
+      Process info
+    </button>
     <button class="menu-action flex items-center gap-2.5 w-full px-3 py-2 text-sm text-red-400 hover:bg-slate-700 transition-colors text-left" data-action="delete">
       <span class="flex-shrink-0 text-red-400"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></span>
       Delete
@@ -489,6 +493,8 @@ function openMenu(sessionId, anchor) {
     } else if (action === 'refresh') {
       const re = state.terms.get(sessionId);
       if (re) send({ type: 'session.restart', id: sessionId, themeId: re.themeId, cols: re.term?.cols ?? 120, rows: re.term?.rows ?? 30 });
+    } else if (action === 'procinfo') {
+      send({ type: 'session.procInfo', id: sessionId });
     } else if (action === 'delete') {
       document.getElementById('session-list').dispatchEvent(
         new CustomEvent('session-delete', { detail: { id: sessionId } })

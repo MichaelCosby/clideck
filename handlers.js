@@ -413,6 +413,7 @@ function onConnection(ws) {
       case 'resize':               sessions.resize(msg); break;
       case 'rename':          sessions.rename(msg); break;
       case 'close':           sessions.close(msg, cfg); break;
+      case 'session.procInfo': sessions.getProcInfo(msg, ws); break;
 
       case 'config.get':
         ws.send(JSON.stringify({ type: 'config', config: configForClient() }));

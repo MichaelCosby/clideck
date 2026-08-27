@@ -390,6 +390,23 @@ function setMute(id, muted) {
   return false;
 }
 
+// Reads live RSS/VSZ for a session's pty process from /proc, on demand only —
+// nothing polls this, so it's fine to hit the filesystem synchronously here.
+function getProcInfo(msg, ws) {
+  const id = msg.id;
+  const s = sessions.get(id);
+  const pid = s?.pty?.pid;
+  if (!pid) { ws.send(JSON.stringify({ type: 'session.procInfo', id, error: 'no process' })); return; }
+  try {
+    const status = readFileSync(`/proc/${pid}/status`, 'utf8');
+    const rssKb = Number(/VmRSS:\s*(\d+)/.exec(status)?.[1]);
+    const vszKb = Number(/VmSize:\s*(\d+)/.exec(status)?.[1]);
+    ws.send(JSON.stringify({ type: 'session.procInfo', id, pid, rssKb: rssKb || null, vszKb: vszKb || null }));
+  } catch (e) {
+    ws.send(JSON.stringify({ type: 'session.procInfo', id, pid, error: e.code === 'ENOENT' ? 'process not found' : e.message }));
+  }
+}
+
 function close(msg, cfg) {
   const s = sessions.get(msg.id);
   if (s) { s.pty.kill(); telemetry.clear(msg.id); opencodeBridge.clear(msg.id); piBridge.clear(msg.id); transcript.clear(msg.id); plugins.clearStatus(msg.id); sessions.delete(msg.id); broadcast({ type: 'closed', id: msg.id }); }
@@ -587,7 +604,7 @@ function shutdown(cfg) {
 
 module.exports = {
   clients, broadcast, addBroadcastListener, getSessions: () => sessions,
-  create, createProgrammatic, resume, restart, input, resize, rename, setTheme, setMute, setProject, setPreview, close,
+  create, createProgrammatic, resume, restart, input, resize, rename, setTheme, setMute, setProject, setPreview, close, getProcInfo,
   list, getResumable, sendBuffer, sendBuffers,
   loadSessions, startAutoSave, shutdown,
 };
