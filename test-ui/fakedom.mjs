@@ -50,10 +50,12 @@ export class El {
   getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; }
   hasAttribute(k) { return k in this._attrs; }
   removeAttribute(k) { delete this._attrs[k]; }
-  appendChild(n) { n.parentNode = this; this._kids.push(n); return n; }
+  // Like the real DOM, inserting a node that already has a parent moves it rather than duplicating it.
+  _adopt(n) { const p = n.parentNode; if (p && p._kids) { const i = p._kids.indexOf(n); if (i >= 0) p._kids.splice(i, 1); } n.parentNode = this; }
+  appendChild(n) { this._adopt(n); this._kids.push(n); return n; }
   append(...ns) { ns.forEach((n) => n && this.appendChild(n)); }
-  prepend(n) { n.parentNode = this; this._kids.unshift(n); }
-  insertBefore(n, ref) { n.parentNode = this; const i = ref ? this._kids.indexOf(ref) : -1; if (i < 0) this._kids.push(n); else this._kids.splice(i, 0, n); return n; }
+  prepend(n) { this._adopt(n); this._kids.unshift(n); }
+  insertBefore(n, ref) { this._adopt(n); const i = ref ? this._kids.indexOf(ref) : -1; if (i < 0) this._kids.push(n); else this._kids.splice(i, 0, n); return n; }
   replaceChildren(...ns) { this._kids = []; this._text = ""; this._html = ""; ns.forEach((n) => n && this.appendChild(n)); }
   remove() { if (this.parentNode) { this.parentNode._kids = this.parentNode._kids.filter((c) => c !== this); this.parentNode = null; } }
   replaceWith(n) { if (this.parentNode) { const i = this.parentNode._kids.indexOf(this); this.parentNode._kids[i] = n; n.parentNode = this.parentNode; this.parentNode = null; } }

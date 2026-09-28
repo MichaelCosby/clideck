@@ -4,7 +4,7 @@
 // via opts, so this module stays decoupled from the terminal (no import cycle).
 import { openMenu } from "./menu.js";
 import { store } from "../store.js";
-import { closeSession, setMute, send, setSessionProject, requestProcessInfo } from "../ws.js";
+import { closeSession, setMute, send, setSessionProject, requestProcessInfo, updateConfig } from "../ws.js";
 import { copyText, askAddress } from "../util.js";
 import { openThemePicker } from "./theme-picker.js";
 import { restartWithTheme } from "../terminal-themes.js";
@@ -72,6 +72,13 @@ function projectItems(id, s) {
   ];
 }
 
+function togglePin(id) {
+  const pins = store.pinnedSessions.filter((pinned) => pinned !== id && store.sessions.has(pinned));
+  if (!store.pinnedSessions.includes(id)) pins.push(id);
+  store.setPinnedSessions(pins);
+  updateConfig({ pinnedSessions: pins });
+}
+
 async function pasteInto(id) {
   try { const t = await navigator.clipboard.readText(); if (t) send({ type: "input", sessionId: id, data: pastePayload(t) }); } catch {}
 }
@@ -97,6 +104,7 @@ function baseItems(id, opts) {
         c.replace(items, true);                                           // keepFocus: no jump during the flash
         setTimeout(() => c.close(), 850);
       } },
+    { label: store.pinnedSessions.includes(id) ? "Unpin" : "Pin to top", onSelect: (c) => { c.close(); togglePin(id); } },
     { label: opts.muted ? "Unmute" : "Mute", onSelect: (c) => { c.close(); setMute(id, !opts.muted); } },
     { label: "Theme…", onSelect: (c) => { c.close(); openThemePicker(id); } },
     { label: "Restart session", disabled: !live, onSelect: (c) => { c.close(); restartWithTheme(id); } },

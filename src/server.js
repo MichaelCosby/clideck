@@ -311,6 +311,10 @@ class HeadlessServer {
   }
 
   removeSessionState(sessionId) {
+    const pinned = this.configStore.get().pinnedSessions;
+    if (Array.isArray(pinned) && pinned.includes(String(sessionId))) {
+      this.broadcastConfig(this.configStore.update({ pinnedSessions: pinned.filter((id) => id !== String(sessionId)) }));
+    }
     this.contentStore.removeSession(sessionId);
     return this.persistence.remove(sessionId);
   }

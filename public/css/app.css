@@ -534,6 +534,11 @@ body.resizing iframe { pointer-events:none; } /* Embedded documents must not tak
 .r-mute { display:none; flex:0 0 auto; place-items:center; color:var(--faint); }
 .r-mute svg { display:block; }
 .row.muted .r-mute { display:grid; }
+.r-pin { display:none; flex:0 0 auto; place-items:center; color:var(--faint); }
+.r-pin svg { display:block; }
+.row.pinned .r-pin { display:grid; }
+.row.pin-last { margin-bottom:9px; }
+.row.pin-last::after { content:""; position:absolute; left:15px; right:15px; bottom:-5px; height:1px; background:var(--border); pointer-events:none; }
 
 /* ── Increment 5: folder picker modal ── */
 .fp-overlay { position:fixed; inset:0; z-index:600; display:grid; place-items:center; padding:24px; background:color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter:blur(4px); opacity:0; transition:opacity .18s; }

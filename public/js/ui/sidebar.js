@@ -8,13 +8,14 @@ import { sessionFace, PROVIDER_LIST, DEFAULT_PROVIDER } from "../providers-ui.js
 import { esc, firstLine, relTime, relTimeShort, shortId, h, basename, projectLabels, inlineRename, copyText, askAddress, PROJECT_COLORS, SESSION_NAME_MAX, limitSessionName } from "../util.js";
 import { openSessionMenu } from "./session-menu.js";
 import { terminalFocusTarget, terminalSelection } from "./terminal.js";
-import { openMenu, closeMenu } from "./menu.js";
+import { openMenu, closeMenu, isMenuOpen } from "./menu.js";
 import { toast } from "./toast.js";
 import { initNotificationToggle } from "./notification-toggle.js";
 import { openFolderPicker } from "./folder-picker.js";
 import { openPromptLibrary } from "./prompts.js";
 import { openProjectCreator } from "./project-creator.js";
-import { initDrag, wasDragging } from "./drag.js";
+import { initDrag, wasDragging, isDragging } from "./drag.js";
+import { createRowOrder, RANK } from "./row-order.js";
 import { startBounce } from "./bounce.js";
 import { openSettings } from "./settings.js";
 import { AGENT_PRESETS, providerHealth } from "../agent-presets.js";
@@ -24,6 +25,7 @@ const CHEVRON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" str
 const COPY_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
 const PENCIL_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
 const CHECK_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+const PIN_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>';
 const MUTE_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4V5z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>';
 const FOLDER_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 const DOTS_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>';
@@ -56,7 +58,11 @@ const groups = new Map();   // groupKey -> { root, head, name, count, dot, rowsE
 let listEl = null;
 let renamingId = null, rowRenameHandle = null;   // the session row (if any) with an inline rename open
 let renamingProjectId = null;                    // the project header (if any) mid-rename — guard so a config echo won't clobber it
-let groupSeq = 0;                                 // creation order for cwd groups (project groups sort by config order)
+let groupSeq = 0;
+const rowOrder = createRowOrder();
+let rowSeq = 0;
+const dirtyGroups = new Set();
+let pointerInList = false, orderTimer = null, pinSig = "";                                 // creation order for cwd groups (project groups sort by config order)
 const collapsed = loadCollapsed();   // Set<groupKey> — client-local collapse UX (localStorage)
 
 // A session groups under its project when it has one, else under its cwd. The key namespaces the two so a
@@ -123,6 +129,15 @@ export function initSidebar() {
   store.on("availability", () => { if (pickerRefresh) pickerRefresh(); });   // agent health changed while the picker is open → re-render its rows
   store.on("stale", renderEngineBanner);   // outdated/unreachable engine → a self-explaining banner (ws.js drives it)
   initDrag(listEl);   // session→project / project reorder drag-and-drop
+  // Status ordering moves rows, so hold it still while the pointer is over the list (no row slides under a click).
+  listEl.addEventListener("pointerenter", () => { pointerInList = true; });
+  listEl.addEventListener("pointerleave", () => { pointerInList = false; scheduleOrder(); });
+  store.on("config", () => {
+    const sig = store.pinnedSessions.join(",");
+    if (sig === pinSig) return;
+    pinSig = sig;
+    for (const id of rows.keys()) renderRow(id);
+  });
 
   reconcileProjects();
   renderChrome();
@@ -504,7 +519,8 @@ function addRow(id) {
   renameBtn.addEventListener("click", (e) => { e.stopPropagation(); startRowRename(id); });
   nameText.addEventListener("dblclick", (e) => { e.stopPropagation(); e.preventDefault(); startRowRename(id); });   // v1 app.js:480-485
   const muteIcon = h("span", "r-mute", MUTE_ICON); muteIcon.title = "Muted — no idle sound/notification";
-  name.append(nameText, muteIcon, copyBtn, renameBtn);
+  const pinIcon = h("span", "r-pin", PIN_ICON); pinIcon.title = "Pinned";
+  name.append(nameText, pinIcon, muteIcon, copyBtn, renameBtn);
   const time = h("div", "r-time", "now");
   const preview = h("div", "r-preview");
   const bounce = h("span", "r-bounce");            // working animation slot (empty ⇒ collapsed); ptext owns the ellipsis
@@ -522,7 +538,7 @@ function addRow(id) {
   root.append(avatar, name, time, preview, badge, actions, menuBtn);
   g.rowsEl.appendChild(root);
   g.ids.add(id);
-  rows.set(id, { root, avatar, presence, name, nameText, copyBtn, time, preview, bounce, ptext, badge, actions, groupKey: key, faceSig: f.sig, stopBounce: null });
+  rows.set(id, { root, avatar, presence, name, nameText, copyBtn, time, preview, bounce, ptext, badge, actions, groupKey: key, faceSig: f.sig, stopBounce: null, seq: rowSeq++ });
   root.classList.toggle("muted", !!s.muted);
   g.count.textContent = g.ids.size;
   renderRow(id);
@@ -538,7 +554,7 @@ function setBounce(r, on) {
 function removeRow(id) {
   const r = rows.get(id); if (!r) return;
   setBounce(r, false);            // release the frame — a removed row must never keep ticking
-  r.root.remove(); rows.delete(id);
+  r.root.remove(); rows.delete(id); rowOrder.forget(id);
   const g = groups.get(r.groupKey);
   if (g) { g.ids.delete(id); g.count.textContent = g.ids.size; removeGroupIfEmpty(r.groupKey); }
 }
@@ -555,10 +571,31 @@ function moveRowToGroup(id) {
   const og = groups.get(oldKey);
   if (og) { og.ids.delete(id); og.count.textContent = og.ids.size; removeGroupIfEmpty(oldKey); }
 }
+// ── status ordering ──────────────────────────────────────────────────────────
+function orderFrozen() { return pointerInList || renamingId !== null || isDragging() || isMenuOpen(); }
+function scheduleOrder(key) {
+  if (key) dirtyGroups.add(key);
+  if (orderTimer || !dirtyGroups.size) return;
+  orderTimer = setTimeout(() => { orderTimer = null; if (!orderFrozen()) flushOrder(); }, 0);
+}
+function flushOrder() {
+  for (const key of dirtyGroups) {
+    const g = groups.get(key); if (!g) continue;
+    const ids = rowOrder.sort([...g.ids].filter((id) => rows.has(id)), store.pinnedSessions, (id) => rows.get(id).seq);
+    const want = ids.map((id) => rows.get(id).root);
+    const have = [...g.rowsEl.children].filter((el) => el.classList.contains("row"));
+    if (want.some((el, i) => el !== have[i])) for (const el of want) g.rowsEl.appendChild(el);
+    let lastPinned = null;
+    for (const el of want) { el.classList.remove("pin-last"); if (el.classList.contains("pinned")) lastPinned = el; }
+    if (lastPinned && lastPinned !== want[want.length - 1]) lastPinned.classList.add("pin-last");
+  }
+  dirtyGroups.clear();
+}
+
 function clearAll() {
   for (const r of rows.values()) setBounce(r, false);   // a reconnect wipe must not orphan running animations
   for (const g of groups.values()) g.root.remove();
-  groups.clear(); rows.clear(); groupSeq = 0;
+  groups.clear(); rows.clear(); groupSeq = 0; dirtyGroups.clear();
 }
 
 // A session's cwd as a compact path (home → ~), or "". The calm, stable subtitle for a row with no agent
@@ -569,6 +606,8 @@ function renderRow(id) {
   const r = rows.get(id); const s = store.sessions.get(id);
   if (!r || !s) return;
   if (r.groupKey !== groupKeyOf(s)) moveRowToGroup(id);     // project changed (setProject) / live↔dormant → reparent in place
+  r.root.classList.toggle("pinned", rowOrder.note(s, store.pinnedSessions) === RANK.pinned);
+  scheduleOrder(r.groupKey);
   applyFace(r, s);                                          // §A: refresh the avatar if the command icon resolved/changed
   const editing = renamingId === id;                        // an inline rename is open on this row
   if (!editing) {

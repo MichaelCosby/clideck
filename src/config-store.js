@@ -165,6 +165,11 @@ function isValidConfigPatch(value) {
       || value.copyOnSelectProviders.some((id) => typeof id !== 'string' || !PROVIDER_ID.test(id)))) {
     return false;
   }
+  if (value.pinnedSessions !== undefined
+    && (!Array.isArray(value.pinnedSessions) || value.pinnedSessions.length > MAX_PROJECTS
+      || value.pinnedSessions.some((id) => typeof id !== 'string' || !id || id.length > 200))) {
+    return false;
+  }
   if (value.agentGuidance !== undefined && !AGENT_GUIDANCE_LEVELS.includes(value.agentGuidance)) return false;
   if (value.about !== undefined && !isValidProfile(value.about)) return false;
   if (value.onboarding !== undefined && !isValidOnboarding(value.onboarding)) return false;

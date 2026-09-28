@@ -7,6 +7,8 @@
 import { store } from "../store.js";
 import { setSessionProject, updateConfig } from "../ws.js";
 
+export function isDragging() { return !!(ds && ds.active); }
+
 const DRAG_THRESHOLD = 5;
 let ds = null;              // active drag state (or a pending one below threshold)
 let suppressClick = false;  // set on a real drag end → the very next click is swallowed
@@ -89,7 +91,9 @@ function startDrag() {
 // Dropping outside an explicit project is a no-op: a drag must never silently manufacture a cwd group.
 function updateSessionDropTarget(x, y) {
   document.querySelectorAll(".drop-highlight").forEach((el) => el.classList.remove("drop-highlight"));
+  clearDropLine();
   ds.dropTarget = null;
+  if (updatePinDropTarget(x, y)) return;
   for (const group of document.querySelectorAll(".project.is-project")) {
     const rect = group.getBoundingClientRect();
     if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
@@ -99,6 +103,27 @@ function updateSessionDropTarget(x, y) {
       return;
     }
   }
+}
+
+// A pinned row dragged over its group's pinned rows reorders the pins; the insertion line marks the slot.
+function updatePinDropTarget(x, y) {
+  if (!store.pinnedSessions.includes(ds.id)) return false;
+  const pinned = [...ds.row.parentElement.querySelectorAll(":scope > .row.pinned")];
+  if (pinned.length < 2) return false;
+  const first = pinned[0].getBoundingClientRect(), last = pinned[pinned.length - 1].getBoundingClientRect();
+  if (x < first.left || x > first.right || y < first.top || y > last.bottom) return false;
+  const dragIdx = pinned.indexOf(ds.row);
+  let slot = pinned.length;
+  for (let i = 0; i < pinned.length; i++) {
+    const r = pinned[i].getBoundingClientRect();
+    if (y < r.top + r.height / 2) { slot = i; break; }
+  }
+  if (slot === dragIdx || slot === dragIdx + 1) return true;   // already there: no line, no move
+  ds.dropTarget = { type: "pin", beforeId: slot < pinned.length ? pinned[slot].dataset.id : null, afterId: pinned[pinned.length - 1].dataset.id };
+  const line = document.createElement("div");
+  line.className = "project-drop-line";
+  if (slot < pinned.length) pinned[slot].before(line); else pinned[pinned.length - 1].after(line);
+  return true;
 }
 
 // A project drops between other projects — the insertion line marks the slot (skips the two no-op slots).
@@ -132,6 +157,13 @@ function endDrag() {
     const s = store.sessions.get(ds.id);
     if (!s) return;
     if (target.type === "project" && s.projectId !== target.projectId) setSessionProject(ds.id, target.projectId);
+    if (target.type === "pin") {
+      const pins = store.pinnedSessions.filter((id) => id !== ds.id);
+      const at = target.beforeId ? pins.indexOf(target.beforeId) : pins.indexOf(target.afterId) + 1;
+      pins.splice(at, 0, ds.id);
+      store.setPinnedSessions(pins);
+      updateConfig({ pinnedSessions: pins });
+    }
   } else if (ds.mode === "project" && target.type === "reorder") {
     const projects = store.projects.slice();
     const from = projects.findIndex((p) => p.id === ds.projectId);
