@@ -102,6 +102,10 @@ export function initSidebar() {
   document.getElementById("prompts-btn").onclick = (e) => { e.stopPropagation(); openPromptLibrary(); };
   // engine rejected a rename (race / cross-client) — re-surface the in-row editor with the rejected name + error.
   store.on("session:renameRejected", (id, name) => startRowRename(id, { value: name, error: "That name is already taken — choose another." }));
+  store.on("session:titleRejected", (id, err) => toast.warn({
+    id: "title-sync:" + id, title: "Rename not applied",
+    body: "The agent renamed itself “" + (err.value || "") + "”, but another session in this project already has that name. Kept “" + (err.current || "") + "”.",
+  }));
   // engine rejected a create (duplicate name) — re-open the new-session picker with the typed values + inline error.
   store.on("session:createRejected", onCreateRejected);
   // engine rejected a move (name collision in the target project, or the project vanished) — the row stays put.

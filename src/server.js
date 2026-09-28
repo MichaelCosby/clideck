@@ -591,6 +591,7 @@ class HeadlessServer {
     session.on('resume-metadata', (metadata) => {
       this.persistence.recordResumeMetadata(session.id, metadata);
     });
+    session.on('title', (title) => this.applyAgentTitle(session, title));
     try {
       session.start(createdFields);
     } catch (error) {
@@ -955,6 +956,22 @@ class HeadlessServer {
       path: this.pluginManager.pluginsDir,
       ...(!result.success && { code: result.code || 'open_failed', error: result.error }),
     }, requestId);
+  }
+
+  // An agent renamed its own conversation (Claude's /rename). A taken name keeps the current one and tells
+  // the browser, under its own operation so it is not mistaken for a manual rename to redo.
+  applyAgentTitle(session, title) {
+    const value = String(title || '').trim().slice(0, 200);
+    if (!value || value === session.name || session.closed) return false;
+    const conflict = this.findNameConflict(value, session, session.id);
+    if (conflict) {
+      this.broadcastSessionError(session.id, {
+        ...this.nameConflictError('session.titleSync', value, session, conflict.id),
+        current: session.name,
+      });
+      return false;
+    }
+    return this.renameSession(session.id, value);
   }
 
   renameSession(sessionId, name) {

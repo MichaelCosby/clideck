@@ -3,6 +3,7 @@ const { AGENT_SESSION_GUIDE, hasClaudeSystemPrompt } = require('./agent-session-
 const screen = require('./claude-screen');
 const { createClaudeSettings, removeClaudeSettings } = require('./claude-settings');
 const { claudeContextUsage } = require('./context-usage');
+const { watchClaudeTitle } = require('./claude-title');
 
 const claudeProvider = {
   id: 'claude-code',
@@ -17,6 +18,7 @@ const claudeProvider = {
   screen,
   requiresSessionStart: true,
   contextUsage: claudeContextUsage,
+  watchTitle: watchClaudeTitle,
   model: (payload) => payload.model?.display_name || payload.model?.id,
   finalText(payload) {
     return String(payload.last_assistant_message || '').trim();

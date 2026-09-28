@@ -252,6 +252,7 @@ function applyEvent(ev) {
       // is the create-repair surface, and an unopenable file falling into it would disarm the create focus
       // one-shot and report a failed drop as "that name is already taken".
       if (op === "content.open") emit("content:openFailed", ev.sessionId, ev.error);
+      else if (op === "session.titleSync") emit("session:titleRejected", ev.sessionId, ev.error);   // the agent's /rename name is taken
       else if (op.endsWith("setProject")) emit("session:setProjectRejected", ev.sessionId, ev.error);   // name_conflict | unknown_project
       else if (op.endsWith("rename")) emit("session:renameRejected", ev.sessionId, ev.error.value || "");
       else if (op.endsWith("restart")) emit("session:restartFailed", ev.sessionId, ev.error.message || "");   // respawn failed → row already went dormant above

@@ -98,6 +98,8 @@ class AgentSession extends EventEmitter {
     this.completedHookTurns = new Set();
     this.contextTranscriptPath = String(options.contextTranscriptPath || '');
     this.stopContextMonitor = () => {};
+    this.stopTitleMonitor = () => {};
+    this.titleTranscriptPath = '';
     this.resumeHandle = String(this.launchOptions.resumeHandle || '');
     this.resumeOutput = '';
     this.transcriptWaitMs = Number(options.transcriptWaitMs ?? TRANSCRIPT_READY_TIMEOUT_MS);
@@ -262,6 +264,14 @@ class AgentSession extends EventEmitter {
       value,
       (usage) => this.setContextUsage(usage),
     );
+  }
+
+  // A /rename inside the agent surfaces as a 'title' event; the engine decides whether the name is free.
+  attachTitleMonitor(path) {
+    if (!this.provider.watchTitle || path === this.titleTranscriptPath) return;
+    this.stopTitleMonitor();
+    this.titleTranscriptPath = path;
+    this.stopTitleMonitor = this.provider.watchTitle(path, (title) => this.emit('title', title));
   }
 
   currentCandidate() {
@@ -580,6 +590,7 @@ class AgentSession extends EventEmitter {
     if (path) {
       this.resumeTranscriptPath = path;
       this.attachContextMonitor(path);
+      this.attachTitleMonitor(path);
     }
   }
 
@@ -607,6 +618,9 @@ class AgentSession extends EventEmitter {
     this.closeKillTimer = null;
     this.stopContextMonitor();
     this.stopContextMonitor = () => {};
+    this.stopTitleMonitor();
+    this.stopTitleMonitor = () => {};
+    this.titleTranscriptPath = '';
     if (!this.terminal) {
       this.handleExit(null, null);
       return;
@@ -668,6 +682,9 @@ class AgentSession extends EventEmitter {
     this.closeKillTimer = null;
     this.stopContextMonitor();
     this.stopContextMonitor = () => {};
+    this.stopTitleMonitor();
+    this.stopTitleMonitor = () => {};
+    this.titleTranscriptPath = '';
     if (!this.restarting) this.finalizeTurn();
     this.launchCleanup();
     this.emitProtocol('session.closed', {
