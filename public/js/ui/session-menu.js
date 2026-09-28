@@ -10,6 +10,7 @@ import { openThemePicker } from "./theme-picker.js";
 import { restartWithTheme } from "../terminal-themes.js";
 import { pastePayload } from "./paste.js";
 import { toast } from "./toast.js";
+import { pickAndUpload } from "./drop.js";
 
 const mb = (kb) => (kb / 1024).toFixed(1) + " MB";
 store.on("session:procInfo", (ev) => {
@@ -35,6 +36,7 @@ export function openTerminalMenu(point, id, opts = {}) {
   openMenu(point, [
     { label: "Copy", disabled: !sel, onSelect: (c) => { copyText(sel); c.close(); } },
     { label: "Paste", disabled: !live, onSelect: (c) => { c.close(); pasteInto(id); } },
+    { label: "Upload file…", disabled: !live, onSelect: (c) => { c.close(); pickAndUpload(); } },
     ...plugin,
   ], {
     align: opts.align || "start",

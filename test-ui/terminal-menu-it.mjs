@@ -28,8 +28,8 @@ try {
     pluginItems: [{ label: "Read selection aloud", onSelect: (c) => { spoke = "said"; c.close(); } }],
   });
   const withSel = labels();
-  ok("exactly three items: Copy, Paste, Read selection aloud",
-    withSel.length === 3 && withSel.join("|") === "Copy|Paste|Read selection aloud", withSel.join("|"));
+  ok("exactly four items: Copy, Paste, Upload file…, Read selection aloud",
+    withSel.length === 4 && withSel.join("|") === "Copy|Paste|Upload file…|Read selection aloud", withSel.join("|"));
   for (const gone of ["Rename", "Delete", "Theme…", "Restart session", "Mute", "Copy @address", "Remove from project"])
     ok(`the session action "${gone}" is not in the terminal menu`, !withSel.includes(gone), withSel.join("|"));
   ok("Copy is enabled when there is a selection", disabledOf("Copy") === false);
@@ -40,7 +40,7 @@ try {
 
   // ── no selection: Copy is disabled, and the plugin contributes nothing ─────────────────────────
   openTerminalMenu({ x: 40, y: 40 }, "T1", { selection: "", live: true, pluginItems: [] });
-  ok("with no selection the menu is just Copy and Paste", labels().join("|") === "Copy|Paste", labels().join("|"));
+  ok("with no selection the menu is Copy, Paste and Upload file…", labels().join("|") === "Copy|Paste|Upload file…", labels().join("|"));
   ok("and Copy is disabled rather than silently doing nothing", disabledOf("Copy") === true);
   closeMenu();
 

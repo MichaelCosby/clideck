@@ -187,6 +187,20 @@ function hide() { zone.classList.remove("show", "reject", "to-tab"); armTabDrop(
 
 function uploadTarget(s) { return { pid: s.pid, focus: document.activeElement }; }
 
+// "Upload file…" — the browser's file chooser, for when dragging or pasting isn't practical (e.g. remote use).
+export function pickAndUpload() {
+  const input = document.createElement("input");
+  input.type = "file"; input.multiple = true; input.hidden = true;
+  input.addEventListener("change", () => {
+    const s = activeLive();
+    const files = Array.from(input.files || []);
+    if (s && files.length) uploadFiles(s, files);
+    input.remove();
+  });
+  document.body.appendChild(input);
+  input.click();
+}
+
 async function uploadOne(s, file, target) {
   const tid = "upload:" + s.id + ":" + file.name;
   const big = file.size > BIG;

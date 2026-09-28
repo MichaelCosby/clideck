@@ -53,6 +53,7 @@ export class El {
   // Like the real DOM, inserting a node that already has a parent moves it rather than duplicating it.
   _adopt(n) { const p = n.parentNode; if (p && p._kids) { const i = p._kids.indexOf(n); if (i >= 0) p._kids.splice(i, 1); } n.parentNode = this; }
   appendChild(n) { this._adopt(n); this._kids.push(n); return n; }
+  click() { this._fire("click"); }
   append(...ns) { ns.forEach((n) => n && this.appendChild(n)); }
   prepend(n) { this._adopt(n); this._kids.unshift(n); }
   insertBefore(n, ref) { this._adopt(n); const i = ref ? this._kids.indexOf(ref) : -1; if (i < 0) this._kids.push(n); else this._kids.splice(i, 0, n); return n; }
