@@ -14,9 +14,11 @@ function isSessionWorking(session, coordinator) {
     || session.turnOpen || session.closeRequested || Boolean(session.menu?.length);
 }
 
-function listSessionAgents(entries, sessions, coordinator, caller, projects = [], { all = false } = {}) {
+// `groupProjectIds` widens the scope to every project in the caller's project group.
+function listSessionAgents(entries, sessions, coordinator, caller, projects = [], { all = false, groupProjectIds = null } = {}) {
   return entries.flatMap((entry) => {
-    if (!all && !sameSessionScope(entry, caller.entry)) return [];
+    const inGroup = groupProjectIds && entry.projectId && groupProjectIds.has(entry.projectId);
+    if (!all && !inGroup && !sameSessionScope(entry, caller.entry)) return [];
     const session = sessions.get(entry.id);
     const live = Boolean(session && !session.closed);
     const working = live && Boolean(isSessionWorking(session, coordinator));

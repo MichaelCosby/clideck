@@ -1877,6 +1877,14 @@ class HeadlessServer {
     }
   }
 
+  // Every project in the same project group as `projectId`; null when it has no (existing) group.
+  groupProjectIds(projectId) {
+    const { projects = [], projectGroups = [] } = this.configStore.get();
+    const groupId = projects.find((p) => p.id === projectId)?.groupId;
+    if (!groupId || !projectGroups.some((g) => g.id === groupId)) return null;
+    return new Set(projects.filter((p) => p.groupId === groupId).map((p) => p.id));
+  }
+
   handleAgents(req, res) {
     if (!isLoopbackAddress(req.socket?.remoteAddress)) {
       sendJson(res, 403, { ok: false, error: 'local_only' });
@@ -1902,6 +1910,7 @@ class HeadlessServer {
       });
       return;
     }
+    const config = this.configStore.get();
     sendJson(res, 200, {
       ok: true,
       agents: listSessionAgents(
@@ -1909,8 +1918,11 @@ class HeadlessServer {
         this.sessions,
         this.askCoordinator,
         caller,
-        this.configStore.get().projects,
-        { all: url.searchParams.get('all') === 'true' },
+        config.projects,
+        {
+          all: url.searchParams.get('all') === 'true',
+          groupProjectIds: url.searchParams.get('group') === 'true' ? this.groupProjectIds(caller.entry.projectId) : null,
+        },
       ),
     });
   }

@@ -13,7 +13,7 @@ const DEFAULT_AGENT_GUIDANCE = 'minimal';
 // CliDeck's commands as a dependable fallback, contacting peers only when the user or the task calls for it.
 const MINIMAL_GUIDE = `CliDeck session tools (when CLIDECK_SESSION_ID is set):
 You are running in a CliDeck session; other sessions may be working in the same project. To contact another agent, prefer your own built-in agent messaging when you have it. Use CliDeck's commands as the fallback: when you can't find the target that way, the target is not a Claude session, or a message goes unanswered. Contact other sessions only when the user asks or the task clearly needs it.
-List sessions and their ask addresses: \`clideck agents\` (\`--all\` for other projects, \`--json\` for details such as cwd).
+List sessions and their ask addresses: \`clideck agents\` (\`--group\` adds the other projects in your project group, \`--all\` every project, \`--json\` details such as cwd).
 Ask an idle session and wait for its reply: \`clideck ask "<target>" "<message>" --timeout 10m\`. Add \`--steer\` to send guidance to a working session without waiting.
 Start a sibling session: \`clideck create [--provider <id>] [--name <name>] [--cwd <path>]\` (defaults to your agent and folder).
 When you write a document meant for the user to read, such as a plan or report, open it in a preview tab: \`clideck show <path>\` (markdown, html, pdf, images, mermaid, diffs and more).

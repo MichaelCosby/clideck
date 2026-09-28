@@ -13,9 +13,9 @@ function usage(pluginCommands = []) {
     'Usage:',
     '  clideck [--port <port>] [--host <host>] [--data-dir <folder>]',
     '  clideck --version',
-    '  clideck agents [--all] [--json] [--url <url>]',
+    '  clideck agents [--group | --all] [--json] [--url <url>]',
     '  clideck create [--provider <id> | --command <id>] [--name <name>] [--cwd <path>] [--json] [--url <url>]',
-    '  clideck ask status [--all] [--json] [--url <url>]',
+    '  clideck ask status [--group | --all] [--json] [--url <url>]',
     '  clideck ask <target> <message> [--timeout 10m] [--url <url>]',
     '  clideck ask <target> <message> --steer [--url <url>]',
     '  cat message.txt | clideck ask <target> [--timeout 10m]',
@@ -30,7 +30,7 @@ function usage(pluginCommands = []) {
     '  clideck [--url <url>] <plugin-id>/<command> [arguments]',
     '',
     'Running clideck starts the local engine on port 4000; --port, CLIDECK_PORT, or PORT overrides it.',
-    'Agents lists current-project sessions, including dormant (stopped) ones; --all groups every project.',
+    'Agents lists current-project sessions, including dormant (stopped) ones; --group adds the other projects in your project group; --all groups every project.',
     'Use current addresses from agents, not old handoffs. last-active is recorded activity, not a shutdown time.',
     'Create starts a sibling session; by default it uses your own agent, working directory, and project.',
     'Normal asks require an idle target and wait for its answer.',
@@ -91,6 +91,7 @@ function parseOptions(
     const argument = args[index];
     if (argument === '--json') options.json = true;
     else if (allowAll && argument === '--all') options.all = true;
+    else if (allowAll && argument === '--group') options.group = true;
     else if (argument === '--url') {
       options.url = args[++index];
       if (!options.url) throw new Error('--url requires a value.');
@@ -237,10 +238,10 @@ function requestJson(baseUrl, pathname, options = {}) {
   });
 }
 
-async function getAgents(url, callerId, all = false) {
+async function getAgents(url, callerId, all = false, group = false) {
   return (await requestJson(
     url,
-    `/api/session/agents?callerSessionId=${encodeURIComponent(callerId)}${all ? '&all=true' : ''}`,
+    `/api/session/agents?callerSessionId=${encodeURIComponent(callerId)}${all ? '&all=true' : ''}${group ? '&group=true' : ''}`,
   )).agents || [];
 }
 
@@ -373,10 +374,10 @@ function startProgress(options, callerId, io) {
 async function runAgents(args, env, io) {
   const options = parseOptions(args, env, { allowAll: true });
   if (options.help) return io.stdout.write(`${usage()}\n`);
-  if (options.positional.length) throw new Error('Unexpected agents argument. Hint: use clideck agents [--all] [--json].');
-  const agents = await getAgents(options.url, requireCaller(env), options.all);
+  if (options.positional.length) throw new Error('Unexpected agents argument. Hint: use clideck agents [--group | --all] [--json].');
+  const agents = await getAgents(options.url, requireCaller(env), options.all, options.group);
   io.stdout.write(options.json
-    ? `${JSON.stringify(agents, null, 2)}\n` : `${formatAgents(agents, options)}\n`);
+    ? `${JSON.stringify(agents, null, 2)}\n` : `${formatAgents(agents, { ...options, all: options.all || options.group })}\n`);
 }
 
 function formatPlugins(plugins) {
@@ -458,14 +459,14 @@ async function runPluginCommand(address, args, env, io) {
 async function runStatus(args, env, io) {
   const options = parseOptions(args, env, { allowAll: true });
   if (options.help) return io.stdout.write(`${usage()}\n`);
-  if (options.positional.length) throw new Error('Unexpected status argument. Hint: use clideck ask status [--all] [--json].');
-  const agents = await getAgents(options.url, requireCaller(env), options.all);
+  if (options.positional.length) throw new Error('Unexpected status argument. Hint: use clideck ask status [--group | --all] [--json].');
+  const agents = await getAgents(options.url, requireCaller(env), options.all, options.group);
   io.stdout.write(options.json
     ? `${JSON.stringify(agents.map((agent) => ({
       ...agent,
       status: agentStatus(agent),
     })), null, 2)}\n`
-    : `${formatStatus(agents, options)}\n`);
+    : `${formatStatus(agents, { ...options, all: options.all || options.group })}\n`);
 }
 
 async function runAsk(args, env, io) {

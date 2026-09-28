@@ -77,3 +77,30 @@ test('dragging a project to a slot or a group to a new position', async () => {
   assert.deepEqual(moved.projectGroups.map((g) => g.id), ['g2', 'g1']);
   assert.equal(ids(placeGroup(projects, groups, 'g1', null).projects), 'a d e:g2 b:g1 c:g1');
 });
+
+test('clideck agents --group lists the other projects in the caller\'s group', async () => {
+  const { parseOptions } = require('../src/cli');
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-groups-agents-'));
+  const server = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0 });
+  try {
+    const { httpUrl } = await server.listen();
+    server.configStore.update({
+      projects: [project('sprut', 'simplata'), project('docspider', 'simplata'), project('stowbook')],
+      projectGroups: [group('simplata')],
+    });
+    const lead = server.createSession({ provider: 'shell', cwd: dataDir, name: 'Lead', projectId: 'sprut' });
+    server.createSession({ provider: 'shell', cwd: dataDir, name: 'Crawler', projectId: 'docspider' });
+    server.createSession({ provider: 'shell', cwd: dataDir, name: 'Web', projectId: 'stowbook' });
+    const names = async (query) => (await (await fetch(new URL(`/api/session/agents?callerSessionId=${lead.id}${query}`, httpUrl))).json())
+      .agents.map((a) => a.name).sort().join(',');
+    assert.equal(await names(''), 'Lead', 'the default scope is still the caller\'s project');
+    assert.equal(await names('&group=true'), 'Crawler,Lead');
+    assert.equal(await names('&all=true'), 'Crawler,Lead,Web');
+    server.configStore.update({ projectGroups: [] });
+    assert.equal(await names('&group=true'), 'Lead', 'a deleted group falls back to the project');
+    assert.equal(parseOptions(['--group'], {}, { allowAll: true }).group, true);
+  } finally {
+    await server.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
