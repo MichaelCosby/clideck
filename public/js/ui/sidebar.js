@@ -135,6 +135,7 @@ export function initSidebar() {
   // Status ordering moves rows, so hold it still while the pointer is over the list (no row slides under a click).
   listEl.addEventListener("pointerenter", () => { pointerInList = true; });
   listEl.addEventListener("pointerleave", () => { pointerInList = false; scheduleOrder(); });
+  listEl.addEventListener("focusout", () => setTimeout(scheduleOrder, 0));   // keyboard users: catch up once focus leaves
   store.on("config", () => {
     const sig = store.pinnedSessions.join(",");
     if (sig === pinSig) return;
@@ -724,7 +725,7 @@ function moveRowToGroup(id) {
   if (og) { og.ids.delete(id); og.count.textContent = og.ids.size; removeGroupIfEmpty(oldKey); }
 }
 // ── status ordering ──────────────────────────────────────────────────────────
-function orderFrozen() { return pointerInList || renamingId !== null || isDragging() || isMenuOpen(); }
+function orderFrozen() { return pointerInList || renamingId !== null || isDragging() || isMenuOpen() || listEl.contains(document.activeElement); }
 function scheduleOrder(key) {
   if (key) dirtyGroups.add(key);
   if (orderTimer || !dirtyGroups.size) return;
