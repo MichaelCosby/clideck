@@ -172,6 +172,8 @@ function pluginControl(type, fields = {}) {
 }
 export function refreshPlugins() { return pluginControl("plugins.refresh"); }
 export function installPlugin(path) { return pluginControl("plugin.install", { path: String(path || "") }); }
+export function installPluginFromGithub(source) { return pluginControl("plugin.github.install", { source: String(source || "").trim() }); }
+export function updatePluginFromGithub(pluginId) { return pluginControl("plugin.github.update", { pluginId: String(pluginId || "") }); }
 export function removePlugin(pluginId) { return pluginControl("plugin.remove", { pluginId: String(pluginId || "") }); }
 export function openPluginFolder() { return pluginControl("plugin.openFolder"); }
 export function setPluginEnabled(pluginId, enabled) { return pluginControl("plugin.setEnabled", { pluginId: String(pluginId || ""), enabled: !!enabled }); }

@@ -589,6 +589,54 @@ class PluginManager {
     return this.records.get(manifest.id);
   }
 
+  // Replaces an installed user plugin with a newer copy of itself, keeping its settings. If the new version
+  // fails to load, the previous files are put back and loaded again.
+  async update(id, sourcePath) {
+    const record = this.records.get(id);
+    if (!record || record.source !== 'user') {
+      const error = new Error('Only installed user plugins can be updated.');
+      error.code = 'plugin_not_found';
+      throw error;
+    }
+    const source = realpathSync(sourcePath);
+    const manifest = readPluginManifest(source);
+    if (manifest.id !== id) {
+      const error = new Error(`The update is plugin "${manifest.id}", not "${id}".`);
+      error.code = 'plugin_mismatch';
+      throw error;
+    }
+    inspectCopyTree(source);
+    const destination = record.directory;
+    const incoming = join(this.pluginsDir, `.update-${process.pid}-${randomUUID()}`);
+    const previous = join(this.pluginsDir, `.previous-${process.pid}-${randomUUID()}`);
+    try {
+      cpSync(source, incoming, { recursive: true, errorOnExist: true });
+      readPluginManifest(incoming, { requireFolderName: false });
+      chmodSync(incoming, 0o700);
+    } catch (error) {
+      rmSync(incoming, { recursive: true, force: true });
+      throw error;
+    }
+    await this.stopRecord(record);
+    this.records.delete(id);
+    renameSync(destination, previous);
+    renameSync(incoming, destination);
+    await this.refresh();
+    const updated = this.records.get(id);
+    if (!updated || updated.status === 'failed' || updated.status === 'incompatible') {
+      const reason = updated?.error || 'The new version did not load.';
+      if (updated) { await this.stopRecord(updated); this.records.delete(id); }
+      rmSync(destination, { recursive: true, force: true });
+      renameSync(previous, destination);
+      await this.refresh();
+      const error = new Error(`Update failed, previous version restored: ${reason}`);
+      error.code = 'plugin_update_failed';
+      throw error;
+    }
+    rmSync(previous, { recursive: true, force: true });
+    return updated;
+  }
+
   async remove(id) {
     const record = this.records.get(id);
     if (!record || record.source !== 'user') return false;

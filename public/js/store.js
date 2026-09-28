@@ -67,6 +67,7 @@ let hiddenProviders = [];           // config.hiddenProviders [providerId] — p
 let providerArgs = {};              // config.providerArgs {providerId:quote-parsed launch args} — future spawns only
 let copyOnSelectProviders = [];     // config.copyOnSelectProviders [providerId] — copy terminal selections to the clipboard
 let projectGroups = [];             // config.projectGroups [{id,name,collapsed}] — one level of project grouping
+let pluginSources = {};             // config.pluginSources {pluginId: GitHub source} — plugins installed from GitHub
 let pinnedSessions = [];            // config.pinnedSessions [sessionId] — pinned rows, in pin order
 let agentGuidance = "minimal";      // config.agentGuidance full|minimal|off — CliDeck instructions given to new agents
 let confirmClose = true;            // config.confirmClose — gate the session-delete confirm (Settings General)
@@ -181,6 +182,7 @@ function applyEvent(ev) {
       providerArgs = (c.providerArgs && typeof c.providerArgs === "object" && !Array.isArray(c.providerArgs)) ? { ...c.providerArgs } : {};
       copyOnSelectProviders = Array.isArray(c.copyOnSelectProviders) ? c.copyOnSelectProviders.filter((id) => typeof id === "string" && id) : [];
       agentGuidance = ["full", "minimal", "off"].includes(c.agentGuidance) ? c.agentGuidance : "minimal";
+      pluginSources = (c.pluginSources && typeof c.pluginSources === "object" && !Array.isArray(c.pluginSources)) ? { ...c.pluginSources } : {};
       pinnedSessions = Array.isArray(c.pinnedSessions) ? c.pinnedSessions.filter((id) => typeof id === "string" && id) : [];
       confirmClose = c.confirmClose !== false;                          // default ON; false → delete skips the confirm
       defaultCwd = typeof c.defaultCwd === "string" ? c.defaultCwd : "";
@@ -408,6 +410,7 @@ export const store = {
   get copyOnSelectProviders() { return copyOnSelectProviders; },
   get agentGuidance() { return agentGuidance; },
   get pinnedSessions() { return pinnedSessions; },
+  get pluginSources() { return pluginSources; },
   setPinnedSessions(ids) { pinnedSessions = ids.slice(); emit("config"); },
   setAgentGuidance(level) { agentGuidance = level; emit("config"); },
   setCopyOnSelectProviders(arr) { copyOnSelectProviders = Array.isArray(arr) ? [...new Set(arr.filter((id) => typeof id === "string" && id))] : []; emit("config"); },

@@ -49,6 +49,7 @@ const { createCustomCommandProvider, parseCommand } = require('./custom-command'
 const { PluginManager } = require('./plugin-manager');
 const { createAgentSessionGuide, DEFAULT_AGENT_GUIDANCE } = require('./agent-session-guide');
 const { PluginHttp } = require('./plugin-http');
+const { downloadGithubPlugin, formatGithubSource, parseGithubSource } = require('./plugin-github');
 const { MAX_BACKUP_BYTES, createBackup, previewBackup, restoreBackup } = require('./backup');
 
 const HOOK_ROUTE_RE = /^\/hooks\/([^/]+)\/(start|stop|idle|session-start|session-end|menu|context)$/;
@@ -908,6 +909,33 @@ class HeadlessServer {
     });
   }
 
+  // Installs (or updates) a user plugin from a public GitHub repository and remembers where it came from.
+  async installFromGithub(message, socket) {
+    const updating = message.type === 'plugin.github.update';
+    const operation = updating ? 'githubUpdate' : 'githubInstall';
+    const sources = this.configStore.get().pluginSources || {};
+    const source = parseGithubSource(updating ? sources[message.pluginId] : message.source);
+    if (!source) {
+      this.pluginResult(socket, operation, false, {
+        code: 'invalid_source',
+        error: updating ? 'This plugin was not installed from GitHub.' : 'Use owner/repo, owner/repo/path, or a github.com link.',
+      }, message.requestId);
+      return;
+    }
+    const download = await (this.githubDownloader || downloadGithubPlugin)(source);
+    try {
+      const record = updating
+        ? await this.pluginManager.update(message.pluginId, download.dir)
+        : await this.pluginManager.install(download.dir);
+      const id = record.manifest.id;
+      const next = { ...(this.configStore.get().pluginSources || {}), [id]: formatGithubSource(source) };
+      this.broadcastConfig(this.configStore.update({ pluginSources: next }));
+      this.pluginResult(socket, operation, true, { pluginId: id }, message.requestId);
+    } finally {
+      download.cleanup();
+    }
+  }
+
   async managePlugin(message, socket) {
     try {
       if (message.type === 'plugins.refresh') {
@@ -922,8 +950,18 @@ class HeadlessServer {
         }, message.requestId);
         return;
       }
+      if (message.type === 'plugin.github.install' || message.type === 'plugin.github.update') {
+        await this.installFromGithub(message, socket);
+        return;
+      }
       if (message.type === 'plugin.remove') {
         const removed = await this.pluginManager.remove(message.pluginId);
+        const sources = this.configStore.get().pluginSources;
+        if (removed && sources && sources[message.pluginId]) {
+          const next = { ...sources };
+          delete next[message.pluginId];
+          this.broadcastConfig(this.configStore.update({ pluginSources: next }));
+        }
         this.pluginResult(socket, 'remove', removed, {
           pluginId: message.pluginId,
           ...(!removed && { code: 'plugin_not_found', error: 'Plugin is not removable.' }),
@@ -1150,6 +1188,7 @@ class HeadlessServer {
       return;
     }
     if (message.type === 'plugins.refresh' || message.type === 'plugin.install'
+      || message.type === 'plugin.github.install' || message.type === 'plugin.github.update'
       || message.type === 'plugin.remove' || message.type === 'plugin.setEnabled'
       || message.type === 'plugin.settings.update') {
       this.managePlugin(message, socket);

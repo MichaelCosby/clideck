@@ -193,6 +193,12 @@ function isValidConfigPatch(value) {
       || value.pinnedSessions.some((id) => typeof id !== 'string' || !id || id.length > 200))) {
     return false;
   }
+  if (value.pluginSources !== undefined
+    && (!isObject(value.pluginSources) || Object.keys(value.pluginSources).length > 200
+      || Object.entries(value.pluginSources).some(([id, source]) => !/^[a-z][a-z0-9-]{0,62}$/.test(id)
+        || typeof source !== 'string' || !source || source.length > 500 || source.includes('\0')))) {
+    return false;
+  }
   if (value.agentGuidance !== undefined && !AGENT_GUIDANCE_LEVELS.includes(value.agentGuidance)) return false;
   if (value.about !== undefined && !isValidProfile(value.about)) return false;
   if (value.onboarding !== undefined && !isValidOnboarding(value.onboarding)) return false;

@@ -33,6 +33,8 @@ const CONTROL_TYPES = new Set([
   'checkAvailability',
   'plugins.refresh',
   'plugin.install',
+  'plugin.github.install',
+  'plugin.github.update',
   'plugin.remove',
   'plugin.openFolder',
   'plugin.setEnabled',
@@ -79,6 +81,12 @@ function hasValidControlFields(message) {
   }
   if (message.type === 'plugin.install') {
     return hasValidRequestId(message) && isString(message.path, 4096);
+  }
+  if (message.type === 'plugin.github.install') {
+    return hasValidRequestId(message) && isString(message.source, 500);
+  }
+  if (message.type === 'plugin.github.update') {
+    return hasValidRequestId(message) && isString(message.pluginId, 63);
   }
   if (message.type === 'plugin.remove') {
     return hasValidRequestId(message) && isString(message.pluginId, 63);

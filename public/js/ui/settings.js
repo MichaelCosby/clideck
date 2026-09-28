@@ -5,7 +5,7 @@ import { updateControls } from "./updates.js";
 // save 500ms-debounced (no config.update flood); availability drives the per-agent health.
 import { store } from "../store.js";
 import { h, esc } from "../util.js";
-import { updateConfig, checkAvailability, refreshPlugins, installPlugin, removePlugin, openPluginFolder, setPluginEnabled, updatePluginSettings } from "../ws.js";
+import { updateConfig, checkAvailability, refreshPlugins, installPlugin, installPluginFromGithub, updatePluginFromGithub, removePlugin, openPluginFolder, setPluginEnabled, updatePluginSettings } from "../ws.js";
 import { openFolderPicker } from "./folder-picker.js";
 import { openMenu, closeMenu, isMenuOpen } from "./menu.js";
 import { providerOf, PROVIDER_LIST } from "../providers-ui.js";
@@ -799,7 +799,8 @@ function onPluginResult(result) {
   if (result.success) {
     if (operation === "install" && result.pluginId) selectedPlugin = result.pluginId;
     if (operation === "remove") selectedPlugin = null;
-    pluginNotice = { ok: true, text: ({ install: "Plugin installed and ready.", remove: "Plugin removed.", setEnabled: "Plugin state updated.", settings: "Settings saved.", refresh: "Plugin folders refreshed.", openFolder: "Plugin folder opened." })[operation] || "Done." };
+    if (operation === "githubInstall" && result.pluginId) selectedPlugin = result.pluginId;
+    pluginNotice = { ok: true, text: ({ githubInstall: "Plugin installed from GitHub and ready.", githubUpdate: "Plugin updated from GitHub.", install: "Plugin installed and ready.", remove: "Plugin removed.", setEnabled: "Plugin state updated.", settings: "Settings saved.", refresh: "Plugin folders refreshed.", openFolder: "Plugin folder opened." })[operation] || "Done." };
   } else pluginNotice = { ok: false, text: result.error || "The plugin operation failed." };
   if (cat === "plugins") renderBody();
 }
@@ -816,11 +817,18 @@ function renderPlugins() {
   if (pluginTrust) {
     const trust = h("div", "plg-trust");
     const shield = h("div", "plg-trust-ic", PLUGIN_ICON);
-    const copy = h("div", "plg-trust-copy"); copy.append(h("div", "plg-trust-title", "Install trusted local code"), h("div", "plg-trust-sub", "Plugins run with your filesystem and network access, just like a CLI tool. CliDeck validates and copies the folder; it never runs an installer."));
+    const copy = h("div", "plg-trust-copy"); copy.append(h("div", "plg-trust-title", "Install trusted code"), h("div", "plg-trust-sub", "Plugins run with your filesystem and network access, just like a CLI tool. CliDeck validates and copies the plugin folder; it never runs an installer."));
     const acts = h("div", "plg-trust-actions");
     const choose = actionButton("Choose plugin folder", "plg-primary", FOLDER, () => openFolderPicker(store.defaultCwd || "/", (path) => setPluginBusy("install", installPlugin(path))));
     const cancel = h("button", "plg-quiet", "Cancel"); cancel.type = "button"; cancel.onclick = () => { pluginTrust = false; renderBody(); };
-    acts.append(cancel, choose); trust.append(shield, copy, acts); els.body.append(trust);
+    acts.append(cancel, choose);
+    const gh = h("form", "plg-github");
+    const ghInput = h("input", "set-input mono"); ghInput.id = "plugin-github-source"; ghInput.placeholder = "owner/repo or owner/repo/path/to/plugin"; ghInput.spellcheck = false; ghInput.autocomplete = "off";
+    ghInput.setAttribute("aria-label", "GitHub repository or plugin folder");
+    const ghBtn = h("button", "plg-btn", "Install from GitHub"); ghBtn.type = "submit";
+    gh.addEventListener("submit", (e) => { e.preventDefault(); if (ghInput.value.trim()) setPluginBusy("githubInstall", installPluginFromGithub(ghInput.value)); });
+    gh.append(ghInput, ghBtn);
+    trust.append(shield, copy, acts, gh); els.body.append(trust);
   }
 
   const tools = h("div", "plg-tools");
@@ -886,7 +894,16 @@ function renderPluginDetail(plugin) {
     els.body.append(commands);
   }
   const danger = section("Management");
+  const githubSource = store.pluginSources[plugin.id];
+  if (githubSource) {
+    const from = h("div", "plg-source"); from.append(h("span", null, "Installed from GitHub: "), h("code", null, esc(githubSource)));
+    danger.append(from);
+  }
   const actions = h("div", "plg-manage"); actions.append(actionButton("Open plugins folder", "plg-btn", OPEN, () => setPluginBusy("openFolder", openPluginFolder())));
+  if (githubSource && plugin.source === "user") {
+    const update = actionButton("Update from GitHub", "plg-btn", RELOAD, () => setPluginBusy("githubUpdate", updatePluginFromGithub(plugin.id), plugin.id));
+    update.disabled = !!pluginBusy || !store.connected; actions.append(update);
+  }
   if (plugin.source === "user") {
     const remove = h("button", "plg-remove", "Remove plugin"); remove.type = "button"; remove.disabled = !!pluginBusy || !store.connected;
     remove.onclick = () => showRemoveConfirm(actions, plugin); actions.append(remove);
