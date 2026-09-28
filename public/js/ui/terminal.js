@@ -148,7 +148,11 @@ export function initTerminal() {
 
   // every keystroke → raw input for the focused session (menu digits included).
   // Dormant sessions are read-only: the PTY is gone, so input goes nowhere — drop it locally.
-  term.onData((data) => { const s = store.active(); if (s && s.live !== false) send({ type: "input", sessionId: s.id, data }); });
+  term.onData((data) => {
+    const s = store.active(); if (!s || s.live === false) return;
+    if (data === "\x0c" && s.provider === "claude-code" && holdRepeatCtrlL(s.id)) return;
+    send({ type: "input", sessionId: s.id, data });
+  });
 
   // navigator.clipboard only: copyText's textarea fallback would steal focus from the terminal on every selection.
   term.onSelectionChange(debounce(() => {
@@ -190,6 +194,21 @@ export function initTerminal() {
   store.on("reset", () => bufferEpoch++);
 
   updateHeader(); updateEmpty();
+}
+
+// A second Ctrl+L in quick succession runs /clear in Claude Code, so hold it until the user clicks through.
+let lastCtrlL = { id: null, at: 0 };
+function holdRepeatCtrlL(id) {
+  const now = Date.now();
+  const repeat = lastCtrlL.id === id && now - lastCtrlL.at < 2000;
+  lastCtrlL = repeat ? { id: null, at: 0 } : { id, at: now };
+  if (!repeat) return false;
+  toast.warn({
+    id: "ctrl-l", title: "Second Ctrl+L held",
+    body: "Pressing it twice runs /clear and erases this Claude Code conversation. Click here to send it anyway.",
+    duration: 6000, onClick: () => send({ type: "input", sessionId: id, data: "\x0c" }),
+  });
+  return true;
 }
 
 function copyOnSelectEnabled(s) {

@@ -1,5 +1,5 @@
-// IT — the real terminal pane copies selections to the clipboard only for providers / custom commands that
-// opted into copy-on-select.
+// IT — the real terminal pane holds a quick second Ctrl+L in Claude Code sessions behind a toast, and copies
+// selections to the clipboard only for providers / custom commands that opted into copy-on-select.
 import { installFakeDom } from "./fakedom.mjs";
 installFakeDom();
 const add = (tag, id, parent = document.body) => { const node = document.createElement(tag); node.id = id; parent.appendChild(node); return node; };
@@ -44,8 +44,22 @@ connectWs();
 const inputs = () => sent.filter((m) => m.type === "input").map((m) => m.sessionId + ":" + JSON.stringify(m.data));
 const created = (id, provider, extra = {}) => store.applyEvent({ type: "session.created", sessionId: id, provider, name: id, cwd: "/tmp", live: true, ...extra });
 
+created("C", "claude-code");
+store.select("C");
+term.dataHandler("\x0c");
+ok("a single Ctrl+L reaches Claude Code", inputs().join() === 'C:"\\f"');
+term.dataHandler("\x0c");
+const held = document.getElementById("toast-ctrl-l");
+ok("a quick second Ctrl+L is held behind a toast", inputs().length === 1 && !!held);
+held._fire("click");
+ok("clicking the toast sends the held Ctrl+L", inputs().length === 2 && inputs()[1] === 'C:"\\f"');
+term.dataHandler("\x0c");
+ok("the next Ctrl+L starts a fresh window and passes", inputs().length === 3);
+
 created("S", "shell");
 store.select("S");
+term.dataHandler("\x0c"); term.dataHandler("\x0c");
+ok("other providers never hold Ctrl+L", inputs().filter((v) => v.startsWith("S:")).length === 2);
 
 term.selection = "hello";
 term.selectionHandler(); await sleep(200);
