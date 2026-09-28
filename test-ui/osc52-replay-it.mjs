@@ -19,7 +19,7 @@ class FakeTerminal {
     this.parser = { registerOscHandler: (code, fn) => { if (code === 52) this.osc52 = fn; } };
   }
   open(host) { const viewport = document.createElement("div"); viewport.className = "xterm-viewport"; host.appendChild(viewport); this.textarea = document.createElement("textarea"); host.appendChild(this.textarea); }
-  attachCustomKeyEventHandler() {} onData() {} onScroll() {} onResize() { return { dispose() {} }; } registerLinkProvider() {} reset() {} clear() {}
+  attachCustomKeyEventHandler() {} onData() {} onSelectionChange() {} onScroll() {} onResize() { return { dispose() {} }; } registerLinkProvider() {} reset() {} clear() {}
   write(data, done) { this.writes.push({ data, done }); }
   finish(index) { const done = this.writes[index]?.done; if (done) { this.writes[index].done = null; done(); } }
   async parse(index) {

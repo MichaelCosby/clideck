@@ -84,6 +84,7 @@ function isValidCommand(command) {
     || command.command.length > 4096 || command.command.includes('\0')) return false;
   if (typeof command.enabled !== 'boolean' || typeof command.isAgent !== 'boolean'
     || typeof command.canResume !== 'boolean') return false;
+  if (command.copyOnSelect !== undefined && typeof command.copyOnSelect !== 'boolean') return false;
   if (!isObject(command.env) || Object.keys(command.env).length > 100) return false;
   if (Object.entries(command.env).some(([key, value]) => !ENV_NAME.test(key)
     || typeof value !== 'string' || value.length > 4096 || value.includes('\0'))) return false;
@@ -157,6 +158,12 @@ function isValidConfigPatch(value) {
     return false;
   }
   if (value.providerArgs !== undefined && !isValidProviderArgs(value.providerArgs)) return false;
+  if (value.copyOnSelectProviders !== undefined
+    && (!Array.isArray(value.copyOnSelectProviders)
+      || value.copyOnSelectProviders.length > 100
+      || value.copyOnSelectProviders.some((id) => typeof id !== 'string' || !PROVIDER_ID.test(id)))) {
+    return false;
+  }
   if (value.about !== undefined && !isValidProfile(value.about)) return false;
   if (value.onboarding !== undefined && !isValidOnboarding(value.onboarding)) return false;
   return true;

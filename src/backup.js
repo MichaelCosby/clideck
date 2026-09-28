@@ -7,7 +7,7 @@ const SECTIONS = {
   about: ['About me', ['about']],
   defaults: ['Defaults', ['defaultCwd']],
   behavior: ['Behavior', ['confirmClose']],
-  agents: ['CLI Agents', ['commands', 'providerArgs', 'hiddenProviders']],
+  agents: ['CLI Agents', ['commands', 'providerArgs', 'hiddenProviders', 'copyOnSelectProviders']],
   plugins: ['Plugins', ['plugins']],
   notifications: ['Notifications', ['notify']],
   appearance: ['Appearance', ['theme', 'customThemes']],
@@ -16,7 +16,7 @@ const SECTIONS = {
 };
 const DEFAULTS = {
   about: {}, defaultCwd: '', confirmClose: true, commands: [], providerArgs: {},
-  hiddenProviders: [], plugins: {}, notify: {}, theme: {}, customThemes: [],
+  hiddenProviders: [], copyOnSelectProviders: [], plugins: {}, notify: {}, theme: {}, customThemes: [],
   prompts: [], promptMru: {}, onboarding: {},
 };
 const object = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

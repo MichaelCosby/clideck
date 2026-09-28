@@ -34,6 +34,8 @@ let cmds = null;                 // working copy of config.commands while the Ag
 const providerSwitches = new Map(); // providerId -> live switch; config echoes sync without rebuilding command edits
 const providerArgInputs = new Map(); // providerId -> {input,warning}; echoes sync without collapsing Advanced
 let providerArgsOpen = false;
+let copyOnSelectOpen = false;
+const copyOnSelectSwitches = new Map(); // providerId -> live switch; config echoes sync without collapsing the panel
 let unsaved = false;
 let selectedPlugin = null, pluginQuery = "", pluginTrust = false, pluginNotice = null, pluginBusy = null;
 const quietSettingRequests = new Set();
@@ -344,7 +346,7 @@ function renderAgents() {
   if (!cmds) cmds = JSON.parse(JSON.stringify(store.commands || []));
   const avail = store.availability;
   const hidden = new Set(store.hiddenProviders);
-  providerSwitches.clear(); providerArgInputs.clear();
+  providerSwitches.clear(); providerArgInputs.clear(); copyOnSelectSwitches.clear();
 
   // Built-ins remain engine-owned; this one preference controls only whether each appears in New Session.
   const built = section("Built-in agents", "builtin");
@@ -366,7 +368,7 @@ function renderAgents() {
     row.append(icon, meta, actions);
     built.append(row);
   }
-  built.append(providerArgsPanel());
+  built.append(providerArgsPanel(), copyOnSelectPanel());
   els.body.append(built);
 
   // custom commands — EDITABLE cards on config.commands[]
@@ -397,6 +399,11 @@ function syncProviderControls() {
   for (const [id, field] of providerArgInputs) {
     if (document.activeElement !== field.input) field.input.value = String(store.providerArgs[id] || "");
     paintProviderArgWarning(field.input, field.warning);
+  }
+  const copying = new Set(store.copyOnSelectProviders);
+  for (const [id, toggle] of copyOnSelectSwitches) {
+    const on = copying.has(id);
+    toggle.classList.toggle("on", on); toggle.setAttribute("aria-checked", on ? "true" : "false");
   }
 }
 
@@ -439,6 +446,36 @@ function providerArgsPanel() {
   }
   const paint = () => { body.hidden = !providerArgsOpen; button.classList.toggle("open", providerArgsOpen); button.setAttribute("aria-expanded", String(providerArgsOpen)); };
   button.addEventListener("click", () => { providerArgsOpen = !providerArgsOpen; paint(); });
+  shell.append(button, body); paint(); return shell;
+}
+
+function setCopyOnSelect(providerId, on) {
+  const next = new Set(store.copyOnSelectProviders);
+  if (on) next.add(providerId); else next.delete(providerId);
+  const ids = [...next];
+  store.setCopyOnSelectProviders(ids);
+  updateConfig({ copyOnSelectProviders: ids });
+}
+function copyOnSelectPanel() {
+  const shell = h("div", "set-agent-advanced");
+  const button = h("button", "set-agent-advanced-toggle"); button.type = "button";
+  const copy = h("span", "set-agent-advanced-copy"); copy.append(h("strong", null, "Copy on select"), h("small", null, "Optional · clipboard"));
+  const chevron = h("span", "set-agent-advanced-chevron", '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 10 4 4 4-4"/></svg>');
+  button.append(copy, chevron);
+  const body = h("div", "set-agent-advanced-body");
+  const note = h("div", "set-agent-args-note"); note.textContent = "Copies terminal text to the clipboard as soon as you select it. Claude Code already copies its own selections, so leave it off there to avoid double copies."; body.appendChild(note);
+  const copying = new Set(store.copyOnSelectProviders);
+  for (const provider of PROVIDER_LIST) {
+    const row = h("div", "set-agent-arg-row");
+    const label = h("div", "set-agent-arg-label");
+    label.append(h("strong", null, esc(provider.label)), h("small", "mono", esc((AGENT_PRESETS[provider.id] || {}).command || provider.id)));
+    const toggle = switchEl(copying.has(provider.id), (on) => setCopyOnSelect(provider.id, on));
+    toggle.setAttribute("aria-label", "Copy on select for " + provider.label);
+    copyOnSelectSwitches.set(provider.id, toggle);
+    row.append(label, toggle); body.appendChild(row);
+  }
+  const paint = () => { body.hidden = !copyOnSelectOpen; button.classList.toggle("open", copyOnSelectOpen); button.setAttribute("aria-expanded", String(copyOnSelectOpen)); };
+  button.addEventListener("click", () => { copyOnSelectOpen = !copyOnSelectOpen; paint(); });
   shell.append(button, body); paint(); return shell;
 }
 
@@ -493,6 +530,8 @@ function agentCard(c, i, avail) {
     }
     card.append(resume);
   }
+
+  card.append(toggleRow("Copy on select", "Copies terminal text to the clipboard as soon as you select it.", !!c.copyOnSelect, (v) => { cmds[i].copyOnSelect = v; scheduleSave(); }));
 
   const env = h("textarea", "set-input mono set-env"); env.value = envText(c.env); env.rows = 2; env.placeholder = "KEY=value (one per line; invalid lines ignored)"; env.spellcheck = false;
   env.addEventListener("input", () => { cmds[i].env = parseEnv(env.value); scheduleSave(); });
@@ -571,6 +610,7 @@ function serialize() {
     id: c.id, label: String(c.label || "").trim(), icon: c.icon || "terminal",
     command: String(c.command || "").trim(),
     enabled: c.enabled !== false, isAgent: !!c.isAgent, canResume: !!(c.isAgent && c.canResume),
+    copyOnSelect: !!c.copyOnSelect,
     env: c.env && typeof c.env === "object" ? c.env : {},
     resumeCommand: c.isAgent && c.canResume && c.resumeCommand ? String(c.resumeCommand) : null,
     sessionIdPattern: c.isAgent && c.canResume && c.sessionIdPattern ? String(c.sessionIdPattern) : null,
@@ -999,7 +1039,7 @@ function close() {
   document.removeEventListener("keydown", onKey, true);
   offs.forEach((off) => off()); offs = [];
   closeMenu();   // close any open icon/add sub-menu popover
-  const ov = overlay; overlay = null; els = null; cmds = null; unsaved = false; cat = "general"; providerSwitches.clear(); providerArgInputs.clear(); providerArgsOpen = false;
+  const ov = overlay; overlay = null; els = null; cmds = null; unsaved = false; cat = "general"; providerSwitches.clear(); providerArgInputs.clear(); providerArgsOpen = false; copyOnSelectSwitches.clear(); copyOnSelectOpen = false;
   selectedPlugin = null; pluginQuery = ""; pluginTrust = false; pluginNotice = null; pluginBusy = null;
   quietSettingRequests.clear();
   aboutDirty = {};

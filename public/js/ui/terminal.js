@@ -150,6 +150,13 @@ export function initTerminal() {
   // Dormant sessions are read-only: the PTY is gone, so input goes nowhere — drop it locally.
   term.onData((data) => { const s = store.active(); if (s && s.live !== false) send({ type: "input", sessionId: s.id, data }); });
 
+  // navigator.clipboard only: copyText's textarea fallback would steal focus from the terminal on every selection.
+  term.onSelectionChange(debounce(() => {
+    const s = store.active();
+    if (!s || !term.hasSelection() || !copyOnSelectEnabled(s)) return;
+    navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+  }, 150));
+
   scrollBtn = document.getElementById("scroll-btn");
   nameEl = document.getElementById("th-name");
   renameBtn = document.getElementById("th-rename");
@@ -183,6 +190,11 @@ export function initTerminal() {
   store.on("reset", () => bufferEpoch++);
 
   updateHeader(); updateEmpty();
+}
+
+function copyOnSelectEnabled(s) {
+  if (s.commandId) return !!store.commands.find((c) => c.id === s.commandId)?.copyOnSelect;
+  return store.copyOnSelectProviders.includes(s.provider);
 }
 
 function focusSession(id) {

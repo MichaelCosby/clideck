@@ -189,3 +189,12 @@ test('invalid custom session regex returns a config error without closing the so
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('copy-on-select settings validate per provider and per custom command', () => {
+  const command = { id: 'c1', label: 'Shell', icon: 'terminal', command: 'bash', enabled: true, isAgent: false, canResume: false, env: {}, resumeCommand: null, sessionIdPattern: null };
+  assert.equal(isValidConfigPatch({ copyOnSelectProviders: ['shell', 'codex'] }), true);
+  assert.equal(isValidConfigPatch({ copyOnSelectProviders: ['Bad Id'] }), false);
+  assert.equal(isValidConfigPatch({ copyOnSelectProviders: 'shell' }), false);
+  assert.equal(isValidConfigPatch({ commands: [{ ...command, copyOnSelect: true }] }), true);
+  assert.equal(isValidConfigPatch({ commands: [{ ...command, copyOnSelect: 'yes' }] }), false);
+});

@@ -47,6 +47,7 @@ class FakeTerminal {
   }
   attachCustomKeyEventHandler() {}
   onData(fn) { this.dataHandler = fn; }
+  onSelectionChange() {}
   onScroll() {}
   onResize() { return { dispose() {} }; }
   registerLinkProvider() {}

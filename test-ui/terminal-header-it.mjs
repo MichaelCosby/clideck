@@ -29,7 +29,7 @@ class FakeTerminal {
     this.parser = { registerOscHandler() {} };
   }
   open(host) { const vp = add("div", "", host); vp.className = "xterm-viewport"; this.textarea = add("textarea", "", host); }
-  attachCustomKeyEventHandler() {} onData() {} onScroll() {} onResize() { return { dispose() {} }; } registerLinkProvider() {} reset() {} clear() {}
+  attachCustomKeyEventHandler() {} onData() {} onSelectionChange() {} onScroll() {} onResize() { return { dispose() {} }; } registerLinkProvider() {} reset() {} clear() {}
   write(_data, done) { done?.(); } resize(cols, rows) { this.cols = cols; this.rows = rows; }
   scrollToBottom() {} focus() {}
 }
