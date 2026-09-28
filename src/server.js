@@ -1,6 +1,6 @@
 const http = require('http');
 const { serverUrl } = require('./hook-url');
-const { existsSync } = require('fs');
+const { existsSync, statSync } = require('fs');
 const { WebSocketServer, WebSocket } = require('ws');
 const { AgentSession } = require('./session');
 const {
@@ -1344,6 +1344,10 @@ class HeadlessServer {
       await this.handleAsk(req, res);
       return;
     }
+    if (req.method === 'POST' && pathname === '/api/session/create') {
+      await this.handleCreate(req, res);
+      return;
+    }
     if (req.method === 'POST' && pathname === '/prompt') {
       await this.handlePrompt(req, res);
       return;
@@ -1404,6 +1408,75 @@ class HeadlessServer {
     } catch {
       res.writeHead(400).end();
     }
+  }
+
+  // Lets an agent spawn a sibling session. Defaults to the caller's own provider/command, cwd and project.
+  async handleCreate(req, res) {
+    if (!isLoopbackAddress(req.socket?.remoteAddress)) {
+      sendJson(res, 403, { ok: false, error: 'local_only' });
+      return;
+    }
+    if (!isAllowedWebSocketOrigin(req.headers.origin, req.headers.host, this.host)) {
+      sendJson(res, 403, { ok: false, error: 'origin_forbidden' });
+      return;
+    }
+    let body;
+    try {
+      body = await readJson(req);
+    } catch {
+      body = null;
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      sendJson(res, 400, { ok: false, error: 'invalid_request' });
+      return;
+    }
+    const caller = resolveLiveCaller(this.persistence.list(), this.sessions, body.callerSessionId);
+    if (!caller) {
+      sendJson(res, 404, { ok: false, error: 'unknown_caller', message: 'Caller session is not active.' });
+      return;
+    }
+    const inherit = body.provider === undefined && body.commandId === undefined;
+    const message = {
+      type: 'session.create',
+      ...(inherit && caller.session.commandId ? { commandId: caller.session.commandId }
+        : inherit ? { provider: caller.entry.provider }
+          : { provider: body.provider, commandId: body.commandId }),
+      name: body.name,
+      cwd: body.cwd === undefined ? caller.entry.cwd : body.cwd,
+      // Copy the caller's scope exactly: a missing projectId (legacy cwd scope) is not the same as null.
+      ...(hasProjectId(caller.entry) && { projectId: caller.entry.projectId ?? null }),
+    };
+    if (!hasValidControlFields(message)) {
+      sendJson(res, 400, { ok: false, error: 'invalid_request' });
+      return;
+    }
+    let isDirectory = false;
+    try { isDirectory = statSync(message.cwd).isDirectory(); } catch {}
+    if (!isDirectory) {
+      sendJson(res, 400, { ok: false, error: 'invalid_cwd', message: `Not a directory: ${message.cwd}` });
+      return;
+    }
+    const session = this.createSession(message);
+    if (session === false) {
+      sendJson(res, 409, { ok: false, error: 'name_conflict', message: `A session named "${message.name}" already exists here.` });
+      return;
+    }
+    if (!session) {
+      sendJson(res, 400, { ok: false, error: 'unknown_provider', message: 'Unknown provider, custom command, or project.' });
+      return;
+    }
+    const entry = this.persistence.get(session.id);
+    sendJson(res, 200, {
+      ok: true,
+      session: {
+        id: session.id,
+        name: entry?.name || session.name || '',
+        provider: entry?.provider || session.provider.id,
+        cwd: message.cwd,
+        projectId: message.projectId ?? null,
+        address: entry ? sessionAddress(entry, this.configStore.get().projects) : session.id,
+      },
+    });
   }
 
   async handleAsk(req, res) {

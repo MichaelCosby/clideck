@@ -14,6 +14,7 @@ function usage(pluginCommands = []) {
     '  clideck [--port <port>] [--host <loopback-host>] [--data-dir <folder>]',
     '  clideck --version',
     '  clideck agents [--all] [--json] [--url <url>]',
+    '  clideck create [--provider <id> | --command <id>] [--name <name>] [--cwd <path>] [--json] [--url <url>]',
     '  clideck ask status [--all] [--json] [--url <url>]',
     '  clideck ask <target> <message> [--timeout 10m] [--url <url>]',
     '  clideck ask <target> <message> --steer [--url <url>]',
@@ -31,6 +32,7 @@ function usage(pluginCommands = []) {
     'Running clideck starts the local engine on port 4000; --port, CLIDECK_PORT, or PORT overrides it.',
     'Agents lists current-project sessions, including dormant (stopped) ones; --all groups every project.',
     'Use current addresses from agents, not old handoffs. last-active is recorded activity, not a shutdown time.',
+    'Create starts a sibling session; by default it uses your own agent, working directory, and project.',
     'Normal asks require an idle target and wait for its answer.',
     'If the target is working, --steer injects guidance immediately and returns without waiting.',
     'Example: clideck ask "@project/agent" "Use the new constraint" --steer',
@@ -66,6 +68,7 @@ function parseOptions(
     allowPromptOptions = false,
     allowSteer = false,
     allowAll = false,
+    allowCreate = false,
   } = {},
 ) {
   const options = {
@@ -79,6 +82,9 @@ function parseOptions(
     promptOptions: null,
     steer: false,
     all: false,
+    provider: undefined,
+    commandId: undefined,
+    cwd: undefined,
   };
   const positional = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -98,7 +104,13 @@ function parseOptions(
     } else if (allowContent && argument === '--kind') {
       options.kind = args[++index];
       if (!options.kind) throw new Error('--kind requires a value.');
-    } else if (allowContent && argument === '--name') {
+    } else if (allowCreate && (argument === '--provider' || argument === '--command' || argument === '--cwd')) {
+      const value = args[++index];
+      if (!value) throw new Error(`${argument} requires a value.`);
+      if (argument === '--provider') options.provider = value;
+      else if (argument === '--command') options.commandId = value;
+      else options.cwd = resolve(value);
+    } else if ((allowContent || allowCreate) && argument === '--name') {
       options.name = args[++index];
       if (!options.name) throw new Error('--name requires a value.');
     } else if (allowPromptOptions && argument === '--options') {
@@ -157,6 +169,9 @@ function friendlyError(body, status, pathname) {
     unknown_caller: 'Run this command from the current CliDeck terminal, not a saved session id.',
     unavailable: 'Refresh with clideck agents before retrying; the session may be closing.',
     invalid_target: 'Use an address from clideck agents --all: @project/session.',
+    invalid_cwd: 'Pass --cwd an existing directory.',
+    name_conflict: 'Choose a different --name, or run clideck agents to find the existing session.',
+    unknown_provider: 'Use a provider id such as claude-code or codex, or a custom command id from Settings.',
   };
   const message = body.message || messages[body.error] || body.error || `CliDeck request failed (${status}).`;
   return `${message}\nHint: ${hints[body.error] || 'Run clideck --help to check the command and its options.'}`;
@@ -227,6 +242,27 @@ async function getAgents(url, callerId, all = false) {
     url,
     `/api/session/agents?callerSessionId=${encodeURIComponent(callerId)}${all ? '&all=true' : ''}`,
   )).agents || [];
+}
+
+async function runCreate(args, env, io) {
+  const options = parseOptions(args, env, { allowCreate: true });
+  if (options.help) return io.stdout.write(`${usage()}\n`);
+  if (options.positional.length) throw new Error('Unexpected create argument. Hint: use clideck create [--provider <id>] [--name <name>] [--cwd <path>].');
+  if (options.provider && options.commandId) throw new Error('Use either --provider or --command, not both.');
+  const { session } = await requestJson(options.url, '/api/session/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      callerSessionId: requireCaller(env),
+      provider: options.provider,
+      commandId: options.commandId,
+      name: options.name || undefined,
+      cwd: options.cwd,
+    }),
+  });
+  io.stdout.write(options.json ? `${JSON.stringify(session, null, 2)}\n`
+    : `Created ${oneLine(session.name || session.id)} | ${oneLine(session.provider)} | ask=${JSON.stringify(session.address)} id=${session.id} | cwd=${session.cwd}\n`
+      + 'Hint: it needs a moment to start; check clideck ask status before asking it.\n');
 }
 
 async function getPlugins(url) {
@@ -600,6 +636,7 @@ async function run(args, env = process.env, io = process) {
   }
   const [command, ...rest] = commandArgs;
   if (command === 'agents') return runAgents(rest, commandEnv, io);
+  if (command === 'create') return runCreate(rest, commandEnv, io);
   if (command === 'ask') return runAsk(rest, commandEnv, io);
   if (command === 'show') return runShow(rest, commandEnv, io);
   if (command === 'prompt') return runPrompt(rest, commandEnv, io);
