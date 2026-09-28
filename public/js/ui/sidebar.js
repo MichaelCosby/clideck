@@ -65,7 +65,7 @@ let renamingGroupId = null;
 const rowOrder = createRowOrder();
 let rowSeq = 0;
 const dirtyGroups = new Set();
-let pointerInList = false, orderTimer = null, pinSig = "";                                 // creation order for cwd groups (project groups sort by config order)
+let pointerInList = false, orderTimer = null, pinSig = "", summaryTimer = null;                                 // creation order for cwd groups (project groups sort by config order)
 const collapsed = loadCollapsed();   // Set<groupKey> — client-local collapse UX (localStorage)
 
 // A session groups under its project when it has one, else under its cwd. The key namespaces the two so a
@@ -262,6 +262,7 @@ function reorderGroups() {
     for (const p of item.projects) { const g = groups.get("p:" + p.id); if (g) pg.body.appendChild(g.root); }
   }
   for (const [id, pg] of [...pgroups]) if (!live.has(id)) { pg.root.remove(); pgroups.delete(id); }
+  scheduleSummaries();
   for (const g of [...groups.values()].filter((x) => x.kind === "cwd").sort((a, b) => a.seq - b.seq)) listEl.insertBefore(g.root, anchor);
   const prev = groups.get("prev"); if (prev) listEl.insertBefore(prev.root, anchor);   // §E: Previous Sessions always last
 }
@@ -364,6 +365,35 @@ function groupPickItems(key) {
     { label: "Back", onSelect: (c) => c.replace(projectMenuItems(key)) },
   ];
 }
+// A collapsed group still says what needs you: "1 needs you · 2 working · 3 unread" across its projects.
+function scheduleSummaries() {
+  if (summaryTimer) return;
+  summaryTimer = setTimeout(() => { summaryTimer = null; paintGroupSummaries(); }, 0);
+}
+function paintGroupSummaries() {
+  for (const item of layoutProjects(store.projects, store.projectGroups)) {
+    if (item.type !== "group") continue;
+    const pg = pgroups.get(item.group.id); if (!pg) continue;
+    let needs = 0, working = 0, unread = 0;
+    if (item.group.collapsed) {
+      const ids = new Set(item.projects.map((p) => p.id));
+      for (const s of store.sessions.values()) {
+        if (!ids.has(s.projectId) || s.live === false) continue;
+        if (s.attention) needs++;
+        else if (s.status === "working") working++;
+        if (s.unread > 0 && !s.attention) unread++;
+      }
+    }
+    const parts = [];
+    if (needs) parts.push('<span class="needs">' + needs + " needs you</span>");
+    if (working) parts.push(working + " working");
+    if (unread) parts.push(unread + " unread");
+    const html = parts.join(" · ");
+    if (pg.summary.innerHTML !== html) pg.summary.innerHTML = html;
+    pg.root.classList.toggle("needs", needs > 0);
+  }
+}
+
 function updatePGroupVisibility() {
   const layout = layoutProjects(store.projects, store.projectGroups);
   for (const item of layout) {
@@ -676,7 +706,7 @@ function setBounce(r, on) {
 function removeRow(id) {
   const r = rows.get(id); if (!r) return;
   setBounce(r, false);            // release the frame — a removed row must never keep ticking
-  r.root.remove(); rows.delete(id); rowOrder.forget(id);
+  r.root.remove(); rows.delete(id); rowOrder.forget(id); scheduleSummaries();
   const g = groups.get(r.groupKey);
   if (g) { g.ids.delete(id); g.count.textContent = g.ids.size; removeGroupIfEmpty(r.groupKey); }
 }
@@ -731,6 +761,7 @@ function renderRow(id) {
   if (r.groupKey !== groupKeyOf(s)) moveRowToGroup(id);     // project changed (setProject) / live↔dormant → reparent in place
   r.root.classList.toggle("pinned", rowOrder.note(s, store.pinnedSessions) === RANK.pinned);
   scheduleOrder(r.groupKey);
+  scheduleSummaries();
   applyFace(r, s);                                          // §A: refresh the avatar if the command icon resolved/changed
   const editing = renamingId === id;                        // an inline rename is open on this row
   if (!editing) {

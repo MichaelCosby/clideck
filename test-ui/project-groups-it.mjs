@@ -76,6 +76,28 @@ try {
   await choose("Delete group");
   await choose("Delete group");
   ok("deleting a group keeps its projects, ungrouped", !store.projectGroups.some((g) => g.id === "simplata") && groupOf("stowbook") === null && store.projects.some((p) => p.id === "stowbook"));
+
+  // ── combined status on a collapsed group ──
+  store.applyEvent({ type: "config", config: {
+    projects: [project("sprut", "simplata"), project("docspider", "simplata"), project("stowbook")],
+    projectGroups: [{ id: "simplata", name: "simplata", collapsed: true }],
+  } });
+  const session = (id, projectId) => store.applyEvent({ type: "session.created", sessionId: id, protocol: 1, provider: "claude-code", name: id, pid: 1, cwd: "/src", cols: 80, rows: 24, live: true, projectId });
+  session("s1", "sprut"); session("s2", "sprut"); session("s3", "docspider"); session("s4", "stowbook");
+  store.applyEvent({ type: "status", sessionId: "s1", state: "working" });
+  store.applyEvent({ type: "status", sessionId: "s2", state: "idle" });
+  store.applyEvent({ type: "menu", sessionId: "s2", choices: ["1"], context: "Allow?" });
+  store.applyEvent({ type: "status", sessionId: "s3", state: "working" });
+  store.applyEvent({ type: "status", sessionId: "s4", state: "working" });
+  await tick();
+  const summary = () => pgroup("simplata").children[0].children[2].textContent;
+  ok("a collapsed group totals needs-you and working across its projects", summary() === "1 needs you · 2 working" && pgroup("simplata")._cls.has("needs"));
+  store.applyEvent({ type: "config", config: {
+    projects: [project("sprut", "simplata"), project("docspider", "simplata"), project("stowbook")],
+    projectGroups: [{ id: "simplata", name: "simplata", collapsed: false }],
+  } });
+  await tick();
+  ok("an expanded group shows no summary", summary() === "" && !pgroup("simplata")._cls.has("needs"));
 } catch (e) { fail++; console.log("  THREW " + (e && e.stack || e)); }
 console.log(`\n${pass}/${pass + fail} checks passed`);
 process.exit(fail ? 1 : 0);
