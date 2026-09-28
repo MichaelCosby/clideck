@@ -205,6 +205,7 @@ function applyEvent(ev) {
     case "dirs.list.result": emit("dirs:list", ev); return;                // requester-only {path,success,resolvedPath,entries}
     case "dirs.mkdir.result": emit("dirs:mkdir", ev); return;              // requester-only {parent,name,success,path}
     case "transcript.page.result": emit("transcript:page", ev); return;    // requester-only lazy history page
+    case "session.procInfo.result": emit("session:procInfo", ev); return;  // requester-only {sessionId,pid,rssKb,vszKb|error}
     case "transcript.cache": {                                             // on connect: {cache:{sessionId:text}} (50KB-capped, live + dormant)
       transcripts.clear();
       const c = (ev.cache && typeof ev.cache === "object") ? ev.cache : {};

@@ -148,7 +148,8 @@ export function resolveContentPaths(sessionId, paths) { send({ type: "content.re
 
 export function requestConfig() { send({ type: "config.get" }); }   // engine replies {type:'config'}
 
-export function checkAvailability() { send({ type: "checkAvailability" }); }   // engine replies requester-only {type:'availability.result'}
+export function checkAvailability() { send({ type: "checkAvailability" }); }
+export function requestProcessInfo(sessionId) { send({ type: "session.procInfo", sessionId }); }   // engine replies requester-only session.procInfo.result   // engine replies requester-only {type:'availability.result'}
 
 let pluginRequestSeq = 0;
 function pluginControl(type, fields = {}) {

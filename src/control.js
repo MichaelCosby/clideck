@@ -18,6 +18,7 @@ const CONTROL_TYPES = new Set([
   'session.restart',
   'session.mute',
   'session.setProject',
+  'session.procInfo',
   'project.delete',
   'project.open',
   'dirs.list',
@@ -158,7 +159,7 @@ function hasValidControlFields(message) {
   }
   if (message.type === 'session.mute') return typeof message.muted === 'boolean';
   if (message.type === 'session.setProject') return isProjectId(message.projectId);
-  return message.type === 'session.close';
+  return message.type === 'session.close' || message.type === 'session.procInfo';
 }
 
 module.exports = {

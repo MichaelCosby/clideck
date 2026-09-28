@@ -43,6 +43,7 @@ const { alreadyRunningLine, startupBanner, notifyUpdate } = require('./startup')
 const { TranscriptStore } = require('./transcript-store');
 const { MAX_UPLOAD_BYTES, UploadError, saveUpload } = require('./upload');
 const { checkCommandAvailability } = require('./availability');
+const { readProcessInfo } = require('./process-info');
 const { ENGINE_BUILD_VERSION } = require('./build-version');
 const { createCustomCommandProvider, parseCommand } = require('./custom-command');
 const { PluginManager } = require('./plugin-manager');
@@ -1189,6 +1190,13 @@ class HeadlessServer {
         type: 'content.closed',
         sessionId: message.sessionId,
         contentId: message.contentId,
+      });
+      return;
+    }
+
+    if (message.type === 'session.procInfo') {
+      readProcessInfo(this.targetSession(message)?.terminal?.pid).then((info) => {
+        this.sendControlResult(socket, { type: 'session.procInfo.result', sessionId: message.sessionId, ...info });
       });
       return;
     }

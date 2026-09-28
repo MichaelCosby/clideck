@@ -4,11 +4,19 @@
 // via opts, so this module stays decoupled from the terminal (no import cycle).
 import { openMenu } from "./menu.js";
 import { store } from "../store.js";
-import { closeSession, setMute, send, setSessionProject } from "../ws.js";
+import { closeSession, setMute, send, setSessionProject, requestProcessInfo } from "../ws.js";
 import { copyText, askAddress } from "../util.js";
 import { openThemePicker } from "./theme-picker.js";
 import { restartWithTheme } from "../terminal-themes.js";
 import { pastePayload } from "./paste.js";
+import { toast } from "./toast.js";
+
+const mb = (kb) => (kb / 1024).toFixed(1) + " MB";
+store.on("session:procInfo", (ev) => {
+  const name = store.sessions.get(ev.sessionId)?.name || "Session";
+  if (ev.error) toast.error({ id: "procinfo", title: name, body: ev.error, duration: 4000 });
+  else toast.info({ id: "procinfo", title: name, body: `pid ${ev.pid} · RSS ${mb(ev.rssKb)} · VSZ ${mb(ev.vszKb)}`, duration: 6000 });
+});
 
 // THE TERMINAL'S MENU IS NOT THE SESSION'S MENU. On a row you right-click a SESSION, so the menu offers
 // session things — rename, theme, restart, delete. In the terminal you right-click TEXT, with a selection
@@ -92,6 +100,7 @@ function baseItems(id, opts) {
     { label: opts.muted ? "Unmute" : "Mute", onSelect: (c) => { c.close(); setMute(id, !opts.muted); } },
     { label: "Theme…", onSelect: (c) => { c.close(); openThemePicker(id); } },
     { label: "Restart session", disabled: !live, onSelect: (c) => { c.close(); restartWithTheme(id); } },
+    { label: "Process info", disabled: !live, onSelect: (c) => { c.close(); requestProcessInfo(id); } },
     { separator: true },
     // Confirm-before-close is a General setting: when OFF, Delete closes immediately (skips the inline confirm).
     { label: "Delete", danger: true, onSelect: (c) => (store.confirmClose === false ? (c.close(), closeSession(id)) : c.replace(confirmItems(id, opts))) },
