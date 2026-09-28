@@ -35,8 +35,9 @@ function createCodexLaunch({
     '-c',
     `hooks.Interrupt=${hookGroup(hookCommand('idle'), 3)}`,
   ];
-  if (!hasCodexDeveloperInstructions(command, extraArgs)) {
-    args.push('-c', `developer_instructions=${JSON.stringify(agentGuide || AGENT_SESSION_GUIDE)}`);
+  const guide = agentGuide ?? AGENT_SESSION_GUIDE;
+  if (guide && !hasCodexDeveloperInstructions(command, extraArgs)) {
+    args.push('-c', `developer_instructions=${JSON.stringify(guide)}`);
   }
   if (resumeHandle) args.push('resume', resumeHandle);
   if (bypassHookTrust) args.unshift('--dangerously-bypass-hook-trust');

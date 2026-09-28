@@ -35,6 +35,7 @@ const providerSwitches = new Map(); // providerId -> live switch; config echoes 
 const providerArgInputs = new Map(); // providerId -> {input,warning}; echoes sync without collapsing Advanced
 let providerArgsOpen = false;
 let copyOnSelectOpen = false;
+let guidanceSelect = null;
 const copyOnSelectSwitches = new Map(); // providerId -> live switch; config echoes sync without collapsing the panel
 let unsaved = false;
 let selectedPlugin = null, pluginQuery = "", pluginTrust = false, pluginNotice = null, pluginBusy = null;
@@ -370,6 +371,7 @@ function renderAgents() {
   }
   built.append(providerArgsPanel(), copyOnSelectPanel());
   els.body.append(built);
+  els.body.append(guidancePanel());
 
   // custom commands — EDITABLE cards on config.commands[]
   const custom = section("Custom agents");
@@ -400,6 +402,7 @@ function syncProviderControls() {
     if (document.activeElement !== field.input) field.input.value = String(store.providerArgs[id] || "");
     paintProviderArgWarning(field.input, field.warning);
   }
+  if (guidanceSelect && document.activeElement !== guidanceSelect) guidanceSelect.value = store.agentGuidance;
   const copying = new Set(store.copyOnSelectProviders);
   for (const [id, toggle] of copyOnSelectSwitches) {
     const on = copying.has(id);
@@ -447,6 +450,27 @@ function providerArgsPanel() {
   const paint = () => { body.hidden = !providerArgsOpen; button.classList.toggle("open", providerArgsOpen); button.setAttribute("aria-expanded", String(providerArgsOpen)); };
   button.addEventListener("click", () => { providerArgsOpen = !providerArgsOpen; paint(); });
   shell.append(button, body); paint(); return shell;
+}
+
+const GUIDANCE_OPTS = [
+  { v: "minimal", label: "Minimal" },
+  { v: "full", label: "Full" },
+  { v: "off", label: "Off" },
+];
+function guidancePanel() {
+  const sec = section("Agent teamwork");
+  const r = h("div", "set-row");
+  const lbl = h("div", "set-row-lbl");
+  lbl.append(h("div", "set-row-t", "Instructions for new agents"),
+    h("div", "set-row-s", "Minimal: agents prefer their own messaging and use CliDeck as a fallback. Full: agents coordinate through CliDeck by default. Off: no instructions. Applies to sessions started, resumed or restarted afterwards."));
+  guidanceSelect = h("select", "set-select");
+  guidanceSelect.id = "agent-guidance";
+  guidanceSelect.setAttribute("aria-label", "Instructions for new agents");
+  for (const o of GUIDANCE_OPTS) { const op = h("option"); op.value = o.v; op.textContent = o.label; guidanceSelect.appendChild(op); }
+  guidanceSelect.value = store.agentGuidance;
+  guidanceSelect.addEventListener("change", () => { store.setAgentGuidance(guidanceSelect.value); updateConfig({ agentGuidance: guidanceSelect.value }); });
+  r.append(lbl, guidanceSelect); sec.append(r);
+  return sec;
 }
 
 function setCopyOnSelect(providerId, on) {
@@ -1039,7 +1063,7 @@ function close() {
   document.removeEventListener("keydown", onKey, true);
   offs.forEach((off) => off()); offs = [];
   closeMenu();   // close any open icon/add sub-menu popover
-  const ov = overlay; overlay = null; els = null; cmds = null; unsaved = false; cat = "general"; providerSwitches.clear(); providerArgInputs.clear(); providerArgsOpen = false; copyOnSelectSwitches.clear(); copyOnSelectOpen = false;
+  const ov = overlay; overlay = null; els = null; cmds = null; unsaved = false; cat = "general"; providerSwitches.clear(); providerArgInputs.clear(); providerArgsOpen = false; copyOnSelectSwitches.clear(); copyOnSelectOpen = false; guidanceSelect = null;
   selectedPlugin = null; pluginQuery = ""; pluginTrust = false; pluginNotice = null; pluginBusy = null;
   quietSettingRequests.clear();
   aboutDirty = {};

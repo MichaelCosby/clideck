@@ -6,8 +6,23 @@ const cliPath = join(__dirname, '../bin/clideck.js');
 const nodeCli = `"${process.execPath}" "${cliPath}"`;
 const MAX_GUIDE_BYTES = 6 * 1024;
 
-function createAgentSessionGuide(pluginCommands = [], about = {}) {
-  const base = `CliDeck session tools (when CLIDECK_SESSION_ID is set):
+const AGENT_GUIDANCE_LEVELS = Object.freeze(['full', 'minimal', 'off']);
+const DEFAULT_AGENT_GUIDANCE = 'minimal';
+
+// A lighter touch than the full guide: agents keep their own messaging as the first choice and treat
+// CliDeck's commands as a dependable fallback, contacting peers only when the user or the task calls for it.
+const MINIMAL_GUIDE = `CliDeck session tools (when CLIDECK_SESSION_ID is set):
+You are running in a CliDeck session; other sessions may be working in the same project. To contact another agent, prefer your own built-in agent messaging when you have it. Use CliDeck's commands as the fallback: when you can't find the target that way, the target is not a Claude session, or a message goes unanswered. Contact other sessions only when the user asks or the task clearly needs it.
+List sessions and their ask addresses: \`clideck agents\` (\`--all\` for other projects, \`--json\` for details such as cwd).
+Ask an idle session and wait for its reply: \`clideck ask "<target>" "<message>" --timeout 10m\`. Add \`--steer\` to send guidance to a working session without waiting.
+Start a sibling session: \`clideck create [--provider <id>] [--name <name>] [--cwd <path>]\` (defaults to your agent and folder).
+When you write a document meant for the user to read, such as a plan or report, open it in a preview tab: \`clideck show <path>\` (markdown, html, pdf, images, mermaid, diffs and more).
+Ask the user a question in CliDeck: \`clideck prompt "<question>" --options "A,B"\`; request feedback on an image: \`clideck annotate <image-file>\`.
+If the clideck command is missing, use \`${nodeCli}\` instead. Full help: \`clideck --help\`.`;
+
+function createAgentSessionGuide(pluginCommands = [], about = {}, level = 'full') {
+  if (level === 'off') return '';
+  const base = level === 'minimal' ? MINIMAL_GUIDE : `CliDeck session tools (when CLIDECK_SESSION_ID is set):
 You are one session in a CliDeck project. At the start of project work and before choosing a peer, refresh the team with \`clideck agents\`: it identifies you and current-project sessions, with idle/working/dormant status and exact ask addresses. Dormant means stopped; a saved session is not a required team role. Use \`clideck agents --all\` for other projects. Lists are snapshots: refresh after a failed contact or team change; never rely on old handoff names or ask the user to revive a session before checking current peers. Session names can indicate roles; confirm unclear responsibilities with the peer. Follow the user's assigned role and coordinate file ownership before parallel edits; peers share the working files. Only stop test processes you started, using their exact child handles or verified PIDs; never broad name, pattern, or port-based cleanup.
 Use existing peers when their expertise helps. If a useful role is missing, ask the user to open a session in this project and name it for that role (for example UI or Reviewer; rename with the header pencil or row menu). Once it appears in agents, use its exact printed ask address and send its project context, concrete task, scope, and expected result through ask; the user does not need to write team introduction prompts. Continue independent work while waiting. A single session can also handle a project; create a team only when the work benefits from it.
 Discover peers: \`clideck agents\` or \`${nodeCli} agents\`.
@@ -49,7 +64,9 @@ function hasCodexDeveloperInstructions(command, extraArgs = []) {
 }
 
 module.exports = {
+  AGENT_GUIDANCE_LEVELS,
   AGENT_SESSION_GUIDE,
+  DEFAULT_AGENT_GUIDANCE,
   createAgentSessionGuide,
   hasClaudeSystemPrompt,
   hasCodexDeveloperInstructions,

@@ -42,8 +42,9 @@ const claudeProvider = {
   createLaunch({ command, port, sessionId, resumeHandle, agentGuide, extraArgs = [], serverUrl }) {
     const settingsPath = createClaudeSettings(port, sessionId, serverUrl);
     const args = ['--settings', settingsPath];
-    if (!hasClaudeSystemPrompt(command, extraArgs)) {
-      args.push('--append-system-prompt', agentGuide || AGENT_SESSION_GUIDE);
+    const guide = agentGuide ?? AGENT_SESSION_GUIDE;
+    if (guide && !hasClaudeSystemPrompt(command, extraArgs)) {
+      args.push('--append-system-prompt', guide);
     }
     if (resumeHandle) args.push('--resume', resumeHandle);
     return {

@@ -47,7 +47,7 @@ const { readProcessInfo } = require('./process-info');
 const { ENGINE_BUILD_VERSION } = require('./build-version');
 const { createCustomCommandProvider, parseCommand } = require('./custom-command');
 const { PluginManager } = require('./plugin-manager');
-const { createAgentSessionGuide } = require('./agent-session-guide');
+const { createAgentSessionGuide, DEFAULT_AGENT_GUIDANCE } = require('./agent-session-guide');
 const { PluginHttp } = require('./plugin-http');
 const { MAX_BACKUP_BYTES, createBackup, previewBackup, restoreBackup } = require('./backup');
 
@@ -418,7 +418,11 @@ class HeadlessServer {
     return {
       ...defaults,
       ...(extraArgs.length && { extraArgs }),
-      agentGuide: createAgentSessionGuide(this.pluginManager.publicCommands(), config.about),
+      agentGuide: createAgentSessionGuide(
+        this.pluginManager.publicCommands(),
+        config.about,
+        config.agentGuidance || DEFAULT_AGENT_GUIDANCE,
+      ),
     };
   }
 

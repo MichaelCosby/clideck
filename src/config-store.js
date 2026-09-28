@@ -8,6 +8,7 @@ const { join } = require('path');
 const { ensurePrivateDataDir } = require('./private-data-dir');
 const { isValidProfile, mergeProfile } = require('./user-profile');
 const { isValidOnboarding, mergeOnboarding } = require('./onboarding');
+const { AGENT_GUIDANCE_LEVELS } = require('./agent-session-guide');
 
 const STARTER_PROMPTS = Object.freeze([
   Object.freeze({
@@ -164,6 +165,7 @@ function isValidConfigPatch(value) {
       || value.copyOnSelectProviders.some((id) => typeof id !== 'string' || !PROVIDER_ID.test(id)))) {
     return false;
   }
+  if (value.agentGuidance !== undefined && !AGENT_GUIDANCE_LEVELS.includes(value.agentGuidance)) return false;
   if (value.about !== undefined && !isValidProfile(value.about)) return false;
   if (value.onboarding !== undefined && !isValidOnboarding(value.onboarding)) return false;
   return true;

@@ -66,6 +66,7 @@ let commandsList = [];              // config.commands [{id,label,icon,command,e
 let hiddenProviders = [];           // config.hiddenProviders [providerId] — picker visibility only; sessions/providers stay intact
 let providerArgs = {};              // config.providerArgs {providerId:quote-parsed launch args} — future spawns only
 let copyOnSelectProviders = [];     // config.copyOnSelectProviders [providerId] — copy terminal selections to the clipboard
+let agentGuidance = "minimal";      // config.agentGuidance full|minimal|off — CliDeck instructions given to new agents
 let confirmClose = true;            // config.confirmClose — gate the session-delete confirm (Settings General)
 let defaultCwd = "";                // config.defaultCwd — default working dir for new sessions
 let about = {};                     // config.about {name,timeZone,notes} — the About me profile (Settings ▸ General).
@@ -176,6 +177,7 @@ function applyEvent(ev) {
       hiddenProviders = Array.isArray(c.hiddenProviders) ? [...new Set(c.hiddenProviders.filter((id) => typeof id === "string" && id))] : [];
       providerArgs = (c.providerArgs && typeof c.providerArgs === "object" && !Array.isArray(c.providerArgs)) ? { ...c.providerArgs } : {};
       copyOnSelectProviders = Array.isArray(c.copyOnSelectProviders) ? c.copyOnSelectProviders.filter((id) => typeof id === "string" && id) : [];
+      agentGuidance = ["full", "minimal", "off"].includes(c.agentGuidance) ? c.agentGuidance : "minimal";
       confirmClose = c.confirmClose !== false;                          // default ON; false → delete skips the confirm
       defaultCwd = typeof c.defaultCwd === "string" ? c.defaultCwd : "";
       about = (c.about && typeof c.about === "object" && !Array.isArray(c.about)) ? { ...c.about } : {};
@@ -396,6 +398,8 @@ export const store = {
   get providerArgs() { return providerArgs; },
   setProviderArgs(value) { providerArgs = (value && typeof value === "object" && !Array.isArray(value)) ? { ...value } : {}; emit("config"); },
   get copyOnSelectProviders() { return copyOnSelectProviders; },
+  get agentGuidance() { return agentGuidance; },
+  setAgentGuidance(level) { agentGuidance = level; emit("config"); },
   setCopyOnSelectProviders(arr) { copyOnSelectProviders = Array.isArray(arr) ? [...new Set(arr.filter((id) => typeof id === "string" && id))] : []; emit("config"); },
   get confirmClose() { return confirmClose; },
   get defaultCwd() { return defaultCwd; },
