@@ -1088,6 +1088,10 @@ class HeadlessServer {
       this.createDirectory(message, socket);
       return;
     }
+    if (message.type === 'ping') {
+      this.sendControlResult(socket, { type: 'pong' });
+      return;
+    }
     if (message.type === 'config.get') {
       this.sendConfig(socket, message.requestId);
       return;

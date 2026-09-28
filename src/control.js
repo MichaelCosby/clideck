@@ -7,6 +7,7 @@ const MAX_SESSION_ID = 200;
 const CONTROL_TYPES = new Set([
   'engine.update.check',
   'engine.update.install',
+  'ping',
   'session.create',
   'prompt',
   'prompt.answer',
@@ -70,6 +71,7 @@ function hasValidControlFields(message) {
   if (message.type === 'engine.update.check' || message.type === 'engine.update.install') {
     return Object.keys(message).length === 1;
   }
+  if (message.type === 'ping') return true;
   if (message.type === 'config.get') return hasValidRequestId(message);
   if (message.type === 'checkAvailability') return true;
   if (message.type === 'plugins.refresh' || message.type === 'plugin.openFolder') {

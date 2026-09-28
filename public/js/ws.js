@@ -5,6 +5,19 @@ import { resolvedTheme } from "./theme.js";
 import { toast } from "./ui/toast.js";
 
 let ws = null;
+// A half-open socket (sleep, network change) never fires onclose, so ping and force a reconnect on silence.
+const PING_MS = 5000, PONG_TIMEOUT_MS = 10000;
+let pingT = null, lastPong = 0;
+function startHeartbeat(socket) {
+  clearInterval(pingT);
+  lastPong = Date.now();
+  pingT = setInterval(() => {
+    if (socket !== ws || socket.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastPong > PONG_TIMEOUT_MS) { socket.close(); return; }
+    socket.send(JSON.stringify({ type: "ping" }));
+  }, PING_MS);
+  pingT.unref?.();   // under the Node UI-test harness, don't hold the process open; a no-op in browsers
+}
 let retry = null;
 
 // ── Offline send-queue (§U, v1 state.js:17-65) ──────────────────────────────────
@@ -229,6 +242,7 @@ export function connectWs() {
 
   ws.onopen = () => {
     openedAt = Date.now();
+    startHeartbeat(ws);
     clearTimeout(healthyT);
     healthyT = setTimeout(onHealthy, HEALTHY_MS);   // survives this long → a real, working engine
     if (!stale) { initConnection(); flushQueue(); }  // fresh connect: reset + replay + config, then flush offline actions
@@ -236,9 +250,12 @@ export function connectWs() {
   };
   ws.onmessage = (m) => {
     let ev; try { ev = JSON.parse(m.data); } catch { return; }
+    lastPong = Date.now();
+    if (ev.type === "pong") return;
     store.applyEvent(ev);
   };
   ws.onclose = () => {
+    clearInterval(pingT);
     clearTimeout(healthyT);
     store.setConnected(false);
     if (openedAt) fastCloses = Date.now() - openedAt < HEALTHY_MS ? fastCloses + 1 : 0;   // count only sockets that OPENED then died fast
