@@ -6,6 +6,7 @@
 // The store/config drive the actual re-render — drag only fires the intent (setSessionProject / config.update).
 import { store } from "../store.js";
 import { setSessionProject, updateConfig } from "../ws.js";
+import { placeProject, placeGroup, moveProjectToGroup } from "./project-layout.js";
 
 export function isDragging() { return !!(ds && ds.active); }
 
@@ -31,11 +32,18 @@ function onDown(e) {
   if (e.button !== 0) return;
   if (e.target.closest("button") || e.target.closest("input")) return;   // controls never start a drag
 
-  // Project drag — grab by the project header (only when there's another project to reorder against). The
-  // whole group dims, but the ghost is just the header so a tall project doesn't drag a giant card around.
+  // Group drag — grab by the group header; the whole group moves as one block among the top-level entries.
+  const pgHead = e.target.closest(".pgroup > .pgroup-head");
+  if (pgHead) {
+    const pgroup = pgHead.closest(".pgroup");
+    beginPending("pgroup", pgroup, pgHead, e, { groupId: pgroup.dataset.pgroupId });
+    return;
+  }
+  // Project drag — grab by the project header. The whole project dims, but the ghost is just the header so a
+  // tall project doesn't drag a giant card around. Dropping it inside a group's projects puts it in that group.
   const head = e.target.closest(".project.is-project > .group-head");
   if (head) {
-    if (document.querySelectorAll(".project.is-project").length <= 1) return;
+    if (document.querySelectorAll(".project.is-project").length <= 1 && !document.querySelector(".pgroup")) return;
     const group = head.closest(".project");
     beginPending("project", group, head, e, { projectId: group.dataset.projectId });
     return;
@@ -59,7 +67,8 @@ function onMove(e) {
     startDrag();
   }
   ds.ghost.style.top = (e.clientY - ds.offsetY) + "px";
-  if (ds.mode === "project") updateProjectDropTarget(e.clientY);
+  if (ds.mode === "project") updateProjectDropTarget(e.clientX, e.clientY);
+  else if (ds.mode === "pgroup") updateGroupDropTarget(e.clientY);
   else updateSessionDropTarget(e.clientX, e.clientY);
 }
 
@@ -126,23 +135,64 @@ function updatePinDropTarget(x, y) {
   return true;
 }
 
-// A project drops between other projects — the insertion line marks the slot (skips the two no-op slots).
-function updateProjectDropTarget(y) {
+function groupIdOf(projectEl) {
+  const pgroup = projectEl && projectEl.parentNode && projectEl.parentNode.closest && projectEl.parentNode.closest(".pgroup");
+  return pgroup ? pgroup.dataset.pgroupId : null;
+}
+function drawLine(ref, after) {
+  const line = document.createElement("div");
+  line.className = "project-drop-line";
+  if (after) ref.after(line); else ref.parentNode.insertBefore(line, ref);
+}
+
+// A project drops onto a group header (joins it at the end) or between projects: the slot takes the group of
+// the project below it, so a drop inside a group's list joins that group and one outside leaves it.
+function updateProjectDropTarget(x, y) {
+  clearDropLine();
+  document.querySelectorAll(".drop-highlight").forEach((el) => el.classList.remove("drop-highlight"));
+  ds.dropTarget = null;
+  for (const head of document.querySelectorAll(".pgroup > .pgroup-head")) {
+    const r = head.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+      const groupId = head.parentNode.dataset.pgroupId;
+      if (groupIdOf(ds.row) === groupId) return;
+      head.classList.add("drop-highlight");
+      ds.dropTarget = { type: "into-group", groupId };
+      return;
+    }
+  }
+  const shown = (el) => el.getBoundingClientRect().height > 0;   // projects inside a collapsed group are not slots
+  const rest = [...document.querySelectorAll(".project.is-project")].filter((el) => el !== ds.row && shown(el));
+  for (let i = 0; i <= rest.length; i++) {
+    const prev = i > 0 ? rest[i - 1].getBoundingClientRect().bottom : -Infinity;
+    const next = i < rest.length ? rest[i].getBoundingClientRect().top : Infinity;
+    if (y >= prev && y < next) {
+      const before = rest[i] || null;
+      const groupId = before ? groupIdOf(before) : null;
+      const all = [...document.querySelectorAll(".project.is-project")];
+      const same = all[all.indexOf(ds.row) + 1] === (before || undefined) || (!before && all[all.length - 1] === ds.row);
+      if (same && groupId === groupIdOf(ds.row)) return;   // dropping back where it already is
+      ds.dropTarget = { type: "reorder", beforeId: before ? before.dataset.projectId : null, groupId };
+      if (before) drawLine(before, false); else if (rest.length) drawLine(rest[rest.length - 1], true);
+      return;
+    }
+  }
+}
+
+// A group drops between the top-level entries (projects outside groups, and other groups).
+function updateGroupDropTarget(y) {
   clearDropLine();
   ds.dropTarget = null;
-  const groups = [...document.querySelectorAll(".project.is-project")];
-  const dragIdx = groups.indexOf(ds.row);
-  for (let i = 0; i <= groups.length; i++) {
-    const prev = i > 0 ? groups[i - 1].getBoundingClientRect().bottom : -Infinity;
-    const next = i < groups.length ? groups[i].getBoundingClientRect().top : Infinity;
+  const list = ds.row.parentNode;
+  const tops = [...list.children].filter((el) => el !== ds.row && (el.classList.contains("pgroup") || el.classList.contains("is-project")));
+  for (let i = 0; i <= tops.length; i++) {
+    const prev = i > 0 ? tops[i - 1].getBoundingClientRect().bottom : -Infinity;
+    const next = i < tops.length ? tops[i].getBoundingClientRect().top : Infinity;
     if (y >= prev && y < next) {
-      if (i === dragIdx || i === dragIdx + 1) return;   // dropping back where it already is
-      ds.dropTarget = { type: "reorder", insertBefore: i };
-      const line = document.createElement("div");
-      line.className = "project-drop-line";
-      const ref = groups[i] || null;
-      if (ref) ref.parentNode.insertBefore(line, ref);
-      else groups[groups.length - 1].after(line);
+      const before = tops[i] || null;
+      const keyOf = (el) => (el.classList.contains("pgroup") ? "g:" + el.dataset.pgroupId : "p:" + el.dataset.projectId);
+      ds.dropTarget = { type: "group-reorder", beforeKey: before ? keyOf(before) : null };
+      if (before) drawLine(before, false); else if (tops.length) drawLine(tops[tops.length - 1], true);
       return;
     }
   }
@@ -164,16 +214,16 @@ function endDrag() {
       store.setPinnedSessions(pins);
       updateConfig({ pinnedSessions: pins });
     }
-  } else if (ds.mode === "project" && target.type === "reorder") {
-    const projects = store.projects.slice();
-    const from = projects.findIndex((p) => p.id === ds.projectId);
-    if (from < 0) return;
-    const [moved] = projects.splice(from, 1);
-    let to = target.insertBefore;
-    if (to > from) to -= 1;                              // indices shift after the removal
-    projects.splice(to, 0, moved);
-    store.setProjects(projects);                        // optimistic re-order → the sidebar re-sorts instantly
-    updateConfig({ projects });                         // persist (engine echoes {type:'config'})
+  } else if (ds.mode === "project") {
+    const projects = target.type === "into-group"
+      ? moveProjectToGroup(store.projects, store.projectGroups, ds.projectId, target.groupId)
+      : placeProject(store.projects, store.projectGroups, ds.projectId, target.beforeId, target.groupId);
+    store.setProjectLayout(projects, store.projectGroups);   // optimistic → the sidebar re-sorts instantly
+    updateConfig({ projects });                               // persist (engine echoes {type:'config'})
+  } else if (ds.mode === "pgroup" && target.type === "group-reorder") {
+    const next = placeGroup(store.projects, store.projectGroups, ds.groupId, target.beforeKey);
+    store.setProjectLayout(next.projects, next.projectGroups);
+    updateConfig({ projects: next.projects, projectGroups: next.projectGroups });
   }
 }
 

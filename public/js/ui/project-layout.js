@@ -21,6 +21,35 @@ function flatten(items) {
   return items.flatMap((item) => (item.type === "project" ? [item.project] : item.projects));
 }
 
+// A project dragged to a slot among the projects: `beforeId` is the project it lands in front of (null: the
+// end) and `groupId` the group that slot belongs to (null: top level).
+export function placeProject(projects, groups, projectId, beforeId, groupId) {
+  const project = projects.find((p) => p.id === projectId);
+  if (!project) return projects;
+  const moved = { ...project };
+  if (groupId) moved.groupId = groupId; else delete moved.groupId;
+  const rest = projects.filter((p) => p.id !== projectId);
+  const at = beforeId ? rest.findIndex((p) => p.id === beforeId) : -1;
+  rest.splice(at >= 0 ? at : rest.length, 0, moved);
+  return flatten(layoutProjects(rest, groups));
+}
+
+// A whole group dragged among the top-level entries; `beforeKey` is "p:<id>" or "g:<id>" (null: the end).
+export function placeGroup(projects, groups, groupId, beforeKey) {
+  const items = layoutProjects(projects, groups);
+  const from = items.findIndex((item) => item.type === "group" && item.group.id === groupId);
+  if (from < 0) return { projects, projectGroups: groups };
+  const [moved] = items.splice(from, 1);
+  const keyOf = (item) => (item.type === "group" ? "g:" + item.group.id : "p:" + item.project.id);
+  const at = beforeKey ? items.findIndex((item) => keyOf(item) === beforeKey) : -1;
+  items.splice(at >= 0 ? at : items.length, 0, moved);
+  const order = items.filter((item) => item.type === "group").map((item) => item.group.id);
+  return {
+    projects: flatten(items),
+    projectGroups: groups.slice().sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)),
+  };
+}
+
 // Moving into a group appends the project to it; leaving puts it just below the group it left.
 export function moveProjectToGroup(projects, groups, projectId, groupId) {
   const project = projects.find((p) => p.id === projectId);

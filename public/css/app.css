@@ -109,7 +109,10 @@ body.resizing iframe { pointer-events:none; } /* Embedded documents must not tak
 .project.is-previous .group-name { color:var(--faint); }
 
 /* drag & drop */
-.row.dragging, .project.dragging { opacity:.35; }
+.row.dragging, .project.dragging, .pgroup.dragging { opacity:.35; }
+.pgroup > .pgroup-head { cursor:grab; }
+.pgroup > .pgroup-head:active { cursor:grabbing; }
+.pgroup-head.drop-highlight { background:color-mix(in srgb, var(--accent) 16%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); border-radius:9px; }
 .drag-ghost { position:fixed; z-index:500; left:0; top:0; margin:0; pointer-events:none; opacity:.92; border-radius:12px; background:var(--surface-2); box-shadow:0 22px 48px -12px var(--shadow); }
 .group-head.drop-target { border-radius:9px; box-shadow:inset 0 0 0 1px var(--border); }   /* session-drag highlight — renamed off the file-veil's .drop-zone collision */
 .group-head.drop-highlight { background:color-mix(in srgb, var(--accent) 16%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); border-radius:9px; }

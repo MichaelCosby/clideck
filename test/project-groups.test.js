@@ -63,3 +63,17 @@ test('backups carry groups, and a restored project brings its group along', () =
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('dragging a project to a slot or a group to a new position', async () => {
+  const { placeProject, placeGroup } = await import('../public/js/ui/project-layout.js');
+  const groups = [group('g1'), group('g2')];
+  const ids = (list) => list.map((p) => `${p.id}${p.groupId ? `:${p.groupId}` : ''}`).join(' ');
+  const projects = [project('a'), project('b', 'g1'), project('c', 'g1'), project('d'), project('e', 'g2')];
+  assert.equal(ids(placeProject(projects, groups, 'a', 'c', 'g1')), 'b:g1 a:g1 c:g1 d e:g2', 'dropped between members joins the group');
+  assert.equal(ids(placeProject(projects, groups, 'b', 'd', null)), 'a c:g1 b d e:g2', 'dropped outside leaves the group');
+  assert.equal(ids(placeProject(projects, groups, 'd', null, null)), 'a b:g1 c:g1 e:g2 d', 'dropped at the end goes last');
+  const moved = placeGroup(projects, groups, 'g2', 'p:a');
+  assert.equal(ids(moved.projects), 'e:g2 a b:g1 c:g1 d', 'a group moves as one block');
+  assert.deepEqual(moved.projectGroups.map((g) => g.id), ['g2', 'g1']);
+  assert.equal(ids(placeGroup(projects, groups, 'g1', null).projects), 'a d e:g2 b:g1 c:g1');
+});
