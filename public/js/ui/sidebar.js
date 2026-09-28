@@ -16,6 +16,7 @@ import { openPromptLibrary } from "./prompts.js";
 import { openProjectCreator } from "./project-creator.js";
 import { initDrag, wasDragging, isDragging } from "./drag.js";
 import { createRowOrder, RANK } from "./row-order.js";
+import { layoutProjects, moveProjectToGroup, deleteProjectGroup } from "./project-layout.js";
 import { startBounce } from "./bounce.js";
 import { openSettings } from "./settings.js";
 import { AGENT_PRESETS, providerHealth } from "../agent-presets.js";
@@ -59,6 +60,8 @@ let listEl = null;
 let renamingId = null, rowRenameHandle = null;   // the session row (if any) with an inline rename open
 let renamingProjectId = null;                    // the project header (if any) mid-rename — guard so a config echo won't clobber it
 let groupSeq = 0;
+const pgroups = new Map();   // project-group id -> { root, head, name, summary, body } (config.projectGroups)
+let renamingGroupId = null;
 const rowOrder = createRowOrder();
 let rowSeq = 0;
 const dirtyGroups = new Set();
@@ -250,10 +253,128 @@ function reconcileProjects() {
 // DOM order: project groups in config order, then cwd groups in creation order — both before the empty slot.
 function reorderGroups() {
   const anchor = document.getElementById("list-empty");
-  for (const p of store.projects) { const g = groups.get("p:" + p.id); if (g) listEl.insertBefore(g.root, anchor); }
+  const live = new Set();
+  for (const item of layoutProjects(store.projects, store.projectGroups)) {
+    if (item.type === "project") { const g = groups.get("p:" + item.project.id); if (g) listEl.insertBefore(g.root, anchor); continue; }
+    const pg = ensurePGroup(item.group);
+    live.add(item.group.id);
+    listEl.insertBefore(pg.root, anchor);
+    for (const p of item.projects) { const g = groups.get("p:" + p.id); if (g) pg.body.appendChild(g.root); }
+  }
+  for (const [id, pg] of [...pgroups]) if (!live.has(id)) { pg.root.remove(); pgroups.delete(id); }
   for (const g of [...groups.values()].filter((x) => x.kind === "cwd").sort((a, b) => a.seq - b.seq)) listEl.insertBefore(g.root, anchor);
   const prev = groups.get("prev"); if (prev) listEl.insertBefore(prev.root, anchor);   // §E: Previous Sessions always last
 }
+// ── project groups: pure containers around projects (config.projectGroups) ──────
+function groupById(id) { return store.projectGroups.find((g) => g.id === id) || null; }
+function genGroupId() { return "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function ensurePGroup(group) {
+  let pg = pgroups.get(group.id);
+  if (!pg) {
+    const root = h("div", "pgroup"); root.dataset.pgroupId = group.id;
+    const head = h("div", "pgroup-head");
+    const chev = h("span", "chev");
+    const name = h("div", "pgroup-name");
+    const summary = h("span", "pgroup-summary");
+    const actions = h("div", "g-actions");
+    const menuBtn = h("button", "g-icon", DOTS_ICON); menuBtn.type = "button"; menuBtn.title = "Group actions";
+    menuBtn.setAttribute("aria-haspopup", "menu"); menuBtn.setAttribute("aria-label", "Group actions"); menuBtn.setAttribute("aria-expanded", "false");
+    actions.append(menuBtn);
+    head.append(chev, name, summary, actions);
+    const body = h("div", "pgroup-body");
+    root.append(head, body);
+    head.onclick = (e) => { if (actions.contains(e.target) || wasDragging()) return; togglePGroup(group.id); };
+    name.addEventListener("dblclick", (e) => { e.stopPropagation(); e.preventDefault(); startGroupRename(group.id); });
+    menuBtn.onclick = (e) => { e.stopPropagation(); togglePGroupMenu(group.id, menuBtn, e); };
+    pg = { root, head, name, summary, body };
+    pgroups.set(group.id, pg);
+  }
+  if (renamingGroupId !== group.id) pg.name.textContent = group.name;
+  pg.root.classList.toggle("collapsed", !!group.collapsed);
+  return pg;
+}
+function commitLayout(projects, projectGroups) {
+  store.setProjectLayout(projects, projectGroups);
+  updateConfig({ projects, projectGroups });
+}
+function togglePGroup(id) {
+  commitLayout(store.projects, store.projectGroups.map((g) => (g.id === id ? { ...g, collapsed: !g.collapsed } : g)));
+}
+function moveProject(projectId, groupId) {
+  commitLayout(moveProjectToGroup(store.projects, store.projectGroups, projectId, groupId), store.projectGroups);
+}
+function moveProjectToNewGroup(projectId) {
+  const group = { id: genGroupId(), name: "New group", collapsed: false };
+  const projectGroups = [...store.projectGroups, group];
+  commitLayout(moveProjectToGroup(store.projects, projectGroups, projectId, group.id), projectGroups);
+  startGroupRename(group.id);
+}
+function startGroupRename(id) {
+  const pg = pgroups.get(id), group = groupById(id);
+  if (!pg || !group || renamingGroupId === id) return;
+  renamingGroupId = id;
+  pg.head.classList.add("renaming");
+  inlineRename(pg.name, {
+    value: group.name, placeholder: "Group name",
+    onCommit: (name) => commitLayout(store.projects, store.projectGroups.map((g) => (g.id === id ? { ...g, name } : g))),
+    onEnd: () => { renamingGroupId = null; pg.head.classList.remove("renaming"); const cur = groupById(id); if (cur) ensurePGroup(cur); },
+  });
+}
+function pgroupMenuItems(id) {
+  return [
+    { label: "Rename group", onSelect: (c) => { c.close(); startGroupRename(id); } },
+    { separator: true },
+    { label: "Delete group", danger: true, onSelect: (c) => c.replace(pgroupDeleteConfirm(id)) },
+  ];
+}
+function pgroupDeleteConfirm(id) {
+  const group = groupById(id);
+  return [
+    { label: `Delete group "${group ? group.name : ""}"? Its projects and sessions are kept.`, caption: true },
+    { label: "Cancel", onSelect: (c) => c.replace(pgroupMenuItems(id)) },
+    { label: "Delete group", danger: true, onSelect: (c) => {
+      c.close();
+      const next = deleteProjectGroup(store.projects, store.projectGroups, id);
+      commitLayout(next.projects, next.projectGroups);
+    } },
+  ];
+}
+function togglePGroupMenu(id, btn, sourceEvent) {
+  if (btn.getAttribute("aria-expanded") === "true") { closeMenu(); return; }
+  btn.setAttribute("aria-expanded", "true");
+  openMenu(btn, pgroupMenuItems(id), {
+    align: "end", returnFocus: btn, pointerReturnFocus: terminalFocusTarget(), sourceEvent,
+    onClose: () => btn.setAttribute("aria-expanded", "false"),
+  });
+}
+// "Move to group…" in a project's menu: every group, a new one, or out of its current group.
+function groupPickItems(key) {
+  const g = groups.get(key); const p = g && projectById(g.projectId);
+  if (!p) return projectMenuItems(key);
+  const current = p.groupId && groupById(p.groupId) ? p.groupId : null;
+  return [
+    { label: `Move "${p.name}" to`, caption: true },
+    ...store.projectGroups.map((group) => ({
+      label: group.name, disabled: group.id === current,
+      onSelect: (c) => { c.close(); moveProject(p.id, group.id); },
+    })),
+    { label: "New group…", onSelect: (c) => { c.close(); moveProjectToNewGroup(p.id); } },
+    ...(current ? [{ label: "Remove from group", onSelect: (c) => { c.close(); moveProject(p.id, null); } }] : []),
+    { separator: true },
+    { label: "Back", onSelect: (c) => c.replace(projectMenuItems(key)) },
+  ];
+}
+function updatePGroupVisibility() {
+  const layout = layoutProjects(store.projects, store.projectGroups);
+  for (const item of layout) {
+    if (item.type !== "group") continue;
+    const pg = pgroups.get(item.group.id); if (!pg) continue;
+    const anyShown = item.projects.some((p) => { const g = groups.get("p:" + p.id); return g && g.root.style.display !== "none"; });
+    const showEmpty = !item.projects.length && store.filter === "all" && !store.search.trim();
+    pg.root.style.display = anyShown || showEmpty ? "" : "none";
+  }
+}
+
 function toggleCollapse(key) {
   const g = groups.get(key); if (!g) return;
   const now = !g.head.classList.contains("collapsed");
@@ -307,6 +428,7 @@ function projectMenuItems(key) {
     { render: (ctl) => swatchStrip(p, ctl) },
     { separator: true },
     { label: "Rename", onSelect: (c) => { c.close(); startProjectRename(p.id); } },
+    { label: "Move to group…", onSelect: (c) => c.replace(groupPickItems(key)) },
     { label: "Open folder", disabled: !p.path, onSelect: (c) => { c.close(); openProject(p.path); } },
     ...dormantItems(key),
     { separator: true },
@@ -595,7 +717,8 @@ function flushOrder() {
 function clearAll() {
   for (const r of rows.values()) setBounce(r, false);   // a reconnect wipe must not orphan running animations
   for (const g of groups.values()) g.root.remove();
-  groups.clear(); rows.clear(); groupSeq = 0; dirtyGroups.clear();
+  for (const pg of pgroups.values()) pg.root.remove();
+  groups.clear(); rows.clear(); pgroups.clear(); groupSeq = 0; dirtyGroups.clear();
 }
 
 // A session's cwd as a compact path (home → ~), or "". The calm, stable subtitle for a row with no agent
@@ -708,6 +831,7 @@ function updateGroupVisibility(g) {
 function applyFilters() {
   for (const id of rows.keys()) { const r = rows.get(id); if (r) r.root.style.display = rowMatches(id) ? "" : "none"; }
   for (const g of groups.values()) updateGroupVisibility(g);
+  updatePGroupVisibility();
   renderTabs();
 }
 

@@ -1,5 +1,5 @@
 const { existsSync } = require('fs');
-const { isValidConfigPatch, isValidProject } = require('./config-store');
+const { isValidConfigPatch, isValidProject, isValidProjectGroup } = require('./config-store');
 const { validateSettingValue } = require('./plugin-manifest');
 
 const MAX_BACKUP_BYTES = 8 * 1024 * 1024;
@@ -138,7 +138,8 @@ function createBackup(server, browser = {}) {
   }]));
   const backup = {
     format: 'clideck-backup', version: 1, createdAt: new Date().toISOString(), settings,
-    projects: config.projects || [], sessions: server.persistence.list().map(sessionDefinition),
+    projects: config.projects || [], projectGroups: config.projectGroups || [],
+    sessions: server.persistence.list().map(sessionDefinition),
     sessionThemes: config.sessionThemes || {},
   };
   parseBackup(backup); // Never offer a file that our restore cannot read.
@@ -150,6 +151,8 @@ function parseBackup(input) {
   requireValid(object(input) && ['clideck-backup', 'clideck-session-backup'].includes(input.format)
     && input.version === 1, 'Choose a CliDeck backup file (version 1).');
   uniqueList(input.projects, isValidProject);
+  const projectGroups = input.projectGroups || [];
+  uniqueList(projectGroups, isValidProjectGroup);
   uniqueList(input.sessions, (v) => { sessionDefinition(v); return true; });
   const settings = {};
   if (input.format === 'clideck-backup') {
@@ -163,7 +166,8 @@ function parseBackup(input) {
   requireValid(object(sessionThemes) && Object.entries(sessionThemes).every(([key, value]) => id(key) && text(value, 100)));
   return {
     createdAt: text(input.createdAt, 100) ? input.createdAt : '', settings,
-    projects: copy(input.projects), sessions: input.sessions.map(sessionDefinition), sessionThemes: copy(sessionThemes),
+    projects: copy(input.projects), projectGroups: copy(projectGroups),
+    sessions: input.sessions.map(sessionDefinition), sessionThemes: copy(sessionThemes),
   };
 }
 
@@ -234,6 +238,10 @@ function restoreBackup(server, input, selection) {
   const projectIds = new Set([...selection.projects, ...sessions.map((s) => s.projectId)]);
   const projects = backup.projects.filter((p) => projectIds.has(p.id) && !(config.projects || []).some((v) => v.id === p.id));
   config.projects = [...(config.projects || []), ...projects];
+  // A restored project brings its group along when this install doesn't have it yet.
+  const groupIds = new Set(projects.map((p) => p.groupId).filter(Boolean));
+  const groups = backup.projectGroups.filter((g) => groupIds.has(g.id) && !(config.projectGroups || []).some((v) => v.id === g.id));
+  if (groups.length) config.projectGroups = [...(config.projectGroups || []), ...groups];
   // A session's custom command and custom terminal theme are dependencies, not extra checkboxes.
   for (const session of sessions) {
     if (session.projectId && !config.projects.some((p) => p.id === session.projectId)) session.projectId = null;

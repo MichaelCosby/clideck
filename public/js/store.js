@@ -66,6 +66,7 @@ let commandsList = [];              // config.commands [{id,label,icon,command,e
 let hiddenProviders = [];           // config.hiddenProviders [providerId] — picker visibility only; sessions/providers stay intact
 let providerArgs = {};              // config.providerArgs {providerId:quote-parsed launch args} — future spawns only
 let copyOnSelectProviders = [];     // config.copyOnSelectProviders [providerId] — copy terminal selections to the clipboard
+let projectGroups = [];             // config.projectGroups [{id,name,collapsed}] — one level of project grouping
 let pinnedSessions = [];            // config.pinnedSessions [sessionId] — pinned rows, in pin order
 let agentGuidance = "minimal";      // config.agentGuidance full|minimal|off — CliDeck instructions given to new agents
 let confirmClose = true;            // config.confirmClose — gate the session-delete confirm (Settings General)
@@ -174,6 +175,7 @@ function applyEvent(ev) {
       sessionThemes = (c.sessionThemes && typeof c.sessionThemes === "object") ? c.sessionThemes : {};
       customThemes = Array.isArray(c.customThemes) ? c.customThemes : [];
       projects = Array.isArray(c.projects) ? c.projects : [];
+      projectGroups = Array.isArray(c.projectGroups) ? c.projectGroups : [];
       commandsList = Array.isArray(c.commands) ? c.commands : [];       // custom CLI-agent commands (Settings §M)
       hiddenProviders = Array.isArray(c.hiddenProviders) ? [...new Set(c.hiddenProviders.filter((id) => typeof id === "string" && id))] : [];
       providerArgs = (c.providerArgs && typeof c.providerArgs === "object" && !Array.isArray(c.providerArgs)) ? { ...c.providerArgs } : {};
@@ -393,6 +395,9 @@ export const store = {
   // sidebar reflects a create/rename/recolor/reorder instantly; the engine echoes {type:'config'} to re-affirm.
   get projects() { return projects; },
   setProjects(arr) { projects = Array.isArray(arr) ? arr.slice() : []; emit("config"); },
+  get projectGroups() { return projectGroups; },
+  // Projects and their groups change together (a move edits both), so one call keeps them from disagreeing.
+  setProjectLayout(nextProjects, nextGroups) { projects = nextProjects.slice(); projectGroups = nextGroups.slice(); emit("config"); },
   // Settings surface (§M) — projections of the config keys + the requester-only availability cache.
   get commands() { return commandsList; },
   setCommands(arr) { commandsList = Array.isArray(arr) ? arr.slice() : []; emit("config"); },   // optimistic; engine echoes {type:'config'}

@@ -103,8 +103,24 @@ function isValidCommand(command) {
   return true;
 }
 
+const GROUP_ID = /^[A-Za-z0-9_-]{1,100}$/;
+
+// One level of grouping: a project may name the group it sits in; groups hold no paths or sessions.
+function isValidProjectGroup(group) {
+  return isObject(group)
+    && jsonSize(group) <= MAX_PROJECT_BYTES
+    && typeof group.id === 'string'
+    && GROUP_ID.test(group.id)
+    && typeof group.name === 'string'
+    && group.name.trim().length > 0
+    && group.name.length <= 200
+    && !group.name.includes('\0')
+    && typeof group.collapsed === 'boolean';
+}
+
 function isValidProject(project) {
   return isObject(project)
+    && (project.groupId === undefined || (typeof project.groupId === 'string' && GROUP_ID.test(project.groupId)))
     && jsonSize(project) <= MAX_PROJECT_BYTES
     && typeof project.id === 'string'
     && /^[A-Za-z0-9_-]{1,100}$/.test(project.id)
@@ -156,6 +172,13 @@ function isValidConfigPatch(value) {
       || value.projects.length > MAX_PROJECTS
       || value.projects.some((project) => !isValidProject(project))
       || new Set(value.projects.map((project) => project.id)).size !== value.projects.length)) {
+    return false;
+  }
+  if (value.projectGroups !== undefined
+    && (!Array.isArray(value.projectGroups)
+      || value.projectGroups.length > MAX_PROJECTS
+      || value.projectGroups.some((group) => !isValidProjectGroup(group))
+      || new Set(value.projectGroups.map((group) => group.id)).size !== value.projectGroups.length)) {
     return false;
   }
   if (value.providerArgs !== undefined && !isValidProviderArgs(value.providerArgs)) return false;
@@ -240,5 +263,6 @@ module.exports = {
   MAX_CONFIG_BYTES,
   isValidCommand,
   isValidProject,
+  isValidProjectGroup,
   isValidConfigPatch,
 };
