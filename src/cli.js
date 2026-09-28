@@ -11,7 +11,7 @@ const MAX_TIMEOUT_MS = 60 * 60 * 1000;
 function usage(pluginCommands = []) {
   const lines = [
     'Usage:',
-    '  clideck [--port <port>] [--host <loopback-host>] [--data-dir <folder>]',
+    '  clideck [--port <port>] [--host <host>] [--data-dir <folder>]',
     '  clideck --version',
     '  clideck agents [--all] [--json] [--url <url>]',
     '  clideck create [--provider <id> | --command <id>] [--name <name>] [--cwd <path>] [--json] [--url <url>]',

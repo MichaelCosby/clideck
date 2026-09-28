@@ -35,11 +35,11 @@ const {
   parsePromptRequest,
 } = require('./prompt-coordinator');
 const { getProvider, listProviders } = require('./providers');
-const { isAllowedWebSocketOrigin, isLoopbackAddress, isLoopbackHost } = require('./security');
+const { isAllowedWebSocketOrigin, isLoopbackAddress, isLoopbackHost, isWildcardHost } = require('./security');
 const { listSessionAgents, resolveLiveCaller } = require('./session-agents');
 const { servePluginStatic, serveStatic } = require('./static');
 const { ServerLock } = require('./server-lock');
-const { alreadyRunningLine, startupBanner, notifyUpdate } = require('./startup');
+const { alreadyRunningLine, nonLoopbackWarning, startupBanner, notifyUpdate } = require('./startup');
 const { TranscriptStore } = require('./transcript-store');
 const { MAX_UPLOAD_BYTES, UploadError, saveUpload } = require('./upload');
 const { checkCommandAvailability } = require('./availability');
@@ -191,12 +191,24 @@ class HeadlessServer {
     });
   }
 
+  // Sessions and hooks run on this machine, so a wildcard bind is advertised to them as loopback.
+  localHost() {
+    if (!isWildcardHost(this.host)) return this.host;
+    return this.host.includes(':') ? '::1' : '127.0.0.1';
+  }
+
+  // Browser-facing routes: loopback-only by default. A deliberate non-loopback bind (behind an
+  // authenticating proxy) opens them to remote browsers, still gated by the Origin check.
+  browserClientAllowed(req) {
+    return isLoopbackAddress(req.socket?.remoteAddress) || !isLoopbackHost(this.host);
+  }
+
   address() {
     return {
       host: this.host,
       port: this.port,
-      url: serverUrl(this.host, this.port).replace(/^http:/, 'ws:'),
-      httpUrl: serverUrl(this.host, this.port),
+      url: serverUrl(this.localHost(), this.port).replace(/^http:/, 'ws:'),
+      httpUrl: serverUrl(this.localHost(), this.port),
     };
   }
 
@@ -1287,7 +1299,7 @@ class HeadlessServer {
     if (req.method === 'POST' && ['/api/session/backup', '/api/session/restore/preview', '/api/session/restore'].includes(pathname)) {
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
-      if (!isLoopbackAddress(req.socket?.remoteAddress)
+      if (!this.browserClientAllowed(req)
         || !isAllowedWebSocketOrigin(req.headers.origin, req.headers.host, this.host)
         || req.headers['sec-fetch-site'] === 'cross-site') {
         sendJson(res, 403, { error: 'local_only' });
@@ -1323,7 +1335,7 @@ class HeadlessServer {
       return;
     }
     if (req.method === 'GET' && pathname === '/api/session/backup') {
-      if (!isLoopbackAddress(req.socket?.remoteAddress)
+      if (!this.browserClientAllowed(req)
         || !isAllowedWebSocketOrigin(req.headers.origin, req.headers.host, this.host)
         || req.headers['sec-fetch-site'] === 'cross-site') {
         sendJson(res, 403, { error: 'local_only' });
@@ -1677,7 +1689,7 @@ class HeadlessServer {
   }
 
   async handleUpload(req, res) {
-    if (!isLoopbackAddress(req.socket?.remoteAddress)) {
+    if (!this.browserClientAllowed(req)) {
       sendJson(res, 403, { ok: false, error: 'local_only' });
       return;
     }
@@ -1820,7 +1832,7 @@ class HeadlessServer {
   }
 
   async handleContent(req, res, contentId) {
-    if (!isLoopbackAddress(req.socket?.remoteAddress)) {
+    if (!this.browserClientAllowed(req)) {
       res.writeHead(403).end();
       return;
     }
@@ -1952,7 +1964,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   const host = options.host || '127.0.0.1';
   const port = Number(options.port ?? 4000);
   if (!isLoopbackHost(host)) {
-    throw new Error(`CliDeck v2 is localhost-only; refusing non-loopback host "${host}".`);
+    console.warn(nonLoopbackWarning(host));
   }
   const freshInstall = !existsSync(options.dataDir || DEFAULT_DATA_DIR);
   const lock = new ServerLock({ dataDir: options.dataDir || DEFAULT_DATA_DIR });

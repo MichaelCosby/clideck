@@ -31,7 +31,7 @@ function alreadyRunningLine(url, isTTY) {
 }
 
 function nonLoopbackWarning(host) {
-  return `[SECURITY WARNING] clideck-next is listening on non-loopback host ${host} without authentication.`;
+  return `[SECURITY WARNING] CliDeck is listening on non-loopback host ${host} without authentication. Put an authenticating proxy in front of it.`;
 }
 
 // Do not hold up startup for the registry or turn a network failure into a launch

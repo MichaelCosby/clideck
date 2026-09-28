@@ -19,10 +19,15 @@ function isLoopbackHost(host) {
   return isIP(value) === 4 && value.startsWith('127.');
 }
 
+function isWildcardHost(host) {
+  const value = String(host || '').trim().replace(/^\[|\]$/g, '');
+  return value === '0.0.0.0' || value === '::';
+}
+
 function isLoopbackAddress(address) {
   const value = String(address || '').trim().toLowerCase();
   return value === '::1' || value === '127.0.0.1'
     || value.startsWith('127.') || value.startsWith('::ffff:127.');
 }
 
-module.exports = { isAllowedWebSocketOrigin, isLoopbackAddress, isLoopbackHost };
+module.exports = { isAllowedWebSocketOrigin, isLoopbackAddress, isLoopbackHost, isWildcardHost };

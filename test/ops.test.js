@@ -16,17 +16,25 @@ const { HeadlessServer, installShutdownHandlers, main } = require('../src/server
 const { alreadyRunningLine, nonLoopbackWarning, startupBanner } = require('../src/startup');
 const { TranscriptStore } = require('../src/transcript-store');
 
-test('startup refuses non-loopback hosts before creating engine state', async () => {
-  const parent = mkdtempSync(join(tmpdir(), 'clideck-next-localhost-only-'));
-  const dataDir = join(parent, 'state');
+test('a non-loopback bind serves remote browsers but keeps agent routes local', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-non-loopback-'));
+  const wide = new HeadlessServer({ host: '0.0.0.0', port: 0, dataDir, autoSaveMs: 0 });
+  const local = new HeadlessServer({ host: '127.0.0.1', port: 0, dataDir: join(dataDir, 'local'), autoSaveMs: 0 });
   try {
-    await assert.rejects(
-      main(['--host', '0.0.0.0', '--port', '0', '--data-dir', dataDir]),
-      /localhost-only.*0\.0\.0\.0/,
-    );
-    assert.equal(existsSync(dataDir), false);
+    const remote = { socket: { remoteAddress: '172.18.0.3' } };
+    const loopback = { socket: { remoteAddress: '127.0.0.1' } };
+    assert.equal(wide.browserClientAllowed(remote), true);
+    assert.equal(local.browserClientAllowed(remote), false);
+    assert.equal(local.browserClientAllowed(loopback), true);
+    assert.equal(wide.address().httpUrl.startsWith('http://127.0.0.1:'), true);
+
+    const { port } = await wide.listen();
+    const agents = await fetch(`http://127.0.0.1:${port}/api/session/agents?callerSessionId=x`);
+    assert.equal(agents.status, 404, 'agent routes still answer loopback callers');
   } finally {
-    rmSync(parent, { recursive: true, force: true });
+    await wide.close();
+    await local.close();
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });
 
