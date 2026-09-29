@@ -102,7 +102,7 @@ test('CLI help explains how busy agents can steer', async () => {
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /ask <target> <message> --steer/);
   assert.match(result.stdout, /injects guidance immediately and returns without waiting/);
-  assert.match(result.stdout, /Show supports text, JSON, markdown/);
+  assert.match(result.stdout, /Show supports text, JSON, CSV, markdown/);
 });
 
 test('HTML starter and focused show help work without an engine or caller', async () => {
@@ -387,6 +387,7 @@ test('CLI show broadcasts scoped content and serves ranged media', async () => {
   writeFileSync(join(cwd, 'flow.mmd'), 'graph TD; A-->B');
   writeFileSync(join(cwd, 'changes.patch'), '@@ -1 +1 @@');
   writeFileSync(join(cwd, 'data.json'), '{"value":1}');
+  writeFileSync(join(cwd, 'positions.csv'), 'symbol,notes\r\n001,"a,b"\r\n');
   writeFileSync(join(cwd, 'unsupported.bin'), 'unsupported');
   writeFileSync(join(dataDir, 'outside.png'), Buffer.from('outside'));
   symlinkSync(join(dataDir, 'outside.png'), join(cwd, 'linked.png'));
@@ -447,6 +448,7 @@ test('CLI show broadcasts scoped content and serves ranged media', async () => {
       ['notes.txt', 'text', 'text/plain', 'not supported'],
       ['debug.log', 'text', 'text/plain', 'one\ntwo\n'],
       ['data.json', 'json', 'application/json', '{"value":1}'],
+      ['positions.csv', 'csv', 'text/csv', 'symbol,notes\r\n001,"a,b"\r\n'],
       ['report.pdf', 'pdf', 'application/pdf', '%PDF-test'],
       ['flow.mmd', 'mermaid', 'text/plain', 'graph TD; A-->B'],
       ['changes.patch', 'diff', 'text/plain', '@@ -1 +1 @@'],
@@ -506,6 +508,7 @@ test('CLI show broadcasts scoped content and serves ranged media', async () => {
     for (const [kind, name, body, mime] of [
       ['text', 'notes.txt', 'plain payload', 'text/plain'],
       ['json', 'data.json', '{"ready":true}', 'application/json'],
+      ['csv', 'piped.csv', '\uFEFFid,note\n001,"first\nsecond"\n', 'text/csv'],
     ]) {
       const result = await runCli(
         ['show', '--stdin', '--kind', kind, '--name', name],
@@ -518,7 +521,7 @@ test('CLI show broadcasts scoped content and serves ranged media', async () => {
       assert.equal(event.kind, kind);
       const response = await fetch(`${httpUrl}${event.url}`);
       assert.equal(response.headers.get('content-type'), mime);
-      assert.equal(await response.text(), body);
+      assert.equal(Buffer.from(await response.arrayBuffer()).toString(), body);
     }
 
     const replaced = await runCli(

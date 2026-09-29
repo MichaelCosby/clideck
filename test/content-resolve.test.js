@@ -64,6 +64,7 @@ test('content.resolve returns existing viewer files to its requester only', asyn
   writeFileSync(join(cwd, first), '# Strategy\n');
   writeFileSync(join(cwd, second), '# Input\n');
   writeFileSync(join(cwd, 'notes.txt'), 'plain text\n');
+  writeFileSync(join(cwd, 'positions.csv'), 'id,amount\n001,10\n');
   writeFileSync(join(cwd, 'unsupported.bin'), 'binary\n');
   writeFileSync(outside, 'pdf');
 
@@ -84,7 +85,7 @@ test('content.resolve returns existing viewer files to its requester only', asyn
   server.clients.add(peer);
 
   try {
-    const paths = [first, second, 'notes.txt', 'docs/missing.md', 'unsupported.bin', outside];
+    const paths = [first, second, 'notes.txt', 'positions.csv', 'docs/missing.md', 'unsupported.bin', outside];
     while (paths.length < 50) paths.push(`docs/missing-${paths.length}.md`);
     paths.push('docs/ignored.md');
     server.handleControl(requester, Buffer.from(JSON.stringify({
@@ -101,6 +102,7 @@ test('content.resolve returns existing viewer files to its requester only', asyn
     assert.equal(result.resolved[first], realpathSync(join(cwd, first)));
     assert.equal(result.resolved[second], realpathSync(join(cwd, second)));
     assert.equal(result.resolved['notes.txt'], realpathSync(join(cwd, 'notes.txt')));
+    assert.equal(result.resolved['positions.csv'], realpathSync(join(cwd, 'positions.csv')));
     assert.equal(result.resolved['docs/missing.md'], null);
     assert.equal(result.resolved['unsupported.bin'], null);
     assert.equal(result.resolved[outside], realpathSync(outside));
@@ -114,4 +116,41 @@ test('content.resolve returns existing viewer files to its requester only', asyn
     server.httpServer.close();
     rmSync(dataDir, { recursive: true, force: true });
   }
+});
+
+
+test('CSV file and dropped payload previews survive restore without altering text', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-csv-'));
+  t.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const path = join(dataDir, 'positions.CSV');
+  const source = '\uFEFFid,note\r\n001,"a,b"\r\n002,"two\nlines"\r\n';
+  writeFileSync(path, source);
+  const content = new ContentStore({ dataDir });
+  const file = await content.addOpenFile('csv-session', path);
+  const payload = content.addOpenPayload('csv-session', source, 'csv', 'dropped.csv');
+  assert.equal(file.kind, 'csv');
+  assert.equal(payload.kind, 'csv');
+  assert.equal(content.get(payload.contentId).mime, 'text/csv');
+  const restored = new ContentStore({ dataDir });
+  restored.restoreSession('csv-session', dataDir, content.metadata('csv-session'));
+  const { events } = await restored.replay('csv-session');
+  assert.equal(events.length, 2);
+  assert.ok(events.every(event => event.kind === 'csv'));
+  for (const event of events) {
+    const entry = restored.get(event.contentId);
+    assert.equal(entry.data ? entry.data.toString('utf8') : require('fs').readFileSync(entry.path, 'utf8'), source);
+  }
+});
+
+
+test('oversized CSV files are refused on open and rechecked after growth', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-csv-size-'));
+  t.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const path = join(dataDir, 'large.csv');
+  writeFileSync(path, 'id,value\n1,2\n');
+  const content = new ContentStore({ dataDir });
+  const file = await content.addOpenFile('csv-session', path);
+  require('fs').truncateSync(path, 10 * 1024 * 1024 + 1);
+  await assert.rejects(content.addOpenFile('other-session', path), /CSV preview exceeds/);
+  assert.equal(await content.getServable(file.contentId), null);
 });

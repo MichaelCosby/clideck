@@ -47,7 +47,7 @@ Agents can create reports, pages, images, and other artifacts and automatically
 open them in CliDeck as part of their work. Results appear in tabs beside the
 terminal, ready for you to inspect and give feedback. Supported previews include:
 
-- Markdown, plain text, logs, JSON, HTML, and PDFs.
+- Markdown, plain text, logs, JSON, CSV tables, HTML, and PDFs.
 - Images (PNG, JPEG, GIF, WebP) and video (MP4, WebM).
 - Mermaid diagrams, diffs, charts, and test results.
 

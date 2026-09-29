@@ -14,11 +14,8 @@ import { store } from "../store.js";
 import { resolveContentPaths } from "../ws.js";
 import { debounce } from "../util.js";
 
-// The extensions the ENGINE actually renders — kept in step with CONTENT_TYPES in src/content-store.js, and
-// deliberately not a wishlist. `.csv` reads like an obvious candidate but the viewer has no renderer for it, so
-// every .csv would cost a stat and resolve to null. `.markdown` is out for the same reason — the engine's table
-// has `.md` only.
-const EXT = "txt|log|json|md|html|htm|pdf|mmd|patch|diff|png|jpe?g|gif|webp|mp4|webm";
+// Keep extensions aligned with CONTENT_TYPES in src/content-store.js.
+const EXT = "txt|log|json|csv|md|html|htm|pdf|mmd|patch|diff|png|jpe?g|gif|webp|mp4|webm";
 // A path-like token: an optional leading slash, then NON-EMPTY directory segments, then a filename ending in
 // one of those extensions. The \b after the extension keeps trailing sentence punctuation out ("…SPEC.md." →
 // "…SPEC.md") and rejects ".md5". Segments must be non-empty or "https://host/x.md" matches from its own "//",

@@ -144,6 +144,7 @@ class HeadlessServer {
       }
     }
     this.clients = new Set();
+    this.updates = options.updates || null;
     this.pluginManager = options.pluginManager || new PluginManager({
       dataDir: this.persistence.dataDir,
       configStore: this.configStore,
@@ -982,6 +983,7 @@ class HeadlessServer {
     }
     socket.send(JSON.stringify({ type: 'plugins', plugins: this.pluginManager.snapshot() }));
     socket.send(JSON.stringify({ type: 'transcript.cache', cache: this.transcriptStore.getCache() }));
+    if (this.updates) socket.send(JSON.stringify(this.updates.snapshot()));
 
     socket.on('message', (raw) => {
       if (this.closing) return;
@@ -1023,6 +1025,11 @@ class HeadlessServer {
         return;
       }
       socket.close(1003, 'invalid control fields');
+      return;
+    }
+    if (message.type === 'engine.update.check' || message.type === 'engine.update.install') {
+      const action = message.type === 'engine.update.check' ? 'check' : 'install';
+      this.updates?.[action]().then(result => this.sendControlResult(socket, result)).catch(() => {});
       return;
     }
     if (message.type === 'session.create') {
@@ -1793,6 +1800,7 @@ class HeadlessServer {
     this.autoSaveTimer = null;
     this.closePromise = (async () => {
       try {
+        await this.updates?.close();
         const sessions = [...this.sessions.values()];
         const closed = sessions.map((session) => session.waitForClose?.() || Promise.resolve());
         for (const session of sessions) session.close();
@@ -1889,10 +1897,18 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     version: ENGINE_BUILD_VERSION, url: address.httpUrl, isTTY: process.stdout.isTTY,
   }));
   installShutdownHandlers(server);
-  void notifyUpdate({
-    currentVersion: require('../package.json').version,
-    sourceCheckout: existsSync(require('path').join(__dirname, '../.git')),
-  });
+  const { Updates } = require('./updates');
+  let notifiedVersion = '';
+  server.updates = new Updates({ onChange: event => {
+    server.broadcast(event);
+    if (event.state === 'available' && event.latestVersion !== notifiedVersion) {
+      notifiedVersion = event.latestVersion;
+      void notifyUpdate({ currentVersion: event.currentVersion,
+        sourceCheckout: existsSync(require('path').join(__dirname, '../.git')),
+        check: async () => event.latestVersion });
+    }
+  } });
+  void server.updates.check();
   return { server, address, lock };
 }
 

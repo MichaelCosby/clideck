@@ -106,7 +106,7 @@ function onDrop(e) {
 // Commander (and any other file manager) failed with "carried no file path". There is no fallback chain here on
 // purpose: a fallback chain is the same over-complication wearing a second coat. One path, every app.
 const DOC_KIND = new Map([
-  ["txt", "text"], ["log", "text"], ["json", "json"],
+  ["txt", "text"], ["log", "text"], ["json", "json"], ["csv", "csv"],
   ["md", "markdown"], ["markdown", "markdown"], ["mdown", "markdown"], ["mkd", "markdown"],
   ["html", "html"], ["htm", "html"], ["mmd", "mermaid"], ["patch", "diff"], ["diff", "diff"], ["pdf", "pdf"],
 ]);

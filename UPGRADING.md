@@ -9,14 +9,23 @@ Requires Node.js 22.12 or newer. The default address is **http://127.0.0.1:4000*
 
 ## Update notices
 
-An interactive terminal startup checks npm for a newer stable CliDeck version on
-Linux, macOS and Windows. The check runs after the engine is ready; an offline
-registry does not block startup. A notice shows how to update and reminds you to
-restart. Source checkouts are told to update their checkout instead. CliDeck does
-not install updates or restart running sessions automatically.
+CliDeck checks for updates in the background when the engine starts and periodically
+while it runs. When a newer version is available, the app shows a small notification
+with an **Update** button. You can also check from Settings. Failed checks retry
+automatically and Settings shows when the registry could not be reached.
 
-The version in Settings describes the running engine. Updating files or installing
-a newer npm package does not change that engine until you restart CliDeck.
+For a recognized global npm installation, **Update** installs the advertised version
+into that installation. Running agent sessions stay open. When installation finishes,
+restart CliDeck when you are ready, then resume your sessions. The running engine
+version in Settings does not change until that restart. Updates are never installed
+without clicking **Update**.
+
+Source checkouts and installations that cannot be safely identified show manual
+instructions instead. Permission or installation failures are reported with a terminal
+command to finish the update. Interactive terminal startup also prints an update notice.
+
+Older releases without an update checker need one manual upgrade:
+`npm install -g clideck@latest`, then stop and start CliDeck.
 
 ## Old agent hooks
 

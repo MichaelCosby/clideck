@@ -348,6 +348,37 @@ test('menu input outside a turn cannot resume historical ask work', () => {
   session.handleExit(0, null);
 });
 
+test('Codex model and reasoning menus stay idle after a completed ask', () => {
+  for (const input of ['\r', '2']) {
+    const session = new AgentSession({ provider: getProvider('codex'), port: 1 });
+    session.terminal = { write() {} };
+    try {
+      session.handleHook('session-start', { source: 'startup' });
+      session.sendPrompt('An earlier completed task');
+      session.handleHook('start', { turn_id: 'previous' });
+      session.handleHook('stop', { turn_id: 'previous', last_assistant_message: 'Done.' });
+      const states = [];
+      session.on('event', event => { if (event.type === 'status') states.push(event.state); });
+      for (const choices of [
+        ['Select model', '› 1. Model A', '  2. Model B'],
+        ['Select reasoning effort', '› 1. Medium', '  2. High'],
+      ]) {
+        session.screen = new Screen();
+        session.screen.write([...choices, 'Press enter to confirm or esc to go back'].join('\r\n'));
+        session.analyzeScreen();
+        assert.equal(session.menu.length, 2);
+        session.writeInput(input);
+        session.screen = new Screen();
+        session.screen.write('Model configuration changed\r\n› ');
+        session.analyzeScreen();
+        assert.equal(session.status, 'idle');
+        assert.equal(session.turnOpen, false);
+      }
+      assert.equal(states.includes('working'), false);
+    } finally { session.handleExit(0, null); }
+  }
+});
+
 test('Claude finalizes the native Stop message instead of a stale tool block', () => {
   const session = claudeSession();
   const events = [];
@@ -694,4 +725,86 @@ test('Claude kills the PTY when pending transcript persistence times out', async
 
   session.close();
   await killed;
+});
+
+
+test('native submissions record edited multiline user text, not keystrokes, once per turn', () => {
+  for (const provider of ['claude-code', 'codex']) {
+    const session = new AgentSession({ provider: getProvider(provider) });
+    session.terminal = { write() {} };
+    const events = [];
+    session.on('event', event => { if (event.type === 'turn.user') events.push(event.text); });
+    try {
+      session.writeInput('draft with typos');
+      session.writeInput('\x7f\x7f');
+      assert.deepEqual(events, []);
+      for (const turn_id of ['one', 'two']) {
+        session.handleHook('start', { turn_id, prompt: 'Final message\nwith a second line' });
+        session.handleHook('stop', { turn_id, last_assistant_message: 'Answer' });
+      }
+      assert.deepEqual(events, ['Final message\nwith a second line', 'Final message\nwith a second line']);
+      session.handleHook('start', { turn_id: 'no-text', prompt: { text: 'not valid' } });
+      assert.equal(events.length, 2);
+    } finally { session.handleExit(0, null); }
+  }
+});
+
+test('native echoes reconcile ask and same-turn steering without losing repeated human messages', () => {
+  for (const provider of ['claude-code', 'codex']) {
+    const session = new AgentSession({ provider: getProvider(provider) });
+    session.terminal = { write() {} };
+    const messages = [];
+    session.on('event', (e) => { if (e.type === 'turn.user') messages.push(e.text); });
+    let sequence = 0;
+    const start = (prompt, turn_id = 'one') => session.handleHook('start', {
+      prompt, turn_id, prompt_id: String(++sequence),
+    });
+    try {
+      session.sendPrompt('same');
+      start('same');
+      session.steerPrompt('same');
+      start('same');
+      start('same'); // A real identical human submission within the active turn.
+      assert.deepEqual(messages, ['same', 'same', 'same']);
+      session.handleHook('stop', { turn_id: 'one' });
+      start('same', 'two');
+      assert.deepEqual(messages, ['same', 'same', 'same', 'same']);
+      session.steerPrompt('cancelled');
+      session.cancelTurn();
+      start('cancelled', 'three');
+      assert.deepEqual(messages.slice(-2), ['cancelled', 'cancelled']);
+    } finally { session.handleExit(0, null); }
+  }
+});
+
+test('Claude prompt IDs deduplicate hook delivery, not repeated text', () => {
+  const session = new AgentSession({ provider: getProvider('claude-code') });
+  const messages = [];
+  session.on('event', (e) => { if (e.type === 'turn.user') messages.push(e.text); });
+  try {
+    session.handleHook('start', { prompt_id: 'a', prompt: 'again' });
+    session.handleHook('start', { prompt_id: 'a', prompt: 'again' });
+    session.handleHook('start', { prompt_id: 'b', prompt: 'again' });
+    assert.deepEqual(messages, ['again', 'again']);
+  } finally { session.handleExit(0, null); }
+});
+
+test('Claude expanded paste echoes match only complete paired native markers', () => {
+  const provider = getProvider('claude-code');
+  const wrap = (id, text) => `<pasted_content id="${id}">\n${text}\n</pasted_content id="${id}">`;
+  const text = 'long line\nsecond line\nthird line\nfourth line';
+  assert.equal(provider.promptEchoMatches(text, wrap('a001', text)), true);
+  assert.equal(provider.promptEchoMatches('before\none\nbetween\ntwo\nafter',
+    'before\n' + wrap('a001', 'one') + '\nbetween\n' + wrap('a002', 'two') + '\nafter'), true);
+  assert.equal(provider.promptEchoMatches(text, wrap('a001', text).replace('</pasted_content id="a001">', '</pasted_content id="a002">')), false);
+  assert.equal(provider.promptEchoMatches(wrap('a001', text), text), false);
+  const session = new AgentSession({ provider });
+  session.terminal = { write() {} };
+  const messages = [];
+  session.on('event', (e) => { if (e.type === 'turn.user') messages.push(e.text); });
+  try {
+    session.sendPrompt(text);
+    session.handleHook('start', { prompt: wrap('a001', text) });
+    assert.deepEqual(messages, [text]);
+  } finally { session.handleExit(0, null); }
 });

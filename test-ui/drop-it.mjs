@@ -202,6 +202,11 @@ try {
   ok("drop on the strip opens another document", opens().length === 1 && opens()[0].name === "three.md");
   ok("the strip drops its target marking afterwards", !tabsEl._cls.has("drop-over"));
 
+  ws.clear();
+  main._fire("drop", ev({ dataTransfer: dtDocs([doc("table.csv", "id,value\n001,hello")]), clientX: 400, clientY: 12 }));
+  await sleep(8);
+  ok("CSV drop opens a CSV document and preserves string data", opens().length === 1 && opens()[0].kind === "csv" && opens()[0].data === "id,value\n001,hello");
+
   // The engine reports a failed content.open on the SESSION SNAPSHOT + error channel — the same one that carries
   // create/rename/setProject/restart repairs. It must be routed by operation, or an unopenable file lands in the
   // create-repair surface and reads as "that name is already taken".

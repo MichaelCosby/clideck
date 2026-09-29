@@ -1,3 +1,4 @@
+import { updateControls } from "./updates.js";
 // The Settings surface (§M) — a full-screen overlay opened from the sidebar-footer gear. A left category nav
 // (General / CLI Agents / Notifications / Appearance) + a content pane + a version footer. Built structurally
 // (createElement) so it's introspectable. Config keys ride the store's config projections; custom-agent edits
@@ -43,6 +44,7 @@ const genId = () => "c" + Date.now().toString(36) + Math.random().toString(36).s
 export function openSettings() {
   if (overlay) { close(); return; }
   build();
+  offs.push(store.on("engine.update", renderFooter), store.on("connection", renderFooter));
   offs.push(store.on("availability", () => { if (cat === "agents") renderBody(); }));
   offs.push(store.on("plugins", () => {
     if (cat !== "plugins") return;
@@ -116,11 +118,14 @@ function renderNav() {
 }
 
 function renderFooter() {
+  const restoreFocus = els.footer.contains(document.activeElement);
   const v = store.engineVersion;
   els.footer.replaceChildren(
     h("div", "set-ver-name", "CliDeck v2"),
     h("div", "set-ver-eng", v ? "engine " + esc(v) : "engine version unavailable"),
+    updateControls(),
   );
+  if (restoreFocus) els.footer.querySelector("button")?.focus();
 }
 
 function renderBody() {

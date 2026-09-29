@@ -40,11 +40,11 @@ try {
   ok("an absolute path keeps its leading slash", P.candidatesIn("wrote /tmp/out/report.pdf.").map((c) => c.text).join() === "/tmp/out/report.pdf");
   ok("a bare filename counts", P.candidatesIn("wrote notes.md").map((c) => c.text).join() === "notes.md");
   ok("an extension the viewer cannot render is not a candidate",
-     P.candidatesIn("data.csv report.xlsx archive.zip main.rs").length === 0);
+     P.candidatesIn("report.xlsx archive.zip main.rs").length === 0);
   ok("a version-looking token is not mistaken for a path", P.candidatesIn("bumped to 1.md5 and v2.mdx").length === 0);
   ok("every engine-rendered extension matches", (() => {
-    const line = "a.txt b.log c.json d.md e.html f.htm g.pdf h.mmd i.patch j.diff k.png l.jpg m.jpeg n.gif o.webp p.mp4 q.webm";
-    return P.candidatesIn(line).length === 17;
+    const line = "a.txt b.log c.json d.md e.html f.htm g.pdf h.mmd i.patch j.diff k.png l.jpg m.jpeg n.gif o.webp p.mp4 q.webm r.csv";
+    return P.candidatesIn(line).length === 18;
   })());
 
   // ── existence is tested FIRST: nothing is a link before the engine answers ──

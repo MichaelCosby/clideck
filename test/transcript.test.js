@@ -255,3 +255,41 @@ test('dormant transcripts survive engine restart and replay in one cache event',
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('native human prompts reach History broadcasts and persisted pages for both providers', async () => {
+  const { getProvider } = require('../src/providers');
+  for (const id of ['claude-code', 'codex']) {
+    const dataDir = mkdtempSync(join(tmpdir(), 'clideck-native-history-'));
+    const server = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0 });
+    const broadcasts = [];
+    server.broadcast = (event) => broadcasts.push(event);
+    const provider = {
+      ...getProvider(id),
+      createLaunch: () => ({
+        command: process.execPath,
+        args: ['-e', 'process.stdin.resume()'],
+        env: { HOME: dataDir, CLAUDE_CONFIG_DIR: join(dataDir, '.claude'), CODEX_HOME: join(dataDir, '.codex') },
+      }),
+    };
+    try {
+      await server.listen();
+      const session = server.startSession({ provider, command: process.execPath, cwd: dataDir, port: server.port }, true);
+      const expected = [];
+      for (const turn_id of ['first', 'second']) {
+        session.handleHook('start', { turn_id, prompt_id: turn_id, prompt: 'My message\nsecond line' });
+        session.handleHook('stop', { turn_id, last_assistant_message: 'Agent answer' });
+        expected.push({ role: 'user', text: 'My message\nsecond line' }, { role: 'agent', text: 'Agent answer' });
+      }
+      assert.deepEqual(broadcasts.filter((event) => event.type === 'transcript.append')
+        .map(({ role, text }) => ({ role, text })), expected);
+      assert.deepEqual(server.transcriptStore.getPage(session.id, undefined, 10).turns
+        .map(({ role, text }) => ({ role, text })), expected);
+      const records = readFileSync(join(dataDir, 'transcripts', session.id + '.jsonl'), 'utf8')
+        .trim().split('\n').map(JSON.parse);
+      assert.deepEqual(records.map(({ role, text }) => ({ role, text })), expected);
+    } finally {
+      await server.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }
+});

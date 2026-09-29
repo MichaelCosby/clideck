@@ -49,6 +49,26 @@ try {
   ok("...and the header names the mode", title() === "Edit prompt");
   ok("the text box is loaded with the prompt", document.querySelector(".pl-ed-text").value === P[0].text);
 
+  const textBox = document.querySelector(".pl-ed-text");
+  const sample = '{{session_name}} {{ project_name }} {session_name} {{unknown}} {{session_name} <img src=x> {{\nproject_name\t}}';
+  textBox.value = sample; textBox._fire("input");
+  const mirror = document.querySelector(".pl-ed-mirror");
+  ok("editor recognizes only resolver-supported tokens", (mirror.innerHTML.match(/class="pl-placeholder"/g) || []).length === 3);
+  ok("highlighting leaves native textarea value untouched", textBox.value === sample && textBox.tagName === "TEXTAREA");
+  ok("mirror is inaccessible inert text with escaped markup", mirror.getAttribute("aria-hidden") === "true" && mirror.innerHTML.includes('&lt;img') && !mirror.querySelector('img'));
+  ok("visible help explains double braces and labels textarea", document.querySelector(".pl-ed-help").innerHTML.includes('{{session_name}}') && textBox.getAttribute("aria-describedby") === "pl-placeholder-help" && textBox.getAttribute("aria-label") === "Prompt text");
+  textBox.scrollTop = 100; textBox.scrollLeft = 12; textBox._fire("scroll");
+  ok("mirror tracks both native scroll axes", mirror.scrollTop === 100 && mirror.scrollLeft === 12);
+  textBox._fire("compositionstart");
+  ok("composition uses native visible text", document.querySelector(".pl-ed-field").classList.contains("composing"));
+  textBox._fire("compositionend");
+  ok("composition end restores highlighting without changing value", !document.querySelector(".pl-ed-field").classList.contains("composing") && textBox.value === sample);
+
+  textBox.value = "{{session_name}"; textBox._fire("input");
+  ok("incomplete placeholder is not recognized", !mirror.innerHTML.includes('class="pl-placeholder"'));
+  textBox.value += "}"; textBox._fire("input");
+  ok("closing brace recognizes placeholder immediately", mirror.innerHTML.includes('class="pl-placeholder"'));
+
   // ── leaving it: Cancel ──
   document.querySelector(".pl-ed-cancel")._fire("click");
   ok("Cancel closes the editor", !editor());

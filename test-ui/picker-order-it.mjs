@@ -231,6 +231,31 @@ try {
   ok("// Tab completes exact name ahead of preferred prefix",
     ws.last("input")?.data === "\x1b[200~Exact instructions\x1b[201~");
 
+  // Ignored punctuation never changes the effective query, highlights, selection or completion.
+  ladder({ prompts: prefixPrompts, promptMru: {} });
+  const junk = ";:\"'<>?/*&^%";
+  for (const [trigger, query] of [["/", "program"], ["@", "reviewer"]]) {
+    open(trigger, query); key("ArrowDown");
+    const before = document.querySelector(".pl-ac-list");
+    const selected = document.querySelector(".pl-ac-item.sel");
+    const heading = document.querySelector(".pl-ac-query").textContent;
+    ws.clear(); for (const ch of junk) key(ch);
+    ok(trigger + trigger + " punctuation leaves results/highlighting/selection/header untouched",
+      document.querySelector(".pl-ac-list") === before && document.querySelector(".pl-ac-item.sel") === selected && document.querySelector(".pl-ac-query").textContent === heading);
+    ok(trigger + trigger + " ignored punctuation sends no terminal input", !ws.last("input"));
+  }
+  const punctuated = "pr" + junk + "og";
+  ok("// embedded punctuation matches clean query", slash(punctuated).join(",") === slash("prog").join(","));
+  slash(punctuated); ws.clear(); key("Enter");
+  ok("// punctuation completion inserts saved body unchanged", ws.last("input")?.data === "\x1b[200~Exact instructions\x1b[201~");
+  at("rev" + junk + "iewer"); ws.clear(); key("Tab");
+  ok("@@ punctuation completion preserves address slash", ws.last("input")?.data === "\x1b[200~@Beta/reviewer \x1b[201~");
+  ladder({ prompts: [{ id:"unicode", name:"工程_01 - intro", text:"Keep ;:'<>?/*&^% intact" }] });
+  ok("Unicode, digits, whitespace, hyphen and underscore remain searchable", slash("工程_01 -").join(",") === "工程_01 - intro");
+  ws.clear(); key("Enter");
+  ok("saved punctuation remains untouched in insertion", ws.last("input")?.data === "\x1b[200~Keep ;:'<>?/*&^% intact\x1b[201~");
+  ok("normal terminal punctuation still passes through", key(";") === true);
+
   closePromptDropdown();
 } catch (error) {
   fail++; console.log("  FAIL threw: " + (error && error.stack || error));

@@ -9,6 +9,7 @@ import { store } from "../store.js";
 import { onTheme, resolvedTheme } from "../theme.js";
 import { closeContent } from "../ws.js";
 import { h, copyText } from "../util.js";
+import { renderCsv } from "./csv.js";
 import { renderText, renderJson, renderMarkdown, renderDiff, renderChart, renderTestResults, htmlFrame, pdfEmbed, imageEl, videoEl, mermaidEl } from "./content-renderers.js";
 import { registerCoreViewer, viewerFor, isRenderableKind, isPluginKind, iconForKind, onViewersChange } from "./viewer-registry.js";
 import { pluginFrame, isPluginFrame, disposePluginFrame, setPluginFrameVisible } from "./plugin-frame.js";
@@ -19,6 +20,7 @@ import { registerReadAlongSurface, matchable } from "./read-along.js";
 import { MAX_VIEWER_TEXT, docTextIndex, normalizeWithMap, partAt, textParts, textFingerprint } from "./doc-text.js";
 
 const KIND_ICON = {
+  csv: icon('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>'),
   terminal: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"/><path d="M12 19h8"/></svg>',
   text: icon('<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M10 12h5M10 16h5"/>'),
   json: icon('<path d="M9 4H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h2"/><path d="M15 4h2a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-2"/>'),
@@ -787,6 +789,7 @@ export function closePluginTabs(pluginId) {
 // bodyFor branch; the host shell remains stable while the implementation is replaceable.
 for (const definition of [
   { kind: "text", icon: KIND_ICON.text, build: (item) => fetchView(item, "text", (text) => renderText(text)) },
+  { kind: "csv", icon: KIND_ICON.csv, build: (item) => fetchView(item, "text", (text) => renderCsv(text, item)) },
   { kind: "json", icon: KIND_ICON.json, build: (item) => fetchView(item, "text", (text) => renderJson(text)) },
   { kind: "html", icon: KIND_ICON.html, build: htmlShell },
   { kind: "pdf", icon: KIND_ICON.pdf, build: (item) => pdfEmbed(item.url) },

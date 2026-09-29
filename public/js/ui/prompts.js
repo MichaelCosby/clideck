@@ -60,6 +60,7 @@ function activeLive() { const s = store.active(); return !!s && s.live !== false
 // {{session_name}} / {{project_name}} are filled from the active session AT PASTE TIME (§13b②). Unknown
 // braces are left verbatim — the regex only matches the two documented keys, so a prompt is never mangled.
 // ⚠️ {{session_name}} is the FULL address (Or, 09-09) — the same one @@ mentions and Copy address use.
+const PLACEHOLDER = /\{\{\s*(session_name|project_name)\s*\}\}/g;
 function fillPlaceholders(text) {
   const s = store.active();
   if (!s) return text;
@@ -68,7 +69,7 @@ function fillPlaceholders(text) {
     session_name: askAddress(s, store.projects),
     project_name: (proj && proj.name) || (s.cwd ? basename(s.cwd) : ""),   // project, else the working-folder name
   };
-  return text.replace(/\{\{\s*(session_name|project_name)\s*\}\}/g, (_, k) => vals[k]);
+  return text.replace(PLACEHOLDER, (_, k) => vals[k]);
 }
 
 // Prompts have no project field, so "project-first" is learned from USE: the ids you've pasted while working in
@@ -134,7 +135,8 @@ function searchAgents(filter) {
     .map((m) => m.a);
 }
 function agentRank(a, q) {
-  const name = String(a.name || "").toLowerCase(), address = String(a.address || "").toLowerCase();
+  // The menu ignores typed slashes; compare the address without separators, never change insertion.
+  const name = String(a.name || "").toLowerCase(), address = String(a.address || "").toLowerCase().replace(/\//g, "");
   return name === q || address === q ? RANK_EXACT : name.includes(q) ? RANK_NAME : address.includes(q) ? RANK_BODY : 0;
 }
 // Bracketed paste wraps the mention so the receiving agent treats the leading @ as literal pasted text and
@@ -296,11 +298,27 @@ function openEditor(id) {
   const card = node("div", "pl-editor");
   const name = node("input", "pl-ed-name"); name.maxLength = 60; name.placeholder = "Prompt name"; name.spellcheck = false; name.autocomplete = "off"; name.value = existing ? existing.name : "";
   const text = node("textarea", "pl-ed-text"); text.placeholder = "What would you like your agent to do?\n\nTip: use {{session_name}} for its full @project/name address, or {{project_name}} for the project name. We\u2019ll fill them in when you use the prompt."; text.spellcheck = false; text.value = existing ? existing.text : "";
+  text.setAttribute("aria-label", "Prompt text");
+  text.setAttribute("aria-describedby", "pl-placeholder-help");
+  const field = node("div", "pl-ed-field"), mirror = node("div", "pl-ed-mirror");
+  mirror.setAttribute("aria-hidden", "true");
+  const syncScroll = () => { mirror.scrollTop = text.scrollTop; mirror.scrollLeft = text.scrollLeft; };
+  const paint = () => {
+    mirror.innerHTML = esc(text.value).replace(PLACEHOLDER, (token) => '<span class="pl-placeholder">' + token + '</span>') + "\u200b";
+    syncScroll();
+  };
+  text.addEventListener("input", paint);
+  text.addEventListener("scroll", syncScroll);
+  text.addEventListener("compositionstart", () => field.classList.add("composing"));
+  text.addEventListener("compositionend", () => { field.classList.remove("composing"); paint(); });
+  field.append(mirror, text); paint();
+  const help = node("div", "pl-ed-help"); help.id = "pl-placeholder-help";
+  help.innerHTML = 'Use double braces: <code>{{session_name}}</code> for the full @project/name address or <code>{{project_name}}</code> for the project. Filled when pasted.';
   const actions = node("div", "pl-ed-actions");
   const save = node("button", "pl-ed-save", existing ? "Save" : "Add"); save.type = "button";
   const cancel = node("button", "pl-ed-cancel", "Cancel"); cancel.type = "button";
   actions.append(save, cancel);
-  card.append(name, text, actions);
+  card.append(name, field, help, actions);
   els.editorHost.replaceChildren(card);
 
   const doSave = () => {
@@ -443,7 +461,11 @@ export function handleTerminalKey(e) {
     }
     // Reset the selection on every query change: `acSelected` names a POSITION, not an item, and a query
     // change can reorder the list. Going back to the first result keeps Enter following the search.
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); acBuffer += e.key; acSelected = 0; renderAc(); return false; }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      if (/[;:"'<>?/*&^%]/.test(e.key)) return false; // Ignore accidents without changing query or selection.
+      acBuffer += e.key; acSelected = 0; renderAc(); return false;
+    }
     e.preventDefault(); return false;                         // block modifiers / function keys while open
   }
 

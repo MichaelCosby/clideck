@@ -28,6 +28,7 @@ function parseSemver(value) {
   if (typeof value !== 'string') return null;
   const match = VERSION_PATTERN.exec(value.trim());
   if (!match) return null;
+  if (match.slice(1, 4).some(part => !Number.isSafeInteger(Number(part)) || (part.length > 1 && part.startsWith('0')))) return null;
   return {
     major: Number(match[1]),
     minor: Number(match[2]),
@@ -113,10 +114,10 @@ function httpsGetBody(url, timeoutMs, maxBytes) {
   });
 }
 
-async function checkForUpdate(options = {}) {
+async function getUpdateStatus(options = {}) {
   try {
     const current = parseSemver(options.currentVersion);
-    if (!current) return null;
+    if (!current) throw new Error('Invalid current version');
     const timeoutMs = boundedNumber(options.timeoutMs, DEFAULT_TIMEOUT_MS, 1, MAX_TIMEOUT_MS);
     const maxBytes = boundedNumber(options.maxBytes, DEFAULT_MAX_BYTES, 1024, MAX_MAX_BYTES);
     const url = typeof options.url === 'string' && options.url ? options.url : DEFAULT_URL;
@@ -127,17 +128,23 @@ async function checkForUpdate(options = {}) {
       Promise.resolve().then(() => fetchBody(url, { timeoutMs, maxBytes })),
       timeoutMs,
     );
-    if (typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > maxBytes) return null;
+    if (typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > maxBytes) throw new Error('Invalid registry response');
     const payload = JSON.parse(body);
     const latest = parseSemver(payload && typeof payload === 'object' ? payload.version : undefined);
-    if (!latest || latest.prerelease) return null;
-    return isNewerRelease(current, latest) ? latest.core : null;
+    if (!latest || latest.prerelease) throw new Error('Invalid registry version');
+    return { state: isNewerRelease(current, latest) ? 'available' : 'current', latestVersion: latest.core };
   } catch {
-    return null;
+    return { state: 'error', error: 'Could not check for updates. Check your connection and try again.' };
   }
+}
+
+async function checkForUpdate(options = {}) {
+  const result = await getUpdateStatus(options);
+  return result.state === 'available' ? result.latestVersion : null;
 }
 
 module.exports = {
   checkForUpdate,
+  getUpdateStatus,
   parseSemver,
 };

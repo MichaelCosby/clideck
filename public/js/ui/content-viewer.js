@@ -17,7 +17,7 @@ import { initContentDock, presentInDock, renderableKind } from "./content-dock.j
 const IMG_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>';
 const VID_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M17 9l4-2v10l-4-2z"/></svg>';
 const DOC_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>';
-const KIND_NOUN = { text: "Text document", json: "JSON document", html: "HTML preview", markdown: "Markdown", pdf: "PDF", mermaid: "Diagram", diff: "Diff", chart: "Chart", testresults: "Test results", image: "Image", video: "Video" };
+const KIND_NOUN = { csv: "CSV table", text: "Text document", json: "JSON document", html: "HTML preview", markdown: "Markdown", pdf: "PDF", mermaid: "Diagram", diff: "Diff", chart: "Chart", testresults: "Test results", image: "Image", video: "Video" };
 
 export function initContentViewer() {
   initContentDock();

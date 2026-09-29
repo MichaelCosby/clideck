@@ -5,6 +5,8 @@ const MAX_CONTROL_TEXT = 1024 * 1024;
 const MAX_CONTROL_BYTES = 16 * 1024 * 1024;
 const MAX_SESSION_ID = 200;
 const CONTROL_TYPES = new Set([
+  'engine.update.check',
+  'engine.update.install',
   'session.create',
   'prompt',
   'prompt.answer',
@@ -64,6 +66,9 @@ function isKnownControlType(type) {
 }
 
 function hasValidControlFields(message) {
+  if (message.type === 'engine.update.check' || message.type === 'engine.update.install') {
+    return Object.keys(message).length === 1;
+  }
   if (message.type === 'config.get') return hasValidRequestId(message);
   if (message.type === 'checkAvailability') return true;
   if (message.type === 'plugins.refresh' || message.type === 'plugin.openFolder') {

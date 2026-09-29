@@ -34,6 +34,7 @@ const CONTENT_TYPES = new Map([
   ['.txt', { kind: 'text', mime: 'text/plain' }],
   ['.log', { kind: 'text', mime: 'text/plain' }],
   ['.json', { kind: 'json', mime: 'application/json' }],
+  ['.csv', { kind: 'csv', mime: 'text/csv' }],
   ['.pdf', { kind: 'pdf', mime: 'application/pdf' }],
   ['.mmd', { kind: 'mermaid', mime: 'text/plain' }],
   ['.patch', { kind: 'diff', mime: 'text/plain' }],
@@ -44,6 +45,7 @@ const FILE_KIND_TYPES = new Map([
   ['markdown', { kind: 'markdown', mime: 'text/markdown' }],
   ['text', { kind: 'text', mime: 'text/plain' }],
   ['json', { kind: 'json', mime: 'application/json' }],
+  ['csv', { kind: 'csv', mime: 'text/csv' }],
   ['pdf', { kind: 'pdf', mime: 'application/pdf' }],
   ['mermaid', { kind: 'mermaid', mime: 'text/plain' }],
   ['diff', { kind: 'diff', mime: 'text/plain' }],
@@ -142,6 +144,9 @@ async function resolveFilePath(filePath, kind) {
     throw new ContentError('not_found', 'Content file was not found.', 404);
   }
   const type = fileType(path, kind);
+  if (type.kind === 'csv' && info.size > MAX_OPEN_CONTENT_BYTES) {
+    throw new ContentError('too_large', 'CSV preview exceeds the 10MB limit.', 413);
+  }
   return { path, name: basename(path), ...type };
 }
 

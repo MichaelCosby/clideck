@@ -34,7 +34,7 @@ function usage(pluginCommands = []) {
     'Normal asks require an idle target and wait for its answer.',
     'If the target is working, --steer injects guidance immediately and returns without waiting.',
     'Example: clideck ask "@project/agent" "Use the new constraint" --steer',
-    'Show supports text, JSON, markdown, HTML, PDF, Mermaid, diff, image, and video files.',
+    'Show supports text, JSON, CSV, markdown, HTML, PDF, Mermaid, diff, image, and video files.',
   ];
   if (pluginCommands.length) {
     lines.push('', 'Installed plugin commands:');

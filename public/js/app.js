@@ -1,3 +1,4 @@
+import { initUpdates } from "./ui/updates.js";
 // Bootstrap: wire the store to the components and open the socket.
 import { initSidebar } from "./ui/sidebar.js";
 import { initSidebarResize } from "./ui/sidebar-resize.js";
@@ -14,6 +15,7 @@ import { initPluginHost } from "./ui/plugin-host.js";
 import { initTour } from "./ui/tour.js";
 import { connectWs } from "./ws.js";
 
+initUpdates();
 initSidebar();
 initSidebarResize();   // E1: drag handle on the sidebar/terminal divider
 initTerminal();

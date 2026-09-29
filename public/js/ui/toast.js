@@ -87,9 +87,14 @@ function showToast(opts = {}) {
   const col = mk("div", "toast-c");
   if (opts.title) { const t = mk("div", "toast-t"); t.textContent = opts.title; col.appendChild(t); }
   col.appendChild(mk("div", "toast-b", renderBody(opts)));
+  if (opts.action && typeof opts.action.onClick === "function") {
+    const action = mk("button", "toast-act toast-primary"); action.type = "button"; action.textContent = opts.action.label;
+    action.addEventListener("click", () => { if (action.disabled) return; action.disabled = true; opts.action.onClick(); dismiss(); });
+    col.appendChild(action);
+  }
   if (sticky) {
     const act = mk("button", "toast-act"); act.type = "button"; act.textContent = "Dismiss";
-    act.addEventListener("click", dismiss); col.appendChild(act);
+    act.addEventListener("click", () => { opts.onDismiss?.(); dismiss(); }); col.appendChild(act);
   }
   el.appendChild(mk("span", "toast-ic", opts.iconHtml || ICONS[type]));
   el.appendChild(col);

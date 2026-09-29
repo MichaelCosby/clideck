@@ -56,6 +56,8 @@ class AgentSession extends EventEmitter {
     this.colorfgbg = COLORFGBG_BY_THEME[options.theme];
     this.screen = new Screen(this.cols, this.rows);
     this.userPrompts = [];
+    this.pendingPromptEchoes = [];
+    this.recordedPromptIds = new Set();
     this.status = null;
     this.menu = [];
     this.menuContext = '';
@@ -361,12 +363,14 @@ class AgentSession extends EventEmitter {
   }
 
   finishTurn() {
+    this.pendingPromptEchoes = [];
     this.pendingFinal = false;
     this.finalizeTurn();
     this.setStatus('idle');
   }
 
   cancelTurn() {
+    this.pendingPromptEchoes = [];
     this.pendingFinal = false;
     this.pendingFinalText = '';
     this.turnOpen = false;
@@ -383,6 +387,9 @@ class AgentSession extends EventEmitter {
     this.flushScreen();
     const turnId = this.provider.id === 'codex' && typeof payload.turn_id === 'string' ? payload.turn_id : '';
     if (turnId && this.completedHookTurns.has(turnId)) return;
+    // Codex can submit several prompts (including steering) within one turn.
+    // Record those before the duplicate-start lifecycle guard.
+    if (route === 'start') this.recordNativePrompt(payload);
     if (turnId && route === 'start' && turnId === this.activeHookTurn) return;
     if (turnId && (route === 'stop' || route === 'idle') && this.activeHookTurn && turnId !== this.activeHookTurn) return;
     this.setModel(this.provider.model?.(payload));
@@ -440,6 +447,26 @@ class AgentSession extends EventEmitter {
     if (this.activeHookTurn === turnId) this.activeHookTurn = '';
   }
 
+  recordNativePrompt(payload) {
+    const text = this.provider.userText?.(payload);
+    if (!text) return;
+    const id = this.provider.id === 'claude-code' && typeof payload.prompt_id === 'string'
+      ? payload.prompt_id : '';
+    if (id && this.recordedPromptIds.has(id)) return;
+    if (id) {
+      this.recordedPromptIds.add(id);
+      if (this.recordedPromptIds.size > 64) this.recordedPromptIds.delete(this.recordedPromptIds.values().next().value);
+    }
+    // Only consume the next expected echo, once. Never deduplicate user text
+    // against conversation history: repeated identical messages are valid.
+    const expected = this.pendingPromptEchoes[0];
+    if (expected !== undefined && (expected === text || this.provider.promptEchoMatches?.(expected, text))) {
+      this.pendingPromptEchoes.shift();
+      return;
+    }
+    this.emitProtocol('turn.user', { text });
+  }
+
   sendPrompt(text) {
     const prompt = String(text || '').trim();
     if (!prompt || !this.terminal || this.closed) return false;
@@ -464,6 +491,10 @@ class AgentSession extends EventEmitter {
 
   submitPrompt(prompt, retryWhenIdle) {
     this.userPrompts.push(prompt);
+    if (this.provider.userText) {
+      this.pendingPromptEchoes.push(prompt);
+      if (this.pendingPromptEchoes.length > 32) this.pendingPromptEchoes.shift();
+    }
     this.emitProtocol('turn.user', { text: prompt });
     this.terminal.write(`${BRACKETED_PASTE_START}${prompt}${BRACKETED_PASTE_END}`);
     const delay = this.promptSubmitDelay(prompt.length);
@@ -626,6 +657,8 @@ class AgentSession extends EventEmitter {
     if (this.closed) return;
     this.flushScreen();
     this.closed = true;
+    this.pendingPromptEchoes = [];
+    this.recordedPromptIds.clear();
     clearTimeout(this.outputTimer);
     this.outputTimer = null;
     clearTimeout(this.submitTimer);

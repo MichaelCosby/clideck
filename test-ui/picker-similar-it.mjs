@@ -233,6 +233,13 @@ try {
     !!mentioned && mentioned.data.includes(agentSub) && !mentioned.data.includes("alhpa"),
     JSON.stringify({ address: agentSub, data: mentioned && mentioned.data }));
 
+  for (const [trigger, query] of [["/", "deplyo"], ["@", "alhpa"]]) {
+    const clean = snap(trigger, query);
+    const dirty = snap(trigger, query.slice(0,2) + ";:\"'<>?/*&^%" + query.slice(2));
+    ok(trigger + trigger + " Similar results use the same punctuation-free query",
+      clean.similar.length > 0 && JSON.stringify(clean) === JSON.stringify(dirty));
+  }
+
   closePromptDropdown();
 } catch (error) {
   fail++; console.log("  FAIL threw: " + (error && error.stack || error));

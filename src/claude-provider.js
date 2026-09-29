@@ -21,6 +21,16 @@ const claudeProvider = {
   finalText(payload) {
     return String(payload.last_assistant_message || '').trim();
   },
+  userText(payload) {
+    return typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
+  },
+  promptEchoMatches(expected, actual) {
+    // Claude expands large pastes into matching marker-only lines in hooks.
+    // Normalize only the native echo, never the user's original message.
+    const expanded = actual.replace(/^<pasted_content id="([0-9a-f]{4})">\r?\n([\s\S]*?)\r?\n<\/pasted_content id="\1">$/gm,
+      (whole, id, content) => /^<\/?pasted_content /m.test(content) ? whole : content);
+    return expected === expanded;
+  },
   resumeMetadata(payload) {
     const transcriptPath = String(payload.transcript_path || '').trim();
     const transcriptId = transcriptPath ? basename(transcriptPath, '.jsonl') : '';
