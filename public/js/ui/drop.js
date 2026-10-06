@@ -81,6 +81,7 @@ function onDrop(e) {
   const uris = fileUris(e);
   const items = Array.from(e.dataTransfer.items || []);
   const bad = [];
+  const target = uploadTarget(s);
   if (items.length && items[0] && typeof items[0].webkitGetAsEntry === "function") {
     items.forEach((it, i) => {
       if (it.kind !== "file") return;
@@ -91,12 +92,13 @@ function onDrop(e) {
         else toast.info({ id: "drop-nopath", title: entry.name, body: "Couldn't read the folder's path from this drag" });
       } else {                                              // FILE → upload
         const f = it.getAsFile();
-        if (f) { if (supported(f)) uploadOne(s, f); else bad.push(f); }
+        if (f) { if (supported(f)) uploadOne(s, f, target); else bad.push(f); }
       }
     });
   } else {
-    for (const f of files) { if (supported(f)) uploadOne(s, f); else bad.push(f); }
+    for (const f of files) { if (supported(f)) uploadOne(s, f, target); else bad.push(f); }
   }
+  target.focus = document.activeElement; // A folder in the same drop may have focused the terminal.
   reportRejected(bad);
 }
 
@@ -108,7 +110,8 @@ function reportRejected(bad) {
 // session and its path is pasted in; executables and archives are refused.
 export function uploadFiles(s, files) {
   const bad = [];
-  for (const f of files) { if (supported(f)) uploadOne(s, f); else bad.push(f); }
+  const target = uploadTarget(s);
+  for (const f of files) { if (supported(f)) uploadOne(s, f, target); else bad.push(f); }
   reportRejected(bad);
 }
 
@@ -182,15 +185,20 @@ function paintVeil(e) {
 }
 function hide() { zone.classList.remove("show", "reject", "to-tab"); armTabDrop(false); }
 
-async function uploadOne(s, file) {
+function uploadTarget(s) { return { pid: s.pid, focus: document.activeElement }; }
+
+async function uploadOne(s, file, target) {
   const tid = "upload:" + s.id + ":" + file.name;
   const big = file.size > BIG;
   if (big) toast.info({ id: tid, title: file.name, body: "Uploading… 0%", duration: 0 });
   try {
     const res = await uploadFile(s.id, file.name, file, (frac) => { if (big) toast.info({ id: tid, title: file.name, body: "Uploading… " + Math.round(frac * 100) + "%", duration: 0 }); });
     const path = res && res.path;
-    if (path && store.activeId === s.id) pasteToTerminal(path);
-    toast.success({ id: tid, title: res && res.name ? res.name : file.name, body: path ? "Uploaded → path pasted into the terminal" : "Uploaded" });
+    const pasted = path && store.connected && store.active() === s && s.live !== false
+      && s.pid === target.pid && document.activeElement === target.focus && pasteToTerminal(path);
+    if (pasted) target.focus = document.activeElement; // Keep other files from the same drop eligible.
+    toast.success({ id: tid, title: res && res.name ? res.name : file.name,
+      body: pasted ? "Uploaded → path pasted into the terminal" : path ? "Uploaded. Path not pasted:\n" + path : "Uploaded" });
   } catch (err) {
     toast.error({ id: tid, title: file.name, body: (err && err.message) || "Upload failed" });
   }

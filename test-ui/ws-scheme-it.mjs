@@ -20,6 +20,9 @@ try {
   const { connectWs } = await import("../public/js/ws.js");
   connectWs();
   ok("https page connects with wss://", urls[0] === "wss://deck.example.com");
+  globalThis.location = { protocol: "http:", host: "127.0.0.1:4100" };
+  connectWs();
+  ok("http localhost retains ws:// and its port", urls[1] === "ws://127.0.0.1:4100");
   console.log(`\n${fail === 0 ? "✓" : "✗"} ${pass} passed, ${fail} failed`);
 } catch (error) {
   console.log("THREW", error && error.stack || error); fail++;

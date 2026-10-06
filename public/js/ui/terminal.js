@@ -131,13 +131,14 @@ export function initTerminal() {
   mount.addEventListener("paste", (e) => {
     const s = store.active();
     const files = e.clipboardData && e.clipboardData.files ? Array.from(e.clipboardData.files) : [];
-    if (s && s.live !== false && files.length) {
+    const text = e.clipboardData && e.clipboardData.getData("text/plain");
+    // Rich text can also carry an image representation; preserve the text paste.
+    if (s && s.live !== false && files.length && !text) {
       e.preventDefault();
       e.stopPropagation();
       uploadFiles(s, files);
       return;
     }
-    const text = e.clipboardData && e.clipboardData.getData("text/plain");
     const bracketedPaste = s?.bracketedPaste ?? term.modes.bracketedPasteMode;
     if (!s || s.live === false || !text || !bracketedPaste) return;
     e.preventDefault();

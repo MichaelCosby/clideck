@@ -5,12 +5,15 @@ import { installFakeDom, installFakeWs } from "./fakedom.mjs";
 installFakeDom();
 const ws = installFakeWs();
 const uploads = [];
+let holdUploads = false;
+const pendingUploads = [];
 globalThis.XMLHttpRequest = class {
   open(method, url) { this.url = url; this.upload = {}; }
   send(body) {
     uploads.push({ url: this.url, body });
     const name = decodeURIComponent((/[?&]name=([^&]+)/.exec(this.url) || [])[1] || "file");
-    setTimeout(() => { this.status = 200; this.responseText = JSON.stringify({ ok: true, path: "/a/" + name, name }); this.onload(); }, 0);
+    const finish = () => { this.status = 200; this.responseText = JSON.stringify({ ok: true, path: "/a/" + name, name }); this.onload(); };
+    if (holdUploads) pendingUploads.push(finish); else setTimeout(finish, 0);
   }
 };
 const el = (tag, id, parent = document.body) => {
@@ -135,6 +138,67 @@ try {
   });
   await sleep(5);
   ok("a pasted archive is refused like a dropped one", uploads.length === 0 && !ws.last("input"));
+
+  for (const bracketed of [true, false]) {
+    store.applyEvent(snapshot(bracketed)); ws.clear(); uploads.length = 0;
+    prevented = false; stopped = false;
+    document.getElementById("term")._fire("paste", {
+      target: terminal.textarea,
+      clipboardData: { files: [shot], getData: () => "Name\tValue\nAlice\t42" },
+      preventDefault: () => { prevented = true; }, stopPropagation: () => { stopped = true; },
+    });
+    await sleep(5);
+    ok("mixed text/image clipboard preserves text with bracketed mode " + bracketed,
+      uploads.length === 0 && (bracketed
+        ? prevented && stopped && ws.last("input")?.data === pastePayload("Name\tValue\nAlice\t42")
+        : !prevented && !stopped && !ws.last("input")));
+  }
+
+  holdUploads = true;
+  const changedFocus = el("input", "upload-focus-test");
+  const delayedPaste = (name) => document.getElementById("term")._fire("paste", {
+    target: terminal.textarea,
+    clipboardData: { files: [{ name, type: "image/png", size: 10 }], getData: () => "" },
+    preventDefault() {}, stopPropagation() {},
+  });
+  for (const scenario of ["focus", "restart", "switch", "stop", "disconnect", "reconnect"]) {
+    store.applyEvent(snapshot(true)); store.select("A"); store.setConnected(true);
+    await sleep(5); // Let session selection finish its scheduled terminal focus.
+    terminal.focus();
+    const originalSession = store.active();
+    ws.clear();
+    const name = scenario + ".png";
+    delayedPaste(name);
+    if (scenario === "focus") changedFocus.focus();
+    if (scenario === "restart") originalSession.pid = 2; // same object, new process
+    if (scenario === "switch") {
+      store.applyEvent({ ...snapshot(true), sessionId: "B", pid: 3 });
+      store.select("B");
+    }
+    if (scenario === "stop") originalSession.live = false;
+    if (scenario === "disconnect") store.setConnected(false);
+    if (scenario === "reconnect") { store.reset(); store.applyEvent(snapshot(true)); }
+    const focusBefore = document.activeElement;
+    pendingUploads.shift()();
+    await sleep(5);
+    ok("delayed paste after " + scenario + " leaves input and focus untouched",
+      !ws.last("input") && document.activeElement === focusBefore);
+    const notice = document.getElementById("toast-upload:A:" + name);
+    ok("delayed " + scenario + " upload reports the retained path without claiming insertion",
+      notice && notice.textContent.includes("Path not pasted") && notice.textContent.includes("/a/" + name));
+  }
+  store.applyEvent(snapshot(true)); store.select("A"); store.setConnected(true); document.body.focus();
+  ws.clear();
+  document.getElementById("term")._fire("paste", {
+    target: terminal.textarea,
+    clipboardData: { files: [{ name: "one.png" }, { name: "two.png" }], getData: () => "" },
+    preventDefault() {}, stopPropagation() {},
+  });
+  pendingUploads.shift()(); await sleep(5);
+  pendingUploads.shift()(); await sleep(5);
+  ok("multiple uploads retain the intended batch after the first paste focuses the terminal",
+    ws.sent.filter(m => m.type === "input").length === 2 && document.activeElement === terminal.textarea);
+  holdUploads = false;
 
   ws.clear();
   terminal.dataHandler("\r");
