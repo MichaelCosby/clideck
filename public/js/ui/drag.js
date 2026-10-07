@@ -197,6 +197,9 @@ function updateGroupDropTarget(y) {
 function endDrag() {
   const target = ds.dropTarget;
   suppressClick = true;
+  // The click that follows this release is dispatched in the same task; if the release landed on a different
+  // element, no click reaches the handlers, so clear the flag rather than swallowing the user's next click.
+  setTimeout(() => { suppressClick = false; }, 0);
   cleanup();
   if (!target) return;
   if (ds.mode === "session") {
