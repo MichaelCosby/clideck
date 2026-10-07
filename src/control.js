@@ -7,6 +7,8 @@ const MAX_SESSION_ID = 200;
 const CONTROL_TYPES = new Set([
   'engine.update.check',
   'engine.update.install',
+  'engine.restart',
+  'engine.restart.cancel',
   'ping',
   'session.create',
   'prompt',
@@ -73,6 +75,8 @@ function hasValidControlFields(message) {
   if (message.type === 'engine.update.check' || message.type === 'engine.update.install') {
     return Object.keys(message).length === 1;
   }
+  if (message.type === 'engine.restart') return typeof message.whenIdle === 'boolean';
+  if (message.type === 'engine.restart.cancel') return true;
   if (message.type === 'ping') return true;
   if (message.type === 'config.get') return hasValidRequestId(message);
   if (message.type === 'checkAvailability') return true;

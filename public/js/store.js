@@ -46,6 +46,7 @@ const transcripts = new Map();   // sessionId -> lowercased, tail-capped convers
 let order = 0;
 let activeId = null;
 let engineUpdate = null;
+let engineRestart = null;   // {state:'idle'|'waiting'|'restarting', busy:[names], canRestart}
 let pendingLocalCreate = false;     // one-shot: this client just asked to create a session (ws.createSession armed it).
                                     // The next brand-new LIVE session.created adopts selection+focus. Cleared on reset()
                                     // so a reconnect/replay burst can never consume it, and on a create-error snapshot.
@@ -166,6 +167,7 @@ function applyEvent(ev) {
   if (!ev || !ev.type) return;
   switch (ev.type) {                                  // session-less broadcasts (no sessionId)
     case "engine.update": engineUpdate = { ...ev }; emit("engine.update", engineUpdate); return;
+    case "engine.restart": engineRestart = { ...ev }; emit("engine.restart", engineRestart); return;
     case "config": {
       const c = ev.config || {};
       notifyPrefs = c.notify || {};
@@ -349,7 +351,7 @@ function isNameTaken(scope, name, exceptId) {
 function unreadCount() { let n = 0; for (const s of sessions.values()) if (s.unread > 0) n++; return n; }
 
 function reset() {
-  engineUpdate = null;
+  engineUpdate = null; engineRestart = null;
   sessions.clear(); transcripts.clear(); pluginsList = []; pluginsSeen = false; activeId = null; pendingLocalCreate = false;
   emit("plugins", pluginsList); emit("reset"); emit("chrome");
 }
@@ -362,6 +364,7 @@ export const store = {
   get activeId() { return activeId; },
   get connected() { return connected; },
   get engineUpdate() { return engineUpdate; },
+  get engineRestart() { return engineRestart; },
   get filter() { return filter; },
   get search() { return search; },
   active() { return activeId != null ? sessions.get(activeId) : null; },

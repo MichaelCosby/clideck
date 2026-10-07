@@ -36,7 +36,8 @@ const {
 } = require('./prompt-coordinator');
 const { getProvider, listProviders } = require('./providers');
 const { isAllowedWebSocketOrigin, isLoopbackAddress, isLoopbackHost, isWildcardHost } = require('./security');
-const { listSessionAgents, resolveLiveCaller } = require('./session-agents');
+const { isSessionWorking, listSessionAgents, resolveLiveCaller } = require('./session-agents');
+const { RestartCoordinator, reexec, takeResumeList } = require('./restart');
 const { servePluginStatic, serveStatic } = require('./static');
 const { ServerLock } = require('./server-lock');
 const { alreadyRunningLine, nonLoopbackWarning, startupBanner, notifyUpdate } = require('./startup');
@@ -147,6 +148,14 @@ class HeadlessServer {
     }
     this.clients = new Set();
     this.updates = options.updates || null;
+    this.restart = new RestartCoordinator({
+      server: this,
+      dataDir: this.persistence.dataDir,
+      // An agent waiting on the user counts as busy: restarting would drop the question it is asking.
+      isBusy: (session) => isSessionWorking(session, this.askCoordinator),
+      exec: options.restartExec ?? null,
+      onChange: (event) => this.broadcast(event),
+    });
     this.pluginManager = options.pluginManager || new PluginManager({
       dataDir: this.persistence.dataDir,
       configStore: this.configStore,
@@ -1060,6 +1069,7 @@ class HeadlessServer {
     socket.send(JSON.stringify({ type: 'plugins', plugins: this.pluginManager.snapshot() }));
     socket.send(JSON.stringify({ type: 'transcript.cache', cache: this.transcriptStore.getCache() }));
     if (this.updates) socket.send(JSON.stringify(this.updates.snapshot()));
+    if (this.restart.exec) socket.send(JSON.stringify(this.restart.snapshot()));   // only engines that can restart in place
 
     socket.on('message', (raw) => {
       if (this.closing) return;
@@ -1106,6 +1116,14 @@ class HeadlessServer {
     if (message.type === 'engine.update.check' || message.type === 'engine.update.install') {
       const action = message.type === 'engine.update.check' ? 'check' : 'install';
       this.updates?.[action]().then(result => this.sendControlResult(socket, result)).catch(() => {});
+      return;
+    }
+    if (message.type === 'engine.restart') {
+      this.sendControlResult(socket, this.restart.request({ whenIdle: message.whenIdle === true }));
+      return;
+    }
+    if (message.type === 'engine.restart.cancel') {
+      this.sendControlResult(socket, this.restart.cancel());
       return;
     }
     if (message.type === 'session.create') {
@@ -2035,6 +2053,18 @@ function installShutdownHandlers(server, runtime = process) {
   return shutdown;
 }
 
+// Sessions that were running when the engine restarted itself come back on their own, a little apart.
+function resumeAfterRestart(server, gapMs = 400) {
+  const ids = takeResumeList(server.persistence.dataDir).filter((id) => server.persistence.has(id));
+  if (!ids.length) return [];
+  console.log(`Restarted. Resuming ${ids.length} session${ids.length === 1 ? '' : 's'}.`);
+  ids.forEach((id, index) => {
+    const timer = setTimeout(() => { if (!server.closing) server.resumeSession(id); }, index * gapMs);
+    timer.unref?.();
+  });
+  return ids;
+}
+
 async function main(argv = process.argv.slice(2), env = process.env) {
   const options = parseArgs(argv, env);
   const host = options.host || '127.0.0.1';
@@ -2058,7 +2088,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
       const migrated = require('./legacy-migration').migrateLegacy({ dataDir: options.dataDir || DEFAULT_DATA_DIR });
       if (migrated) console.log(`Imported ${migrated.sessions} legacy CliDeck sessions. Resume them from the sidebar.`);
     }
-    server = new HeadlessServer({ ...options, serverLock: lock, freshInstall });
+    server = new HeadlessServer({ ...options, serverLock: lock, freshInstall, restartExec: reexec() });
     address = await server.listen();
   } catch (error) {
     server?.persistence.close();
@@ -2084,6 +2114,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     }
   } });
   void server.updates.check();
+  resumeAfterRestart(server);
   return { server, address, lock };
 }
 
@@ -2097,6 +2128,7 @@ if (require.main === module) {
 module.exports = {
   HeadlessServer,
   createShutdown,
+  resumeAfterRestart,
   installShutdownHandlers,
   main,
   parseArgs,

@@ -47,7 +47,7 @@ const genId = () => "c" + Date.now().toString(36) + Math.random().toString(36).s
 export function openSettings() {
   if (overlay) { close(); return; }
   build();
-  offs.push(store.on("engine.update", renderFooter), store.on("connection", renderFooter));
+  offs.push(store.on("engine.update", renderFooter), store.on("engine.restart", renderFooter), store.on("connection", renderFooter));
   offs.push(store.on("availability", () => { if (cat === "agents") renderBody(); }));
   offs.push(store.on("plugins", () => {
     if (cat !== "plugins") return;
