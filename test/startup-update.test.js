@@ -11,7 +11,7 @@ test('startup notice uses package versions and installed/source-specific instruc
     });
     assert.equal(messages.length, 1);
     assert.match(messages[0], /2\.1\.1 → 2\.3\.1/);
-    assert.match(messages[0], sourceCheckout ? /Update your source checkout/ : /npm install -g clideck/);
+    assert.match(messages[0], sourceCheckout ? /Update from Settings → General \(or pull your checkout\)/ : /npm install -g clideck/);
     assert.match(messages[0], /restart CliDeck/);
   }
 });

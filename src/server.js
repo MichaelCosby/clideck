@@ -2072,7 +2072,9 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   installShutdownHandlers(server);
   const { Updates } = require('./updates');
   let notifiedVersion = '';
-  server.updates = new Updates({ onChange: event => {
+  // A git checkout updates from the branch it tracks (a fork's own branch), not from npm.
+  const gitUpdates = existsSync(require('path').join(__dirname, '../.git')) ? require('./update-git').createGitUpdates() : null;
+  server.updates = new Updates({ ...(gitUpdates && { check: gitUpdates.check, installer: gitUpdates.installer }), onChange: event => {
     server.broadcast(event);
     if (event.state === 'available' && event.latestVersion !== notifiedVersion) {
       notifiedVersion = event.latestVersion;

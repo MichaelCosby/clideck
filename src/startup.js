@@ -42,7 +42,7 @@ async function notifyUpdate({ currentVersion, output = process.stdout, sourceChe
   try {
     const latest = await check({ currentVersion });
     if (!latest) return;
-    const instruction = sourceCheckout ? 'Update your source checkout, then restart CliDeck.'
+    const instruction = sourceCheckout ? 'Update from Settings → General (or pull your checkout), then restart CliDeck.'
       : 'Run npm install -g clideck, then restart CliDeck.';
     output.write(`\nCliDeck update available: ${currentVersion} → ${latest}. ${instruction}\n`);
   } catch {} // Optional notice; offline startup still works.
