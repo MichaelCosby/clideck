@@ -181,6 +181,9 @@ class HeadlessServer {
     this.webSocketServer = new WebSocketServer({
       server: this.httpServer,
       maxPayload: MAX_CONTROL_BYTES,
+      // Terminal output compresses ~8x; history replays dominate reload time over a remote link.
+      // Small frames (keystroke echoes) skip compression to keep typing latency flat.
+      perMessageDeflate: { threshold: 1024, zlibDeflateOptions: { level: 3 } },
       verifyClient: ({ origin, req }) => (
         isAllowedWebSocketOrigin(origin, req.headers.host, this.host)
       ),
