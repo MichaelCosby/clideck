@@ -10,11 +10,13 @@ const {
 const { homedir } = require('os');
 const { isAbsolute, join } = require('path');
 const { ensurePrivateDataDir } = require('./private-data-dir');
+const { SEQUENCE_OVERHANG, modePreamble, normalizeModes, scanModes } = require('./terminal-modes');
 
 const DEFAULT_DATA_DIR = join(homedir(), '.clideck-next');
 const DEFAULT_HISTORY_LIMIT = 2 * 1024 * 1024;
 const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
 const MAX_SESSION_ASSETS = 20;
+const MAX_TURN_MARKS = 256;
 
 function validDimension(value, fallback) {
   const number = Number(value);
@@ -104,43 +106,94 @@ function writeRegistry(path, text) {
   renameSync(temporary, path);
 }
 
+// The last `limit` bytes of a session's output, plus where each user prompt began (turn marks, as absolute
+// byte offsets into everything ever appended) and the terminal modes in force where the kept bytes begin.
 class ByteTail {
-  constructor(limit, initial = Buffer.alloc(0)) {
+  constructor(limit, initial = Buffer.alloc(0), meta = null) {
     this.limit = limit;
     this.chunks = [];
     this.length = 0;
+    this.total = 0;
+    this.marks = [];
+    this.baseModes = {};
     this.append(initial);
+    // Saved marks only describe this exact buffer; after a crash between the two writes, start without them.
+    if (meta && meta.length === this.length && Number.isSafeInteger(meta.total) && meta.total >= this.length) {
+      this.total = meta.total;
+      this.baseModes = normalizeModes(meta.modes);
+      this.marks = (Array.isArray(meta.marks) ? meta.marks : [])
+        .filter((mark) => Number.isSafeInteger(mark) && mark >= this.start && mark <= this.total).slice(-MAX_TURN_MARKS);
+    }
+  }
+
+  get start() {
+    return this.total - this.length;
   }
 
   append(value) {
     let buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value || ''));
     if (!buffer.length) return;
+    this.total += buffer.length;
     if (buffer.length >= this.limit) {
+      const dropped = [...this.chunks, buffer.subarray(0, buffer.length - this.limit)];
       this.chunks = [Buffer.from(buffer.subarray(buffer.length - this.limit))];
       this.length = this.limit;
+      this.dropped(dropped);
       return;
     }
     this.chunks.push(buffer);
     this.length += buffer.length;
+    const dropped = [];
     while (this.chunks.length > 1 && this.length - this.chunks[0].length >= this.limit) {
-      this.length -= this.chunks.shift().length;
+      const chunk = this.chunks.shift();
+      this.length -= chunk.length;
+      dropped.push(chunk);
     }
     if (this.length > this.limit) {
       const overflow = this.length - this.limit;
+      dropped.push(this.chunks[0].subarray(0, overflow));
       this.chunks[0] = Buffer.from(this.chunks[0].subarray(overflow));
       this.length = this.limit;
     }
+    if (dropped.length) this.dropped(dropped);
+  }
+
+  // Carry the mode changes in trimmed bytes forward, so a replay of what is left can restore them.
+  dropped(parts) {
+    const removed = Buffer.concat(parts);
+    const overhang = this.chunks[0].subarray(0, SEQUENCE_OVERHANG);
+    this.baseModes = scanModes(this.baseModes, Buffer.concat([removed, overhang]).toString('latin1'), removed.length);
+    const start = this.start;
+    if (this.marks.length && this.marks[0] < start) this.marks = this.marks.filter((mark) => mark >= start);
+  }
+
+  mark(offset) {
+    const last = this.marks.length ? this.marks[this.marks.length - 1] : this.start;
+    const at = Math.min(this.total, Math.max(this.start, last, offset));
+    if (this.marks.length && at === last) return;
+    this.marks.push(at);
+    if (this.marks.length > MAX_TURN_MARKS) this.marks.shift();
   }
 
   buffer() {
     return Buffer.concat(this.chunks, this.length);
   }
 
-  toString() {
+  // Terminal modes in force `offset` bytes into the kept buffer.
+  modesAt(offset) {
+    if (offset <= 0) return this.baseModes;
+    return scanModes(this.baseModes, this.buffer().subarray(0, offset + SEQUENCE_OVERHANG).toString('latin1'), offset);
+  }
+
+  toString(offset = 0) {
     const buffer = this.buffer();
-    let start = 0;
+    let start = Math.max(0, Math.min(offset, buffer.length));
     while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start += 1;
     return buffer.subarray(start).toString('utf8');
+  }
+
+  meta() {
+    return { length: this.length, total: this.total, marks: this.marks, modes: this.baseModes };
   }
 }
 
@@ -206,6 +259,15 @@ class SessionPersistence {
     return join(this.historyDir, `${id}.raw`);
   }
 
+  historyMetaPath(id) {
+    const path = this.historyPath(id);
+    return path && path.replace(/\.raw$/, '.marks.json');
+  }
+
+  removeHistoryFiles(id) {
+    for (const path of [this.historyPath(id), this.historyMetaPath(id)]) if (path) rmSync(path, { force: true });
+  }
+
   saveRegistry() {
     if (this.closed) return;
     clearTimeout(this.registryTimer);
@@ -261,8 +323,7 @@ class SessionPersistence {
     };
     this.entries.set(entry.id, entry);
     this.history.set(entry.id, new ByteTail(this.historyLimit));
-    const path = this.historyPath(entry.id);
-    if (path) rmSync(path, { force: true });
+    this.removeHistoryFiles(entry.id);
     this.saveRegistry();
     return { ...entry };
   }
@@ -318,16 +379,48 @@ class SessionPersistence {
     if (this.history.has(key)) return this.history.get(key);
     const path = this.historyPath(key);
     let buffer = Buffer.alloc(0);
+    let meta = null;
     try {
       if (path && existsSync(path)) buffer = readFileSync(path);
     } catch {}
-    const tail = new ByteTail(this.historyLimit, buffer);
+    try {
+      const metaPath = this.historyMetaPath(key);
+      if (buffer.length && metaPath && existsSync(metaPath)) meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+    } catch {}
+    const tail = new ByteTail(this.historyLimit, buffer, meta);
     this.history.set(key, tail);
     return tail;
   }
 
+  // Everything kept; once older output has been trimmed, led by the terminal modes the trimmed part set.
   historyTail(id) {
-    return this.readHistory(id).toString();
+    const tail = this.readHistory(id);
+    return `${tail.start > 0 ? modePreamble(tail.baseModes) : ''}${tail.toString()}`;
+  }
+
+  // The output from the `prompts`-th last user prompt on, so opening a session can show the end first.
+  // partial: older output exists that this window leaves out.
+  historyWindow(id, prompts) {
+    const tail = this.readHistory(id);
+    const count = Number(prompts);
+    if (!Number.isInteger(count) || count < 1 || tail.marks.length < count) {
+      return { data: this.historyTail(id), partial: false };
+    }
+    const offset = tail.marks[tail.marks.length - count] - tail.start;
+    const modes = offset > 0 ? tail.modesAt(offset) : null;
+    // A full-screen app (alternate screen) only patches what changed, so a replay from the middle paints
+    // fragments on a blank screen; send everything instead.
+    if (!modes || modes[1049]) return { data: this.historyTail(id), partial: false };
+    return { data: `\x1b[0m${modePreamble(modes)}${tail.toString(offset)}`, partial: true };
+  }
+
+  // A user prompt began `back` bytes before the end of the output recorded so far.
+  markTurn(id, back = 0) {
+    if (this.closed || !this.entries.has(String(id))) return;
+    const key = String(id);
+    const tail = this.readHistory(key);
+    tail.mark(tail.total - Math.max(0, Number(back) || 0));
+    this.scheduleHistoryFlush(key);
   }
 
   appendHistory(id, data) {
@@ -335,6 +428,10 @@ class SessionPersistence {
     const key = String(id);
     this.readHistory(key).append(data);
     this.touch(key);
+    this.scheduleHistoryFlush(key);
+  }
+
+  scheduleHistoryFlush(key) {
     clearTimeout(this.historyTimers.get(key));
     const timer = setTimeout(() => this.flushHistory(key), this.debounceMs);
     timer.unref?.();
@@ -352,6 +449,9 @@ class SessionPersistence {
     const temporary = `${path}.${process.pid}.tmp`;
     writeFileSync(temporary, history.buffer());
     renameSync(temporary, path);
+    const metaPath = this.historyMetaPath(key);
+    writeFileSync(temporary, JSON.stringify(history.meta()));
+    renameSync(temporary, metaPath);
   }
 
   markClosed(session) {
@@ -370,8 +470,7 @@ class SessionPersistence {
     clearTimeout(this.historyTimers.get(key));
     this.historyTimers.delete(key);
     this.history.delete(key);
-    const path = this.historyPath(key);
-    if (path) rmSync(path, { force: true });
+    this.removeHistoryFiles(key);
     this.saveRegistry();
     return true;
   }

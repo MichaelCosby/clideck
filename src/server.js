@@ -587,7 +587,10 @@ class HeadlessServer {
       if (event.type === 'session.closed' && event.restarting) return;
       let outbound = event;
       if (event.type === 'output') this.persistence.appendHistory(session.id, event.data);
-      else if (event.type === 'turn.user') this.storeTranscriptEntry(session.id, 'user', event.text);
+      else if (event.type === 'turn.user') {
+        this.persistence.markTurn(session.id, session.turnOutputBack?.() || 0);
+        this.storeTranscriptEntry(session.id, 'user', event.text);
+      }
       else if (event.type === 'agent.final') {
         this.persistence.recordFinal(session.id, event.text, event.at);
         this.storeTranscriptEntry(session.id, 'agent', event.text, event.at);
@@ -1253,14 +1256,16 @@ class HeadlessServer {
     }
     // Read synchronously: every output event already sent on this socket is in this history, and every
     // later one is not, so the browser can replace its buffer with the reply and append what follows.
+    // prompts: start that many user prompts back (partial: true when older output was left out).
     if (message.type === 'session.history') {
       const known = this.persistence.has(message.sessionId);
+      const history = known ? this.persistence.historyWindow(message.sessionId, message.prompts) : { data: '', partial: false };
       this.sendControlResult(socket, {
         type: 'session.history.result',
         requestId: message.requestId,
         sessionId: message.sessionId,
-        data: known ? this.persistence.historyTail(message.sessionId) : '',
-        partial: false,
+        data: history.data,
+        partial: history.partial,
       });
       return;
     }

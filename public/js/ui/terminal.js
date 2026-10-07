@@ -189,8 +189,15 @@ export function initTerminal() {
     const s = store.sessions.get(id);
     if (id !== store.activeId || !s) return;
     showHistoryLoading(false);
+    // Loading earlier output keeps the line you were reading where it was, with the older lines above it.
+    const anchor = earlierAnchor && earlierAnchor.id === id ? earlierAnchor.fromBottom : null;
+    earlierAnchor = null;
     term.reset();
-    if (s.outputBuf) writeTerminal(s.outputBuf, true, () => { updateScrollBtn(); probeVisiblePaths(); });
+    if (s.outputBuf) writeTerminal(s.outputBuf, true, () => {
+      // xterm ignores a scroll issued straight after a reset and rewrite; one frame later it sticks.
+      if (anchor !== null) requestAnimationFrame(() => { term.scrollToLine(Math.max(0, term.buffer.active.baseY - anchor)); updateScrollBtn(); });
+      updateScrollBtn(); probeVisiblePaths();
+    });
     requestAnimationFrame(() => { fit(true); updateScrollBtn(); });
   });   // callback fires post-parse, so baseY is current
   store.on("session:update", (id) => { if (id === store.activeId) updateHeader(); });
@@ -243,6 +250,12 @@ function showHistoryLoading(on) {
   if (historyLoadingEl) historyLoadingEl.hidden = !on;
 }
 
+// Starting a replay mid-stream is verified for Claude Code only; other agents (Codex draws with scroll
+// regions) still get all saved output.
+function historyPromptsFor(s) {
+  return s.provider === "claude-code" && store.historyPrompts > 0 ? store.historyPrompts : undefined;
+}
+
 function focusSession(id) {
   showHistoryLoading(false);
   closePromptDropdown();                        // a session switch cancels any open // dropdown
@@ -261,7 +274,7 @@ function focusSession(id) {
   sentDims.delete(id);
   if (s.historyState === "none" || s.historyState === "loading") {
     // Fetched on first open; until it arrives, live output for this session is held in its buffer, not drawn.
-    if (s.historyState === "none") { s.historyState = "loading"; s.historyRequest = requestHistory(s.id); }
+    if (s.historyState === "none") { s.historyState = "loading"; s.historyRequest = requestHistory(s.id, historyPromptsFor(s)); }
     showHistoryLoading(true);
   } else if (s.outputBuf) writeTerminal(s.outputBuf, true);   // a focus rewrite is replay even when its buffer contains once-live output
   requestAnimationFrame(() => { fit(true); if (!renaming) term.focus(); updateScrollBtn(); probeVisiblePaths(); });   // don't steal focus from an inline rename
@@ -271,9 +284,38 @@ function focusSession(id) {
 // scroll-to-latest arrow: visible only when the viewport is off the live tail.
 function updateScrollBtn() {
   if (!term || !scrollBtn) return;
-  let atBottom = true;
-  try { const b = term.buffer.active; atBottom = b.viewportY >= b.baseY; } catch {}
+  let atBottom = true, atTop = false;
+  try { const b = term.buffer.active; atBottom = b.viewportY >= b.baseY; atTop = b.viewportY <= 0; } catch {}
   scrollBtn.classList.toggle("show", !atBottom);
+  updateEarlierBtn(atTop);
+}
+
+// A session opened a few prompts back offers the rest of its saved output once you scroll to the top.
+let earlierBtn = null, earlierAnchor = null;
+function updateEarlierBtn(atTop) {
+  const s = store.active();
+  const offer = !!s && s.historyState === "partial" && atTop;
+  if (!offer) { if (earlierBtn) earlierBtn.hidden = true; return; }
+  if (!earlierBtn) {
+    earlierBtn = document.createElement("button");
+    earlierBtn.type = "button";
+    earlierBtn.className = "term-history-earlier";
+    earlierBtn.onclick = loadEarlierOutput;
+    (scrollBtn.parentElement || mount).appendChild(earlierBtn);
+  }
+  const loading = !!s.historyRequest;
+  earlierBtn.textContent = loading ? "Loading earlier output…" : "Load earlier output";
+  earlierBtn.disabled = loading;
+  earlierBtn.hidden = false;
+}
+
+function loadEarlierOutput() {
+  const s = store.active();
+  if (!s || s.historyState !== "partial" || s.historyRequest) return;
+  const b = term.buffer.active;
+  earlierAnchor = { id: s.id, fromBottom: b.baseY - b.viewportY };
+  s.historyRequest = requestHistory(s.id);
+  updateScrollBtn();
 }
 
 // copy the session's ask address = exactly what /ask resolves: @Project/name in a project, else name||id.

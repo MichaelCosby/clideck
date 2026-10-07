@@ -193,7 +193,22 @@ class AgentSession extends EventEmitter {
     if (!this.outputBuffer) return;
     const data = this.outputBuffer;
     this.outputBuffer = '';
+    this.outputBytes = (this.outputBytes || 0) + Buffer.byteLength(data);
     this.emit('event', { type: 'output', sessionId: this.id, data });
+  }
+
+  // Remember where in the output a prompt is being submitted, so its turn mark lands before the echo.
+  noteTurnStart() {
+    this.flushOutput();
+    this.turnStartBytes = this.outputBytes || 0;
+  }
+
+  // Output bytes emitted since the current prompt was submitted (0 when unknown); read when turn.user fires.
+  turnOutputBack() {
+    if (!Number.isFinite(this.turnStartBytes)) return 0;
+    const back = (this.outputBytes || 0) - this.turnStartBytes;
+    this.turnStartBytes = undefined;
+    return Math.max(0, back);
   }
 
   flushScreen() {
@@ -505,6 +520,7 @@ class AgentSession extends EventEmitter {
       this.pendingPromptEchoes.push(prompt);
       if (this.pendingPromptEchoes.length > 32) this.pendingPromptEchoes.shift();
     }
+    this.noteTurnStart();
     this.emitProtocol('turn.user', { text: prompt });
     this.terminal.write(`${BRACKETED_PASTE_START}${prompt}${BRACKETED_PASTE_END}`);
     const delay = this.promptSubmitDelay(prompt.length);
@@ -544,6 +560,7 @@ class AgentSession extends EventEmitter {
       this.beginTurn();
       this.setStatus('working');
     }
+    if (!this.menu.length && /[\r\n]$/.test(input)) this.noteTurnStart();
     this.terminal.write(input);
     if (this.status === 'working' && input === this.provider.interruptInput) {
       this.cancelTurn();

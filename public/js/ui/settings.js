@@ -187,6 +187,7 @@ function renderGeneral() {
 
   const beh = section("Behavior", "behavior");
   beh.append(toggleRow("Confirm before closing a session", "When off, Delete closes immediately — no confirm step.", store.confirmClose !== false, (on) => updateConfig({ confirmClose: on })));
+  beh.append(historyPromptsRow());
   const paste = toggleRow("Paste with Ctrl+V", "In terminals on this browser. Off keeps the terminal’s normal Ctrl+V behavior.", ctrlVPasteEnabled(), (on) => {
     try { localStorage.setItem("clideck.ctrlVPaste", String(on)); }
     catch {
@@ -450,6 +451,25 @@ function providerArgsPanel() {
   const paint = () => { body.hidden = !providerArgsOpen; button.classList.toggle("open", providerArgsOpen); button.setAttribute("aria-expanded", String(providerArgsOpen)); };
   button.addEventListener("click", () => { providerArgsOpen = !providerArgsOpen; paint(); });
   shell.append(button, body); paint(); return shell;
+}
+
+const HISTORY_PROMPT_OPTS = [1, 2, 3, 5, 10, 20];
+function historyPromptsRow() {
+  const r = h("div", "set-row");
+  const lbl = h("div", "set-row-lbl");
+  lbl.append(h("div", "set-row-t", "Open sessions at"),
+    h("div", "set-row-s", "How far back a Claude Code session's terminal starts when you open it. Older output loads from the top of the terminal when you want it. Other agents open with all saved output."));
+  const sel = h("select", "set-select");
+  sel.id = "history-prompts";
+  sel.setAttribute("aria-label", "Open sessions at");
+  const current = store.historyPrompts;
+  const values = HISTORY_PROMPT_OPTS.includes(current) || current === 0 ? HISTORY_PROMPT_OPTS : [...HISTORY_PROMPT_OPTS, current].sort((a, b) => a - b);
+  for (const n of values) { const op = h("option"); op.value = String(n); op.textContent = n === 1 ? "Last prompt" : `Last ${n} prompts`; sel.appendChild(op); }
+  const all = h("option"); all.value = "0"; all.textContent = "All saved output"; sel.appendChild(all);
+  sel.value = String(current);
+  sel.addEventListener("change", () => { const n = Number(sel.value); store.setHistoryPrompts(n); updateConfig({ historyPrompts: n }); });
+  r.append(lbl, sel);
+  return r;
 }
 
 const GUIDANCE_OPTS = [

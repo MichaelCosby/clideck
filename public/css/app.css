@@ -1728,3 +1728,7 @@ h5.md-h { margin:1.9em 0 .45em; font-size:.94em; font-weight:650; color:var(--di
 
 /* lazy history: shown over the terminal while a session's history is on its way */
 .term-history-loading { position:absolute; top:12px; left:16px; z-index:3; font:12px var(--sans); color:var(--dim); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:5px 10px; pointer-events:none; }
+/* opened a few prompts back: the rest of the saved output, offered at the top of the terminal */
+.term-history-earlier { position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:20; font:12px var(--sans); color:var(--text); background:var(--surface-2); border:1px solid var(--border-strong); border-radius:999px; padding:6px 14px; box-shadow:0 6px 20px var(--shadow); cursor:pointer; }
+.term-history-earlier:hover:not(:disabled) { background:var(--surface-3); }
+.term-history-earlier:disabled { color:var(--dim); cursor:default; }

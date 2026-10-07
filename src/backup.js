@@ -6,7 +6,7 @@ const MAX_BACKUP_BYTES = 8 * 1024 * 1024;
 const SECTIONS = {
   about: ['About me', ['about']],
   defaults: ['Defaults', ['defaultCwd']],
-  behavior: ['Behavior', ['confirmClose']],
+  behavior: ['Behavior', ['confirmClose', 'historyPrompts']],
   agents: ['CLI Agents', ['commands', 'providerArgs', 'hiddenProviders', 'copyOnSelectProviders', 'agentGuidance']],
   plugins: ['Plugins', ['plugins']],
   notifications: ['Notifications', ['notify']],
@@ -15,7 +15,7 @@ const SECTIONS = {
   onboarding: ['Getting started', ['onboarding']],
 };
 const DEFAULTS = {
-  about: {}, defaultCwd: '', confirmClose: true, commands: [], providerArgs: {},
+  about: {}, defaultCwd: '', confirmClose: true, historyPrompts: 3, commands: [], providerArgs: {},
   hiddenProviders: [], copyOnSelectProviders: [], agentGuidance: 'minimal', plugins: {}, notify: {}, theme: {}, customThemes: [],
   prompts: [], promptMru: {}, onboarding: {},
 };

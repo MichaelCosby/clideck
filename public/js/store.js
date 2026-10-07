@@ -71,6 +71,7 @@ let projectGroups = [];             // config.projectGroups [{id,name,collapsed}
 let pluginSources = {};             // config.pluginSources {pluginId: GitHub source} — plugins installed from GitHub
 let pinnedSessions = [];            // config.pinnedSessions [sessionId] — pinned rows, in pin order
 let agentGuidance = "minimal";      // config.agentGuidance full|minimal|off — CliDeck instructions given to new agents
+let historyPrompts = 3;            // config.historyPrompts — open a session this many prompts back (0 = all kept output)
 let confirmClose = true;            // config.confirmClose — gate the session-delete confirm (Settings General)
 let defaultCwd = "";                // config.defaultCwd — default working dir for new sessions
 let about = {};                     // config.about {name,timeZone,notes} — the About me profile (Settings ▸ General).
@@ -188,6 +189,7 @@ function applyEvent(ev) {
       agentGuidance = ["full", "minimal", "off"].includes(c.agentGuidance) ? c.agentGuidance : "minimal";
       pluginSources = (c.pluginSources && typeof c.pluginSources === "object" && !Array.isArray(c.pluginSources)) ? { ...c.pluginSources } : {};
       pinnedSessions = Array.isArray(c.pinnedSessions) ? c.pinnedSessions.filter((id) => typeof id === "string" && id) : [];
+      historyPrompts = Number.isInteger(c.historyPrompts) && c.historyPrompts >= 0 && c.historyPrompts <= 20 ? c.historyPrompts : 3;
       confirmClose = c.confirmClose !== false;                          // default ON; false → delete skips the confirm
       defaultCwd = typeof c.defaultCwd === "string" ? c.defaultCwd : "";
       about = (c.about && typeof c.about === "object" && !Array.isArray(c.about)) ? { ...c.about } : {};
@@ -430,6 +432,8 @@ export const store = {
   setPinnedSessions(ids) { pinnedSessions = ids.slice(); emit("config"); },
   setAgentGuidance(level) { agentGuidance = level; emit("config"); },
   setCopyOnSelectProviders(arr) { copyOnSelectProviders = Array.isArray(arr) ? [...new Set(arr.filter((id) => typeof id === "string" && id))] : []; emit("config"); },
+  get historyPrompts() { return historyPrompts; },
+  setHistoryPrompts(n) { historyPrompts = n; emit("config"); },
   get confirmClose() { return confirmClose; },
   get defaultCwd() { return defaultCwd; },
   // About me (config.about) + onboarding state (config.onboarding). Optimistic writes emit "config" so the

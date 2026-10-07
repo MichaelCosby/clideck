@@ -200,6 +200,8 @@ function isValidConfigPatch(value) {
     return false;
   }
   if (value.agentGuidance !== undefined && !AGENT_GUIDANCE_LEVELS.includes(value.agentGuidance)) return false;
+  if (value.historyPrompts !== undefined
+    && (!Number.isInteger(value.historyPrompts) || value.historyPrompts < 0 || value.historyPrompts > 20)) return false;
   if (value.about !== undefined && !isValidProfile(value.about)) return false;
   if (value.onboarding !== undefined && !isValidOnboarding(value.onboarding)) return false;
   return true;
