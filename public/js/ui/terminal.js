@@ -4,7 +4,7 @@
 // No composer — the terminal IS the input surface.
 import { store } from "../store.js";
 import { installScrollbackPreservation } from "../terminal-scrollback.js";
-import { send, renameSession, openContentPath } from "../ws.js";
+import { send, renameSession, openContentPath, requestHistory } from "../ws.js";
 import { sessionFace } from "../providers-ui.js";
 import { esc, shortId, debounce, copyText, inlineRename, askAddress, SESSION_NAME_MAX, limitSessionName } from "../util.js";
 import { onTheme } from "../theme.js";
@@ -179,7 +179,20 @@ export function initTerminal() {
   ro.observe(mount);
 
   store.on("active", (id) => focusSession(id));
-  store.on("session:output", (id, data, replay) => { if (id === store.activeId) writeTerminal(data, replay, () => { updateScrollBtn(); probeVisiblePaths(); }); });   // callback fires post-parse, so baseY is current
+  store.on("session:output", (id, data, replay) => {
+    const s = store.sessions.get(id);
+    if (id !== store.activeId || (s && s.historyState === "loading")) return;   // a pending history reply will include it
+    showHistoryLoading(false);
+    writeTerminal(data, replay, () => { updateScrollBtn(); probeVisiblePaths(); });
+  });
+  store.on("session:history", (id) => {
+    const s = store.sessions.get(id);
+    if (id !== store.activeId || !s) return;
+    showHistoryLoading(false);
+    term.reset();
+    if (s.outputBuf) writeTerminal(s.outputBuf, true, () => { updateScrollBtn(); probeVisiblePaths(); });
+    requestAnimationFrame(() => { fit(true); updateScrollBtn(); });
+  });   // callback fires post-parse, so baseY is current
   store.on("session:update", (id) => { if (id === store.activeId) updateHeader(); });
   store.on("connection", () => { updateHeader(); updateEmpty(); });   // connect lands AFTER reset paints "offline"; with no sessions nothing else ever repaints it
   store.on("chrome", updateEmpty);
@@ -216,7 +229,22 @@ function copyOnSelectEnabled(s) {
   return store.copyOnSelectProviders.includes(s.provider);
 }
 
+// A small overlay rather than text in the terminal, so it never lands in the session's scrollback.
+let historyLoadingEl = null;
+function showHistoryLoading(on) {
+  if (!mount) return;
+  if (on && !historyLoadingEl) {
+    historyLoadingEl = document.createElement("div");
+    historyLoadingEl.className = "term-history-loading";
+    historyLoadingEl.setAttribute("role", "status");
+    historyLoadingEl.textContent = "Loading session history…";
+    mount.appendChild(historyLoadingEl);
+  }
+  if (historyLoadingEl) historyLoadingEl.hidden = !on;
+}
+
 function focusSession(id) {
+  showHistoryLoading(false);
   closePromptDropdown();                        // a session switch cancels any open // dropdown
   applyActiveTheme();                           // re-colour to the newly-active session's theme
   const s = id != null ? store.sessions.get(id) : null;
@@ -231,7 +259,11 @@ function focusSession(id) {
   // re-assert; the engine dedupes against the pty's real size, so a re-assertion that changes nothing costs
   // nothing. Observer ticks after that still dedupe, which is the whole point of the cache.
   sentDims.delete(id);
-  if (s.outputBuf) writeTerminal(s.outputBuf, true);   // a focus rewrite is replay even when its buffer contains once-live output
+  if (s.historyState === "none" || s.historyState === "loading") {
+    // Fetched on first open; until it arrives, live output for this session is held in its buffer, not drawn.
+    if (s.historyState === "none") { s.historyState = "loading"; s.historyRequest = requestHistory(s.id); }
+    showHistoryLoading(true);
+  } else if (s.outputBuf) writeTerminal(s.outputBuf, true);   // a focus rewrite is replay even when its buffer contains once-live output
   requestAnimationFrame(() => { fit(true); if (!renaming) term.focus(); updateScrollBtn(); probeVisiblePaths(); });   // don't steal focus from an inline rename
 
 }

@@ -161,6 +161,13 @@ export function resolveContentPaths(sessionId, paths) { send({ type: "content.re
 
 export function requestConfig() { send({ type: "config.get" }); }   // engine replies {type:'config'}
 
+let historySeq = 0;
+// The engine replies requester-only {type:'session.history.result', requestId, sessionId, data, partial}.
+export function requestHistory(sessionId, prompts) {
+  const requestId = "h-" + Date.now().toString(36) + "-" + (++historySeq).toString(36);
+  send({ type: "session.history", sessionId, requestId, ...(Number.isInteger(prompts) && { prompts }) });
+  return requestId;
+}
 export function checkAvailability() { send({ type: "checkAvailability" }); }
 export function requestProcessInfo(sessionId) { send({ type: "session.procInfo", sessionId }); }   // engine replies requester-only session.procInfo.result   // engine replies requester-only {type:'availability.result'}
 
@@ -239,7 +246,8 @@ export function requestTranscriptPage(sessionId, before, limit = 30) {
 
 export function connectWs() {
   clearTimeout(retry);
-  try { ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`); }
+  // history=lazy: the engine sends no terminal history on connect; each session fetches its own when opened.
+  try { ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/?history=lazy`); }
   catch { scheduleReconnect(); return; }
 
   ws.onopen = () => {

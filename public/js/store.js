@@ -143,6 +143,8 @@ function makeSession(ev) {
     // no time, never "now" for a session that has been asleep for a week.
     lastActive: engineActive(ev),
     unread: 0, closed: false, lastActivity: engineActive(ev) || Date.now(), outputBuf: "",
+    // Terminal history arrives on demand (session.history): none → loading → partial | full.
+    historyState: "none", historyRequest: "",
     // derived needs-you / attention flag — computed in ONE place
     get attention() { return this.status === "idle" && this.menu.length > 0; },
   };
@@ -215,6 +217,14 @@ function applyEvent(ev) {
     case "dirs.list.result": emit("dirs:list", ev); return;                // requester-only {path,success,resolvedPath,entries}
     case "dirs.mkdir.result": emit("dirs:mkdir", ev); return;              // requester-only {parent,name,success,path}
     case "transcript.page.result": emit("transcript:page", ev); return;    // requester-only lazy history page
+    case "session.history.result": {                                       // requester-only terminal history
+      const s = sessions.get(ev.sessionId);
+      if (!s || !s.historyRequest || ev.requestId !== s.historyRequest) return;   // superseded or unknown
+      // The reply holds everything sent before it, so it replaces the buffer; later output appends as usual.
+      s.outputBuf = ""; appendBuf(s, String(ev.data || ""));
+      s.historyState = ev.partial ? "partial" : "full"; s.historyRequest = "";
+      emit("session:history", s.id); return;
+    }
     case "session.procInfo.result": emit("session:procInfo", ev); return;  // requester-only {sessionId,pid,rssKb,vszKb|error}
     case "transcript.cache": {                                             // on connect: {cache:{sessionId:text}} (50KB-capped, live + dormant)
       transcripts.clear();
@@ -315,7 +325,10 @@ function applyEvent(ev) {
       if (!active) s.unread += 1;                   // unread = final while unfocused
       emit("session:update", s.id); emit("chrome"); break;
     case "menu": s.menu = ev.choices || []; s.menuContext = ev.context || ""; emit("session:update", s.id); break;
-    case "output": appendBuf(s, ev.data); emit("session:output", s.id, ev.data, ev.replay === true); break;
+    case "output":
+      // An engine that pushes history on connect (not lazy) has delivered it: nothing to fetch on open.
+      if (ev.replay === true && (s.historyState === "none" || s.historyState === "loading")) { s.historyState = "full"; s.historyRequest = ""; }
+      appendBuf(s, ev.data); emit("session:output", s.id, ev.data, ev.replay === true); break;
     // turn.user is intentionally ignored — the terminal already echoes what you type.
   }
 }

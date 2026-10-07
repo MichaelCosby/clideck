@@ -30,6 +30,7 @@ const CONTROL_TYPES = new Set([
   'content.close',
   'content.resolve',
   'transcript.page',
+  'session.history',
   'config.get',
   'config.update',
   'checkAvailability',
@@ -135,6 +136,10 @@ function hasValidControlFields(message) {
       && (message.projectId === undefined || isProjectId(message.projectId));
   }
   if (!isString(message.sessionId, MAX_SESSION_ID)) return false;
+  if (message.type === 'session.history') {
+    return isString(message.requestId, 100)
+      && (message.prompts === undefined || (Number.isInteger(message.prompts) && message.prompts >= 0 && message.prompts <= 50));
+  }
   if (message.type === 'transcript.page') {
     return (message.before === undefined
       || (Number.isSafeInteger(message.before) && message.before >= 0))

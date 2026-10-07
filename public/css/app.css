@@ -1725,3 +1725,6 @@ h5.md-h { margin:1.9em 0 .45em; font-size:.94em; font-weight:650; color:var(--di
   .set-update { flex-direction:row; align-items:center; justify-content:space-between; gap:10px; margin-top:5px; }
   .set-update .set-action { flex:none; }
 }
+
+/* lazy history: shown over the terminal while a session's history is on its way */
+.term-history-loading { position:absolute; top:12px; left:16px; z-index:3; font:12px var(--sans); color:var(--dim); background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:5px 10px; pointer-events:none; }

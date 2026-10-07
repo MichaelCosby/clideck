@@ -188,7 +188,7 @@ class HeadlessServer {
         isAllowedWebSocketOrigin(origin, req.headers.host, this.host)
       ),
     });
-    this.webSocketServer.on('connection', (socket) => this.handleConnection(socket));
+    this.webSocketServer.on('connection', (socket, req) => this.handleConnection(socket, req));
   }
 
   async listen() {
@@ -1058,7 +1058,10 @@ class HeadlessServer {
     return true;
   }
 
-  handleConnection(socket) {
+  handleConnection(socket, req) {
+    // A browser that asks for lazy history fetches each session's output when it opens it (session.history)
+    // instead of receiving every session's history on connect.
+    socket.lazyHistory = /[?&]history=lazy(?:&|$)/.test(String(req?.url || ''));
     if (this.closing) {
       socket.close();
       return;
@@ -1248,6 +1251,19 @@ class HeadlessServer {
       this.promptCoordinator.answer(message.promptId, message.value);
       return;
     }
+    // Read synchronously: every output event already sent on this socket is in this history, and every
+    // later one is not, so the browser can replace its buffer with the reply and append what follows.
+    if (message.type === 'session.history') {
+      const known = this.persistence.has(message.sessionId);
+      this.sendControlResult(socket, {
+        type: 'session.history.result',
+        requestId: message.requestId,
+        sessionId: message.sessionId,
+        data: known ? this.persistence.historyTail(message.sessionId) : '',
+        partial: false,
+      });
+      return;
+    }
     if (message.type === 'transcript.page') {
       if (!this.persistence.has(message.sessionId)) {
         this.sendControlResult(socket, {
@@ -1330,7 +1346,7 @@ class HeadlessServer {
 
   replayLiveSession(socket, session) {
     socket.send(JSON.stringify(session.snapshot()));
-    const history = this.persistence.historyTail(session.id);
+    const history = socket.lazyHistory ? '' : this.persistence.historyTail(session.id);
     if (history) socket.send(JSON.stringify({ type: 'output', sessionId: session.id, data: history, replay: true }));
     this.replayContent(socket, session.id).catch(() => {});
     if (session.status) {
@@ -1363,7 +1379,7 @@ class HeadlessServer {
     if (entry.lastFinal) {
       socket.send(JSON.stringify({ type: 'agent.update', sessionId: entry.id, text: entry.lastFinal }));
     }
-    const history = this.persistence.historyTail(entry.id);
+    const history = socket.lazyHistory ? '' : this.persistence.historyTail(entry.id);
     if (history) socket.send(JSON.stringify({ type: 'output', sessionId: entry.id, data: history, replay: true }));
     this.replayContent(socket, entry.id).catch(() => {});
   }
