@@ -139,6 +139,14 @@ function groupIdOf(projectEl) {
   const pgroup = projectEl && projectEl.parentNode && projectEl.parentNode.closest && projectEl.parentNode.closest(".pgroup");
   return pgroup ? pgroup.dataset.pgroupId : null;
 }
+// The slot a pointer at `y` points at: before the first element whose upper half it is in, else the end.
+function slotAt(elements, y) {
+  for (let i = 0; i < elements.length; i++) {
+    const r = elements[i].getBoundingClientRect();
+    if (y < r.top + r.height / 2) return i;
+  }
+  return elements.length;
+}
 function drawLine(ref, after) {
   const line = document.createElement("div");
   line.className = "project-drop-line";
@@ -163,20 +171,13 @@ function updateProjectDropTarget(x, y) {
   }
   const shown = (el) => el.getBoundingClientRect().height > 0;   // projects inside a collapsed group are not slots
   const rest = [...document.querySelectorAll(".project.is-project")].filter((el) => el !== ds.row && shown(el));
-  for (let i = 0; i <= rest.length; i++) {
-    const prev = i > 0 ? rest[i - 1].getBoundingClientRect().bottom : -Infinity;
-    const next = i < rest.length ? rest[i].getBoundingClientRect().top : Infinity;
-    if (y >= prev && y < next) {
-      const before = rest[i] || null;
-      const groupId = before ? groupIdOf(before) : null;
-      const all = [...document.querySelectorAll(".project.is-project")];
-      const same = all[all.indexOf(ds.row) + 1] === (before || undefined) || (!before && all[all.length - 1] === ds.row);
-      if (same && groupId === groupIdOf(ds.row)) return;   // dropping back where it already is
-      ds.dropTarget = { type: "reorder", beforeId: before ? before.dataset.projectId : null, groupId };
-      if (before) drawLine(before, false); else if (rest.length) drawLine(rest[rest.length - 1], true);
-      return;
-    }
-  }
+  const before = rest[slotAt(rest, y)] || null;
+  const groupId = before ? groupIdOf(before) : null;
+  const all = [...document.querySelectorAll(".project.is-project")].filter(shown);
+  const same = all[all.indexOf(ds.row) + 1] === (before || undefined) || (!before && all[all.length - 1] === ds.row);
+  if (same && groupId === groupIdOf(ds.row)) return;   // dropping back where it already is
+  ds.dropTarget = { type: "reorder", beforeId: before ? before.dataset.projectId : null, groupId };
+  if (before) drawLine(before, false); else if (rest.length) drawLine(rest[rest.length - 1], true);
 }
 
 // A group drops between the top-level entries (projects outside groups, and other groups).
@@ -185,17 +186,12 @@ function updateGroupDropTarget(y) {
   ds.dropTarget = null;
   const list = ds.row.parentNode;
   const tops = [...list.children].filter((el) => el !== ds.row && (el.classList.contains("pgroup") || el.classList.contains("is-project")));
-  for (let i = 0; i <= tops.length; i++) {
-    const prev = i > 0 ? tops[i - 1].getBoundingClientRect().bottom : -Infinity;
-    const next = i < tops.length ? tops[i].getBoundingClientRect().top : Infinity;
-    if (y >= prev && y < next) {
-      const before = tops[i] || null;
-      const keyOf = (el) => (el.classList.contains("pgroup") ? "g:" + el.dataset.pgroupId : "p:" + el.dataset.projectId);
-      ds.dropTarget = { type: "group-reorder", beforeKey: before ? keyOf(before) : null };
-      if (before) drawLine(before, false); else if (tops.length) drawLine(tops[tops.length - 1], true);
-      return;
-    }
-  }
+  const before = tops[slotAt(tops, y)] || null;
+  const all = [...list.children].filter((el) => el.classList.contains("pgroup") || el.classList.contains("is-project"));
+  if (all[all.indexOf(ds.row) + 1] === (before || undefined) || (!before && all[all.length - 1] === ds.row)) return;   // already there
+  const keyOf = (el) => (el.classList.contains("pgroup") ? "g:" + el.dataset.pgroupId : "p:" + el.dataset.projectId);
+  ds.dropTarget = { type: "group-reorder", beforeKey: before ? keyOf(before) : null };
+  if (before) drawLine(before, false); else if (tops.length) drawLine(tops[tops.length - 1], true);
 }
 
 function endDrag() {
