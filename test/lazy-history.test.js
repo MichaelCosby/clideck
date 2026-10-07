@@ -60,11 +60,11 @@ test('history reply plus later output reproduces the engine history exactly, eve
   const { url } = await server.listen();
   const session = server.createSession({ provider: 'shell', cwd: dataDir, name: 'Printer' });
   await sleep(500);
-  session.writeInput('for i in $(seq 1 4000); do echo "line $i"; done; echo DONE-MARK\r');
+  session.writeInput('for i in $(seq 1 40000); do echo "line $i"; done; echo DONE-MARK\r');
   await sleep(80);
   const client = await connect(url + '/?history=lazy');
   const reply = await historyReply(client, session.id, 'mid');
-  for (let i = 0; i < 200 && !server.persistence.historyTail(session.id).includes('DONE-MARK\r\n'); i++) await sleep(50);
+  for (let i = 0; i < 600 && !server.persistence.historyTail(session.id).includes('DONE-MARK\r\n'); i++) await sleep(50);
   await sleep(300);
   const index = client.events.indexOf(reply);
   const after = client.events.slice(index + 1).filter((e) => e.type === 'output' && e.sessionId === session.id).map((e) => e.data).join('');
