@@ -3,6 +3,7 @@ const { randomUUID } = require('crypto');
 const { delimiter, join } = require('path');
 const pty = require('./pty');
 const { Screen } = require('./screen');
+const { ScreenMirror } = require('./screen-mirror');
 const { migrateLegacyHooks } = require('./legacy-hooks');
 const { hasNonemptyFile, waitForNonemptyFile } = require('./transcript-file');
 const { augmentedPath } = require('./custom-command');
@@ -55,6 +56,7 @@ class AgentSession extends EventEmitter {
     this.now = options.now || Date.now;
     this.colorfgbg = COLORFGBG_BY_THEME[options.theme];
     this.screen = new Screen(this.cols, this.rows);
+    this.mirror = new ScreenMirror(this.cols, this.rows);
     this.userPrompts = [];
     this.pendingPromptEchoes = [];
     this.recordedPromptIds = new Set();
@@ -194,6 +196,7 @@ class AgentSession extends EventEmitter {
     const data = this.outputBuffer;
     this.outputBuffer = '';
     this.outputBytes = (this.outputBytes || 0) + Buffer.byteLength(data);
+    this.mirror.write(data);   // before browsers get it, so a snapshot taken now includes it
     this.emit('event', { type: 'output', sessionId: this.id, data });
   }
 
@@ -574,10 +577,12 @@ class AgentSession extends EventEmitter {
     const nextRows = Math.max(5, Number(rows || this.rows));
     // Even an unchanged PTY resize can make Codex clear its scrollback.
     if (nextCols === this.cols && nextRows === this.rows) return;
+    this.flushOutput();   // output drawn at the old size reaches the mirror before it resizes
     this.cols = nextCols;
     this.rows = nextRows;
     this.terminal.resize(this.cols, this.rows);
     this.screen.resize(this.cols, this.rows);
+    this.mirror.resize(this.cols, this.rows);
   }
 
   snapshot() {
@@ -704,6 +709,7 @@ class AgentSession extends EventEmitter {
     this.titleTranscriptPath = '';
     if (!this.restarting) this.finalizeTurn();
     this.launchCleanup();
+    this.mirror.dispose();
     this.emitProtocol('session.closed', {
       exitCode,
       signal,

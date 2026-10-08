@@ -24,10 +24,10 @@ function scanModes(modes, text, limit = text.length) {
 }
 
 // The sequences that put a freshly reset terminal into `modes`.
-function modePreamble(modes) {
+function modePreamble(modes, { except = [] } = {}) {
   let out = '';
   for (const mode of TRACKED) {
-    if (modes[mode] === undefined || modes[mode] === (DEFAULTS[mode] === true)) continue;
+    if (except.includes(mode) || modes[mode] === undefined || modes[mode] === (DEFAULTS[mode] === true)) continue;
     out += `\x1b[?${mode}${modes[mode] ? 'h' : 'l'}`;
   }
   return out;

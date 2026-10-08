@@ -185,6 +185,18 @@ class ByteTail {
     return scanModes(this.baseModes, this.buffer().subarray(0, offset + SEQUENCE_OVERHANG).toString('latin1'), offset);
   }
 
+  // Terminal modes in force at the end of the output, scanning only what arrived since the last call. Replaying
+  // a few already-counted bytes again is harmless (same changes, same order) and catches a sequence that was
+  // incomplete last time.
+  currentModes() {
+    if (this.modesScanned === this.total && this.modes) return this.modes;
+    const resume = this.modes && this.modesScanned >= this.start;
+    const from = resume ? Math.max(0, this.modesScanned - this.start - SEQUENCE_OVERHANG) : 0;
+    this.modes = scanModes(resume ? this.modes : this.baseModes, this.buffer().subarray(from).toString('latin1'));
+    this.modesScanned = this.total;
+    return this.modes;
+  }
+
   toString(offset = 0) {
     const buffer = this.buffer();
     let start = Math.max(0, Math.min(offset, buffer.length));
@@ -412,6 +424,10 @@ class SessionPersistence {
     // fragments on a blank screen; send everything instead.
     if (!modes || modes[1049]) return { data: this.historyTail(id), partial: false };
     return { data: `\x1b[0m${modePreamble(modes)}${tail.toString(offset)}`, partial: true };
+  }
+
+  currentModes(id) {
+    return this.readHistory(id).currentModes();
   }
 
   // A user prompt began `back` bytes before the end of the output recorded so far.

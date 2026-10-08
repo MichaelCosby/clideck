@@ -163,6 +163,9 @@ function appendBuf(s, data) {
     // trim a likely-partial leading line so a rewrite doesn't start mid-escape
     const nl = s.outputBuf.indexOf("\n");
     if (nl > 0 && nl < 4096) s.outputBuf = s.outputBuf.slice(nl + 1);
+    // A trimmed buffer can no longer redraw a full-screen agent (it only patches its screen), so the next open
+    // fetches fresh history from the engine (for those agents, the current screen) instead of replaying this.
+    if (s.historyState === "full" || s.historyState === "partial") s.historyState = "none";
   }
 }
 

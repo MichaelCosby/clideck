@@ -27,6 +27,7 @@ const {
 } = require('./content-store');
 const { listDirectories, makeDirectory } = require('./directories');
 const { DEFAULT_DATA_DIR, SessionPersistence } = require('./persistence');
+const { modePreamble } = require('./terminal-modes');
 const { openProjectPath } = require('./project-open');
 const { hasProjectId, sameSessionScope, sessionAddress } = require('./project-scope');
 const {
@@ -229,7 +230,11 @@ class HeadlessServer {
     this.pluginManager?.emitCoreEvent?.(event);
     const message = JSON.stringify(event);
     for (const client of this.clients) {
-      if (client.readyState === WebSocket.OPEN) client.send(message);
+      if (client.readyState !== WebSocket.OPEN) continue;
+      // Output this browser will get inside a pending history reply waits until that reply is sent.
+      const held = event.type === 'output' && client.heldOutput?.get(event.sessionId);
+      if (held) held.push(message);
+      else client.send(message);
     }
   }
 
@@ -805,6 +810,39 @@ class HeadlessServer {
     return true;
   }
 
+  // A full-screen agent's history is its current screen, serialized by the session's mirror; anything else gets
+  // its saved output. Both describe exactly the output sent to this browser before the reply.
+  sendHistory(socket, message) {
+    const { sessionId, requestId, prompts } = message;
+    const known = this.persistence.has(sessionId);
+    const saved = known ? this.persistence.historyWindow(sessionId, prompts) : { data: '', partial: false };
+    const reply = (history) => this.sendControlResult(socket, {
+      type: 'session.history.result', requestId, sessionId, data: history.data, partial: history.partial,
+    });
+    const session = this.sessions.get(sessionId);
+    const modes = known ? this.persistence.currentModes(sessionId) : {};
+    if (!session || session.closed || !session.mirror || !modes[1049]) {
+      reply(saved);
+      return;
+    }
+    // The mirror may still be parsing recent output: hold this browser's later output for the session until the
+    // snapshot (which covers everything sent so far) has gone out, so nothing is lost or drawn twice.
+    if (!socket.heldOutput) socket.heldOutput = new Map();
+    if (socket.heldOutput.has(sessionId)) { reply(saved); return; }
+    const held = [];
+    socket.heldOutput.set(sessionId, held);
+    session.mirror.snapshot((screen) => {
+      socket.heldOutput.delete(sessionId);
+      if (screen?.alternate) {
+        reply({ data: `${screen.data}${modePreamble(modes, { except: [1049] })}`, partial: false });
+      } else {
+        reply(saved);
+      }
+      if (socket.readyState !== WebSocket.OPEN) return;
+      for (const queued of held) socket.send(queued);
+    });
+  }
+
   sendControlResult(socket, event) {
     if (socket.readyState !== undefined && socket.readyState !== WebSocket.OPEN) return;
     try {
@@ -1258,15 +1296,7 @@ class HeadlessServer {
     // later one is not, so the browser can replace its buffer with the reply and append what follows.
     // prompts: start that many user prompts back (partial: true when older output was left out).
     if (message.type === 'session.history') {
-      const known = this.persistence.has(message.sessionId);
-      const history = known ? this.persistence.historyWindow(message.sessionId, message.prompts) : { data: '', partial: false };
-      this.sendControlResult(socket, {
-        type: 'session.history.result',
-        requestId: message.requestId,
-        sessionId: message.sessionId,
-        data: history.data,
-        partial: history.partial,
-      });
+      this.sendHistory(socket, message);
       return;
     }
     if (message.type === 'transcript.page') {
