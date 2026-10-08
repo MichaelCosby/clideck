@@ -217,3 +217,30 @@ test('custom bash session writes output and restart/resume fall back fresh witho
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('an agent based on Claude Code starts and resumes through Claude with its own command', () => {
+  const account = {
+    id: 'claude-two', label: 'C2-Claude Code', icon: 'claude-code', command: '/home/me/bin/claude-2 --model sonnet',
+    enabled: true, isAgent: true, canResume: true, env: { CLAUDE_CONFIG_DIR: '/home/me/.claude2' },
+    resumeCommand: null, sessionIdPattern: null, providerId: 'claude-code',
+  };
+  assert.equal(isValidConfigPatch({ commands: [account] }), true);
+  assert.equal(isValidConfigPatch({ commands: [{ ...account, providerId: 'no-such-agent' }] }), false);
+  assert.equal(isValidConfigPatch({ commands: [{ ...account, providerId: 7 }] }), false);
+
+  const provider = createCustomCommandProvider(account);
+  assert.equal(provider.id, 'claude-code', 'status, replies and hooks come from the Claude provider');
+  const fresh = provider.createLaunch({ port: 1, sessionId: 's1', serverUrl: 'http://127.0.0.1:1' });
+  const resumed = provider.createLaunch({ port: 1, sessionId: 's1', serverUrl: 'http://127.0.0.1:1', resumeHandle: 'abc-123' });
+  try {
+    for (const launch of [fresh, resumed]) {
+      assert.equal(launch.command, '/home/me/bin/claude-2', 'the configured executable, never plain claude');
+      assert.deepEqual(launch.args.slice(0, 2), ['--model', 'sonnet']);
+      assert.equal(launch.env.CLAUDE_CONFIG_DIR, '/home/me/.claude2');
+    }
+    assert.equal(fresh.args.includes('--resume'), false);
+    assert.deepEqual(resumed.args.slice(-2), ['--resume', 'abc-123']);
+  } finally {
+    fresh.cleanup(); resumed.cleanup();
+  }
+});

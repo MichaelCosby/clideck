@@ -108,7 +108,8 @@ function emojiMark(ch) { const s = document.createElement("span"); s.className =
 function commandFace(cmd) {
   const label = cmd.label || "Custom";
   const terms = (label + " " + (cmd.command || "") + " custom").toLowerCase();
-  const icon = cmd.icon;
+  // A command based on a built-in agent (e.g. a second Claude account) wears that agent's mark unless given its own.
+  const icon = (!cmd.icon || cmd.icon === "terminal") && PROVIDERS[cmd.providerId] ? cmd.providerId : cmd.icon;
   const base = { id: cmd.command || cmd.id, label, terms, sig: "cmd:" + cmd.id + ":" + (icon || "terminal") };
   if (icon && PROVIDERS[icon]) return { ...base, cls: PROVIDERS[icon].cls, mark: PROVIDERS[icon].mark };
   if (icon && icon !== "terminal") return { ...base, cls: "pv-custom", mark: () => emojiMark(icon) };

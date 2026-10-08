@@ -545,7 +545,7 @@ function showInstall(label, installCmd) {
 function agentCard(c, i, avail) {
   const card = h("div", "set-card");
   const head = h("div", "set-card-head");
-  const iconBtn = h("button", "set-card-ic"); iconBtn.type = "button"; iconBtn.title = "Change icon"; renderIconMark(iconBtn, c.icon);
+  const iconBtn = h("button", "set-card-ic"); iconBtn.type = "button"; iconBtn.title = "Change icon"; renderIconMark(iconBtn, displayIcon(c));
   iconBtn.addEventListener("click", (e) => { e.stopPropagation(); openIconMenu(iconBtn, i); });
   const name = h("input", "set-card-name"); name.value = c.label || ""; name.placeholder = "Agent name"; name.spellcheck = false;
   name.addEventListener("input", () => { cmds[i].label = name.value; scheduleSave(); });
@@ -558,10 +558,22 @@ function agentCard(c, i, avail) {
   cmd.addEventListener("input", () => { cmds[i].command = cmd.value; scheduleSave(); });
   card.append(labeled("Command", cmd));
 
-  // AI-agent + resume
-  const agentRow = toggleRow("AI agent", "Enables session-resume support.", !!c.isAgent, (v) => { cmds[i].isAgent = v; if (!v) { cmds[i].canResume = false; } scheduleSave(); renderBody(); });
-  card.append(agentRow);
-  if (c.isAgent) {
+  // Based on a built-in agent: CliDeck runs it as that agent (status, replies, hooks, resume) with this command.
+  const base = baseProvider(c);
+  const basedOn = h("select", "set-select");
+  basedOn.setAttribute("aria-label", "Based on");
+  const generic = h("option"); generic.value = ""; generic.textContent = "Generic CLI"; basedOn.appendChild(generic);
+  for (const p of PROVIDER_LIST) { const op = h("option"); op.value = p.id; op.textContent = p.label; basedOn.appendChild(op); }
+  basedOn.value = base ? base.id : "";
+  basedOn.addEventListener("change", () => setBase(i, basedOn.value));
+  card.append(labeled("Based on", basedOn));
+  if (base && base.id !== "shell") {
+    card.append(h("div", "set-hint", `Runs as ${base.label}: status, replies and resume work as for ${base.label}. Resume runs this command with ${base.label}'s own resume options.`));
+  }
+
+  // AI-agent + resume, for generic CLIs only: a built-in base brings its own.
+  if (!base) card.append(toggleRow("AI agent", "Enables session-resume support.", !!c.isAgent, (v) => { cmds[i].isAgent = v; if (!v) { cmds[i].canResume = false; } scheduleSave(); renderBody(); }));
+  if (!base && c.isAgent) {
     const resume = h("div", "set-resume");
     resume.append(toggleRow("Supports resume", "", !!c.canResume, (v) => { cmds[i].canResume = v; scheduleSave(); renderBody(); }));
     if (c.canResume) {
@@ -577,13 +589,33 @@ function agentCard(c, i, avail) {
 
   card.append(toggleRow("Copy on select", "Copies terminal text to the clipboard as soon as you select it.", !!c.copyOnSelect, (v) => { cmds[i].copyOnSelect = v; scheduleSave(); }));
 
-  const env = h("textarea", "set-input mono set-env"); env.value = envText(c.env); env.rows = 2; env.placeholder = "KEY=value (one per line; invalid lines ignored)"; env.spellcheck = false;
+  const env = h("textarea", "set-input mono set-env"); env.value = envText(c.env); env.rows = 2; env.spellcheck = false;
+  env.placeholder = base && base.id === "claude-code" ? "CLAUDE_CONFIG_DIR=/home/you/.claude-work  (a second account; one KEY=value per line)"
+    : base && base.id === "codex" ? "CODEX_HOME=/home/you/.codex-work  (a second account; one KEY=value per line)"
+      : "KEY=value (one per line; invalid lines ignored)";
   env.addEventListener("input", () => { cmds[i].env = parseEnv(env.value); scheduleSave(); });
   card.append(labeled("Environment", env));
 
   const entry = avail && avail.commands.get(c.id);
   if (entry) card.append(commandHealth(entry));
   return card;
+}
+// The built-in agent a custom command is based on, or null for a generic CLI.
+function baseProvider(c) { return c.providerId && PROVIDER_LIST.some((p) => p.id === c.providerId) ? providerOf(c.providerId) : null; }
+// Unset or the plain terminal glyph on an agent-based command shows that agent's mark (migrated 1.x entries).
+function displayIcon(c) { const base = baseProvider(c); return (!c.icon || c.icon === "terminal") && base ? base.id : c.icon; }
+function setBase(i, providerId) {
+  const c = cmds[i];
+  const iconFollows = !c.icon || c.icon === "terminal" || PROVIDER_LIST.some((p) => p.id === c.icon);
+  if (providerId) {
+    c.providerId = providerId;
+    c.isAgent = providerId !== "shell";
+    c.canResume = false; c.resumeCommand = null; c.sessionIdPattern = null;   // the base agent resumes natively
+  } else {
+    delete c.providerId;
+  }
+  if (iconFollows) c.icon = providerId || "terminal";
+  renderBody(); saveNow();
 }
 function labeled(label, control) { const f = h("div", "set-field"); f.append(h("label", "set-field-l", label), control); return f; }
 function commandHealth(entry) {
@@ -644,6 +676,7 @@ function addCommand(presetId) {
     command: (p && p.command) || "",
     enabled: true, isAgent: presetId !== "shell" && !!presetId, canResume: false,
     env: {}, resumeCommand: null, sessionIdPattern: null,
+    ...(presetId && { providerId: presetId }),
   });
   renderBody(); saveNow();
 }
@@ -658,6 +691,8 @@ function serialize() {
     env: c.env && typeof c.env === "object" ? c.env : {},
     resumeCommand: c.isAgent && c.canResume && c.resumeCommand ? String(c.resumeCommand) : null,
     sessionIdPattern: c.isAgent && c.canResume && c.sessionIdPattern ? String(c.sessionIdPattern) : null,
+    // Dropping this would silently turn an agent-based command (e.g. a second Claude account) into a generic CLI.
+    ...(baseProvider(c) && { providerId: c.providerId }),
   }));
 }
 function allValid(list) { return list.every((c) => c.label && c.command && /^[A-Za-z0-9_-]{1,100}$/.test(c.id)); }

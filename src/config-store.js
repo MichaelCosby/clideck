@@ -86,6 +86,9 @@ function isValidCommand(command) {
   if (typeof command.enabled !== 'boolean' || typeof command.isAgent !== 'boolean'
     || typeof command.canResume !== 'boolean') return false;
   if (command.copyOnSelect !== undefined && typeof command.copyOnSelect !== 'boolean') return false;
+  // Based on a built-in agent: launched and resumed through that provider with this command as the executable.
+  if (command.providerId !== undefined
+    && (typeof command.providerId !== 'string' || !require('./providers').getProvider(command.providerId))) return false;
   if (!isObject(command.env) || Object.keys(command.env).length > 100) return false;
   if (Object.entries(command.env).some(([key, value]) => !ENV_NAME.test(key)
     || typeof value !== 'string' || value.length > 4096 || value.includes('\0'))) return false;
