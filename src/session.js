@@ -309,6 +309,7 @@ class AgentSession extends EventEmitter {
     const menu = detectMenuDetails(lines);
     const menuKey = JSON.stringify(menu);
     if (menuKey !== this.menuKey) {
+      const hadMenu = this.menu.length > 0;
       this.menu = menu.choices;
       this.menuContext = menu.context;
       this.menuKey = menuKey;
@@ -317,6 +318,9 @@ class AgentSession extends EventEmitter {
         ...(menu.choices.length && { context: menu.context }),
       });
       if (menu.choices.length) this.setStatus('idle');
+      // A menu answered without a keystroke here (a PermissionRequest hook such as an auto-approver, or another
+      // terminal) closes mid-turn while the agent carries on; a stop or idle hook still ends the turn as usual.
+      else if (hadMenu && this.turnOpen && this.status === 'idle') this.setStatus('working');
     }
 
     if (this.sessionStarted && this.status === null && hasInputPrompt(lines)) {

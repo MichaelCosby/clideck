@@ -333,6 +333,30 @@ test('manual and ask turns resume working after approval, then stop authoritativ
   }
 });
 
+test('a menu answered by a hook (an auto-approver) puts a running turn back to working', () => {
+  for (const provider of ['claude-code', 'codex']) {
+    const session = new AgentSession({ provider: getProvider(provider), port: 1 });
+    session.terminal = { write() {} };
+    try {
+      session.handleHook('session-start', { source: 'startup' });
+      session.writeInput('Run the check\r');
+      session.handleHook('start', { turn_id: 'auto-turn' });
+      session.screen.write(['Do you want to proceed?', '❯ 1. Yes', '  2. No', 'Esc to cancel'].join('\r\n'));
+      session.analyzeScreen();
+      assert.equal(session.status, 'idle', 'needs you while the menu shows');
+      // No keystroke: the hook approves and the menu closes while the agent keeps going.
+      session.screen = new Screen();
+      session.screen.write('Running the approved command\r\n');
+      session.analyzeScreen();
+      assert.equal(session.status, 'working', provider);
+      session.handleHook('stop', { turn_id: 'auto-turn', last_assistant_message: 'Done.' });
+      assert.equal(session.status, 'idle');
+    } finally {
+      session.handleExit(0, null);
+    }
+  }
+});
+
 test('menu input outside a turn cannot resume historical ask work', () => {
   const session = claudeSession();
   session.terminal = { write() {} };
