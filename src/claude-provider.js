@@ -20,6 +20,7 @@ const claudeProvider = {
   contextUsage: claudeContextUsage,
   watchTitle: watchClaudeTitle,
   model: (payload) => payload.model?.display_name || payload.model?.id,
+  modelId: (payload) => payload.model?.id,
   finalText(payload) {
     return String(payload.last_assistant_message || '').trim();
   },
@@ -41,7 +42,7 @@ const claudeProvider = {
       transcriptPath,
     };
   },
-  createLaunch({ command, port, sessionId, resumeHandle, agentGuide, extraArgs = [], serverUrl }) {
+  createLaunch({ command, port, sessionId, resumeHandle, model, agentGuide, extraArgs = [], serverUrl }) {
     const settingsPath = createClaudeSettings(port, sessionId, serverUrl);
     const args = ['--settings', settingsPath];
     const guide = agentGuide ?? AGENT_SESSION_GUIDE;
@@ -49,6 +50,9 @@ const claudeProvider = {
       args.push('--append-system-prompt', guide);
     }
     if (resumeHandle) args.push('--resume', resumeHandle);
+    // Claude resumes on the model the conversation started with, not the one it was last using; restore that.
+    // Last on the command line, so it follows any --model in a custom command or wrapper.
+    if (resumeHandle && model) args.push('--model', model);
     return {
       command: command || this.command,
       args,

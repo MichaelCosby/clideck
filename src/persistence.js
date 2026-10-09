@@ -80,6 +80,7 @@ function normalizeEntry(value) {
     ...(value.lastFinal && { lastFinal: String(value.lastFinal) }),
     ...(Number(value.lastAgentAt) > 0 && { lastAgentAt: Number(value.lastAgentAt) }),
     ...(value.resumeHandle && { resumeHandle: String(value.resumeHandle) }),
+    ...(typeof value.modelId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,99}$/.test(value.modelId) && { modelId: value.modelId }),
     ...(value.transcriptPath && { transcriptPath: String(value.transcriptPath) }),
     ...(value.commandId && { commandId: String(value.commandId) }),
     ...(value.commandLabel && { commandLabel: String(value.commandLabel) }),
@@ -470,10 +471,18 @@ class SessionPersistence {
     renameSync(temporary, metaPath);
   }
 
+  // The model a session was last using, for its next resume.
+  recordModel(id, modelId) {
+    const entry = this.entries.get(String(id));
+    if (!entry || !modelId || entry.modelId === modelId) return;
+    this.update(id, { modelId });
+  }
+
   markClosed(session) {
     this.update(session.id, {
       cols: session.cols,
       rows: session.rows,
+      ...(session.modelId && { modelId: session.modelId }),
       lastActive: this.now(),
     }, true);
     this.flushHistory(session.id);

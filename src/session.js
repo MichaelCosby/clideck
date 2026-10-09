@@ -33,6 +33,10 @@ function sessionEnvironment(launchEnv, sessionId, port, colorfgbg, serverUrl = `
   };
 }
 
+function validModelId(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,99}$/.test(value) ? value : null;
+}
+
 class AgentSession extends EventEmitter {
   constructor(options) {
     super();
@@ -95,6 +99,7 @@ class AgentSession extends EventEmitter {
     this.resumeTranscriptPath = '';
     this.contextUsage = undefined;
     this.model = null;
+    this.modelId = validModelId(this.launchOptions.model);
     this.hookToken = randomUUID();
     this.activeHookTurn = '';
     this.completedHookTurns = new Set();
@@ -265,6 +270,14 @@ class AgentSession extends EventEmitter {
     if (this.status) this.emitProtocol('status', { state: this.status, contextUsage: usage });
   }
 
+  // The exact model id the agent reports (e.g. claude-haiku-5-5), saved so a resume can ask for it again.
+  setModelId(value) {
+    const id = validModelId(value);
+    if (!id || id === this.modelId) return;
+    this.modelId = id;
+    if (this.status) this.emitProtocol('status', { state: this.status, ...(this.model && { model: this.model }) });
+  }
+
   setModel(value) {
     if (typeof value !== 'string' || !value.trim()) return;
     const model = value.trim().replace(/[\x00-\x1f\x7f]/g, '').slice(0, 160);
@@ -425,6 +438,7 @@ class AgentSession extends EventEmitter {
     if (turnId && route === 'start' && turnId === this.activeHookTurn) return;
     if (turnId && (route === 'stop' || route === 'idle') && this.activeHookTurn && turnId !== this.activeHookTurn) return;
     this.setModel(this.provider.model?.(payload));
+    this.setModelId(this.provider.modelId?.(payload));
     if (route === 'context') {
       const usage = this.provider.contextUsage?.(payload);
       if (usage !== undefined) this.setContextUsage(usage);

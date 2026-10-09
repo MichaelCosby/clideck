@@ -423,6 +423,8 @@ class HeadlessServer {
     const resumed = Boolean(entry.resumeHandle
       && (provider.id !== 'custom-command' || provider.canResume));
     if (resumed) providerOptions.resumeHandle = entry.resumeHandle;
+    // Back on the model it was last using (Claude would otherwise use the one the conversation started with).
+    if (resumed && provider.id === 'claude-code' && entry.modelId) providerOptions.model = entry.modelId;
     return { providerOptions, resumed };
   }
 
@@ -592,6 +594,7 @@ class HeadlessServer {
       if (event.type === 'session.closed' && event.restarting) return;
       let outbound = event;
       if (event.type === 'output') this.persistence.appendHistory(session.id, event.data);
+      else if (event.type === 'status') this.persistence.recordModel(session.id, session.modelId);
       else if (event.type === 'turn.user') {
         this.persistence.markTurn(session.id, session.turnOutputBack?.() || 0);
         this.storeTranscriptEntry(session.id, 'user', event.text);
