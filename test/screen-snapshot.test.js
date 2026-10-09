@@ -89,6 +89,62 @@ test('the drawn screen keeps every character and style', async () => {
   mirror.dispose();
 });
 
+// The snapshot must leave the terminal in the state the app left it in, so output that follows lands exactly as it
+// would after a full replay: same text style, same scroll margins, same saved cursor.
+async function sameAsReplay(drawing, after, cols = 40, rows = 12) {
+  const mirror = new ScreenMirror(cols, rows);
+  mirror.write(drawing);
+  const shot = await snapshot(mirror);
+  mirror.dispose();
+  const dump = (data) => new Promise((resolve) => {
+    const term = new Terminal({ cols, rows, allowProposedApi: true });
+    term.write(data, () => {
+      const b = term.buffer.active, out = [];
+      let cell = b.getNullCell();
+      for (let y = 0; y < rows; y++) {
+        const line = b.getLine(b.viewportY + y);
+        for (let x = 0; x < cols; x++) {
+          cell = line.getCell(x, cell);
+          if (cell.getChars() || !cell.isBgDefault()) out.push(`${y},${x}:${cell.getChars()}|${cell.getFgColorMode()}|${cell.getFgColor()}|${cell.getBgColor()}|${cell.isBold() ? 1 : 0}`);
+        }
+      }
+      resolve(out.join('\n'));
+      term.dispose();
+    });
+  });
+  return { viaSnapshot: await dump(shot.data + after), viaReplay: await dump(drawing + after) };
+}
+
+test('text after a snapshot keeps the style the app had switched to', async () => {
+  const { viaSnapshot, viaReplay } = await sameAsReplay('\x1b[?1049h\x1b[2J\x1b[H\x1b[1;31mred and', ' still red\x1b[0m plain');
+  assert.equal(viaSnapshot, viaReplay);
+});
+
+test('scrolling after a snapshot stays inside the app\'s scroll margins', async () => {
+  const drawing = '\x1b[?1049h\x1b[2J\x1b[12;1H\x1b[7m fixed footer \x1b[0m\x1b[1;11r\x1b[11;1Hlast line';
+  const { viaSnapshot, viaReplay } = await sameAsReplay(drawing, '\r\nscrolled 1\r\nscrolled 2\r\nscrolled 3');
+  assert.equal(viaSnapshot, viaReplay);
+  assert.match(viaSnapshot, /11,0: \|/, 'the footer row is untouched');
+});
+
+test('a cursor the app saved before the snapshot can still be restored after it', async () => {
+  const { viaSnapshot, viaReplay } = await sameAsReplay('\x1b[?1049h\x1b[2J\x1b[5;7H\x1b[32m\x1b7\x1b[0m\x1b[10;1Hbottom', '\x1b8back here');
+  assert.equal(viaSnapshot, viaReplay);
+});
+
+test('origin mode: the cursor lands where it was, relative to the margins', async () => {
+  const { viaSnapshot, viaReplay } = await sameAsReplay('\x1b[?1049h\x1b[2J\x1b[3;9r\x1b[?6h\x1b[2;4Hx', 'y\x1b[1;1Htop of region');
+  assert.equal(viaSnapshot, viaReplay);
+});
+
+test('if xterm keeps that state somewhere unexpected, there is no snapshot and the engine replays instead', async () => {
+  const mirror = new ScreenMirror(40, 12);
+  mirror.write('\x1b[?1049h\x1b[2Jdrawn');
+  mirror.terminalState = () => null;   // as with an xterm version that moved its internals
+  assert.deepEqual(await snapshot(mirror), { alternate: false, data: '' });
+  mirror.dispose();
+});
+
 test('current modes follow new output without rescanning, including a sequence split across writes', (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'clideck-modes-'));
   const persistence = new SessionPersistence({ dataDir, debounceMs: 0, historyLimit: 256 });
