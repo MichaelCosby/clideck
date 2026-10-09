@@ -14,6 +14,7 @@ import { playPluginAudio, playPluginAudioAndWait, stopPluginAudio, togglePluginA
 import { startPluginMicrophone, stopPluginMicrophone } from "./plugin-microphone.js";
 import { openPluginComposition, updatePluginComposition, closePluginComposition } from "./plugin-composition.js";
 import { openPluginPicker, closePluginPicker } from "./plugin-picker.js";
+import { setSessionBadge, clearPluginBadges } from "../session-badges.js";
 
 const runtimes = new Map();           // pluginId -> Runtime
 const errors = new Map();             // local client failures; engine worker status remains authoritative separately
@@ -145,13 +146,14 @@ class Runtime {
     else if (message.type === "toast") {
       const kind = ["success", "warn", "error"].includes(message.kind) ? message.kind : "info";
       toast[kind]({ ...(message.options || {}), title: (message.options && message.options.title) || this.plugin.name });
-    } else if (message.type === "request") this.request(message);
+    } else if (message.type === "session-badge") setSessionBadge(id, message.sessionId, message.badge);
+    else if (message.type === "request") this.request(message);
   }
   deliver(event, data, requestId) { try { this.worker.postMessage({ type: "plugin-message", event, data, requestId }); } catch {} }
   fail(reason) { clientError(this.plugin.id, reason); this.stop(); }
   stop() {
     for (const cleanup of this.cleanups.values()) { try { cleanup(); } catch {} }
-    this.cleanups.clear(); stopPluginAudio(this.plugin.id); stopPluginMicrophone(this.plugin.id); closePluginComposition(this.plugin.id); closePluginPicker(this.plugin.id); closePluginTabs(this.plugin.id); unregisterActionsForPlugin(this.plugin.id); unregisterViewersForPlugin(this.plugin.id); unregisterAllForPlugin(this.plugin.id);
+    this.cleanups.clear(); stopPluginAudio(this.plugin.id); stopPluginMicrophone(this.plugin.id); closePluginComposition(this.plugin.id); closePluginPicker(this.plugin.id); closePluginTabs(this.plugin.id); clearPluginBadges(this.plugin.id); unregisterActionsForPlugin(this.plugin.id); unregisterViewersForPlugin(this.plugin.id); unregisterAllForPlugin(this.plugin.id);
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("Plugin client stopped.")); }
     this.pending.clear();
     try { this.worker.postMessage({ type: "shutdown" }); setTimeout(() => this.worker.terminate(), 250); } catch {}

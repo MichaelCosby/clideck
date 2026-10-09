@@ -1732,3 +1732,11 @@ h5.md-h { margin:1.9em 0 .45em; font-size:.94em; font-weight:650; color:var(--di
 .term-history-earlier { position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:20; font:12px var(--sans); color:var(--text); background:var(--surface-2); border:1px solid var(--border-strong); border-radius:999px; padding:6px 14px; box-shadow:0 6px 20px var(--shadow); cursor:pointer; }
 .term-history-earlier:hover:not(:disabled) { background:var(--surface-3); }
 .term-history-earlier:disabled { color:var(--dim); cursor:default; }
+
+/* plugin session badges (e.g. auto-approve): a pill in the terminal header, a glyph on the sidebar row */
+.th-badges { display:contents; }
+.th-badge { padding:0 8px; gap:5px; color:var(--accent); border-color:color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.th-badge-icon { font-weight:700; }
+.r-plugin-badges { display:inline-flex; flex:0 0 auto; gap:3px; }
+.r-plugin-badges:empty { display:none; }
+.r-plugin-badge { font-size:11px; font-weight:700; line-height:1; color:var(--accent); cursor:default; }

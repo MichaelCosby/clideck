@@ -139,6 +139,13 @@ export async function activate(api) {
 }
 ```
 
+A plugin can mark a session with `api.setSessionBadge(sessionId, { label, icon, title })`:
+plain text only (a label of up to 32 characters, a one- or two-character glyph, and a
+tooltip). CliDeck shows it as a pill in that session's terminal header and as the glyph
+beside its name in the sidebar; `api.setSessionBadge(sessionId, null)` clears it, and a
+plugin's badges disappear when it is disabled or stops. Auto-approve uses it to show
+which sessions it is approving for.
+
 An unrestricted visual application registers a workspace tab backed by a
 sandboxed page under `public/`. A custom viewer registers the namespaced
 kind/MIME pair declared in its manifest and renders inside the existing

@@ -16,6 +16,7 @@ import { openPromptLibrary } from "./prompts.js";
 import { openProjectCreator } from "./project-creator.js";
 import { initDrag, wasDragging, isDragging } from "./drag.js";
 import { createRowOrder, RANK } from "./row-order.js";
+import { sessionBadges, onSessionBadges } from "../session-badges.js";
 import { layoutProjects, moveProjectToGroup, deleteProjectGroup } from "./project-layout.js";
 import { startBounce } from "./bounce.js";
 import { openSettings } from "./settings.js";
@@ -94,6 +95,7 @@ export function initSidebar() {
   store.on("session:add", addRow);
   store.on("session:remove", removeRow);
   store.on("session:update", renderRow);
+  onSessionBadges((id) => { const r = rows.get(id); if (r) paintRowBadges(r, id); });
   store.on("active", () => { for (const id of rows.keys()) renderRow(id); });
   store.on("chrome", renderChrome);
   store.on("config", renderIdentity);
@@ -673,7 +675,8 @@ function addRow(id) {
   nameText.addEventListener("dblclick", (e) => { e.stopPropagation(); e.preventDefault(); startRowRename(id); });   // v1 app.js:480-485
   const muteIcon = h("span", "r-mute", MUTE_ICON); muteIcon.title = "Muted — no idle sound/notification";
   const pinIcon = h("span", "r-pin", PIN_ICON); pinIcon.title = "Pinned";
-  name.append(nameText, pinIcon, muteIcon, copyBtn, renameBtn);
+  const pluginBadges = h("span", "r-plugin-badges");   // plugin badge glyphs (e.g. ✓ auto-approve), filled by renderRow
+  name.append(nameText, pinIcon, muteIcon, pluginBadges, copyBtn, renameBtn);
   const time = h("div", "r-time", "now");
   const preview = h("div", "r-preview");
   const bounce = h("span", "r-bounce");            // working animation slot (empty ⇒ collapsed); ptext owns the ellipsis
@@ -691,7 +694,7 @@ function addRow(id) {
   root.append(avatar, name, time, preview, badge, actions, menuBtn);
   g.rowsEl.appendChild(root);
   g.ids.add(id);
-  rows.set(id, { root, avatar, presence, name, nameText, copyBtn, time, preview, bounce, ptext, badge, actions, groupKey: key, faceSig: f.sig, stopBounce: null, seq: rowSeq++ });
+  rows.set(id, { root, avatar, presence, name, nameText, pluginBadges, copyBtn, time, preview, bounce, ptext, badge, actions, groupKey: key, faceSig: f.sig, stopBounce: null, seq: rowSeq++ });
   root.classList.toggle("muted", !!s.muted);
   g.count.textContent = g.ids.size;
   renderRow(id);
@@ -756,6 +759,21 @@ function clearAll() {
 // message (shells, dormant) — used instead of the live terminal tail, which the user's typing can corrupt.
 function cwdPath(s) { return (s.cwd || "").replace(/^(\/Users\/[^/]+|\/home\/[^/]+)/, "~"); }
 
+// Plugin badges as small glyphs beside the name; the label and tooltip ride on the title for hover/screen readers.
+function paintRowBadges(r, id) {
+  const list = sessionBadges(id);
+  const sig = list.map((b) => [b.pluginId, b.icon, b.label, b.title].join("\u0001")).join("\0");
+  if (r.badgeSig === sig) return;
+  r.badgeSig = sig;
+  r.pluginBadges.replaceChildren(...list.map((b) => {
+    const mark = h("span", "r-plugin-badge", "");
+    mark.textContent = b.icon || b.label.slice(0, 1);
+    mark.title = b.title ? b.label + " — " + b.title : b.label;
+    mark.setAttribute("aria-label", b.label);
+    return mark;
+  }));
+}
+
 function renderRow(id) {
   const r = rows.get(id); const s = store.sessions.get(id);
   if (!r || !s) return;
@@ -764,6 +782,7 @@ function renderRow(id) {
   scheduleOrder(r.groupKey);
   scheduleSummaries();
   applyFace(r, s);                                          // §A: refresh the avatar if the command icon resolved/changed
+  paintRowBadges(r, id);
   const editing = renamingId === id;                        // an inline rename is open on this row
   if (!editing) {
     r.nameText.innerHTML = rowNameHtml(s, id);               // refresh name so a rename / rebroadcast shows up

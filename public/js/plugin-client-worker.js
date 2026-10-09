@@ -65,6 +65,8 @@ const api = Object.freeze({
   getSettings() { return settingsSnapshot(); },
   onSettingsChange(fn) { if (typeof fn !== "function") return () => {}; settingsHandlers.add(fn); return () => settingsHandlers.delete(fn); },
   toast(kind, options) { post("toast", { kind: String(kind || "info"), options: safeData(options || {}) }); },
+  // A short plain-text badge on a session ({ label, icon, title }), shown in its header and sidebar row; null clears it.
+  setSessionBadge(sessionId, badge) { post("session-badge", { sessionId: String(sessionId || ""), badge: badge ? safeData(badge) : null }); },
   playAudio(buffer, options) {
     if (!(buffer instanceof ArrayBuffer)) throw new TypeError("playAudio expects an ArrayBuffer.");
     if (!buffer.byteLength || buffer.byteLength > MAX_AUDIO_BYTES) throw new RangeError("Plugin audio is empty or exceeds 64 MB.");

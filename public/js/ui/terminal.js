@@ -8,6 +8,7 @@ import { send, renameSession, openContentPath, requestHistory } from "../ws.js";
 import { sessionFace } from "../providers-ui.js";
 import { esc, shortId, debounce, copyText, inlineRename, askAddress, SESSION_NAME_MAX, limitSessionName } from "../util.js";
 import { onTheme } from "../theme.js";
+import { sessionBadges, onSessionBadges } from "../session-badges.js";
 import { appliedXterm } from "../terminal-themes.js";
 import { openTerminalMenu } from "./session-menu.js";
 import { toast } from "./toast.js";
@@ -201,6 +202,7 @@ export function initTerminal() {
     requestAnimationFrame(() => { fit(true); updateScrollBtn(); });
   });   // callback fires post-parse, so baseY is current
   store.on("session:update", (id) => { if (id === store.activeId) updateHeader(); });
+  onSessionBadges((id) => { if (id === store.activeId) paintHeaderBadges(id); });
   store.on("connection", () => { updateHeader(); updateEmpty(); });   // connect lands AFTER reset paints "offline"; with no sessions nothing else ever repaints it
   store.on("chrome", updateEmpty);
   store.on("reset", () => { closePromptDropdown(); term.reset(); applyActiveTheme(); updateHeader(); updateEmpty(); updateScrollBtn(); sentDims.clear(); });
@@ -745,6 +747,24 @@ function fit(sendResize) {
 const sentDims = new Map();
 export function __sentDimsForTest() { return sentDims; }
 
+// Plugin badges for the active session ("✓ Auto-approve"): plain text the host renders, never plugin markup.
+function paintHeaderBadges(sessionId) {
+  const box = document.getElementById("th-badges");
+  if (!box) return;
+  const list = sessionBadges(sessionId);
+  const sig = sessionId + "\0" + list.map((b) => [b.pluginId, b.icon, b.label, b.title].join("\u0001")).join("\0");
+  if (box._sig === sig) return;
+  box._sig = sig;
+  box.replaceChildren(...list.map((b) => {
+    const chip = document.createElement("div");
+    chip.className = "th-pill th-badge";
+    chip.title = b.title || b.label;
+    if (b.icon) { const glyph = document.createElement("span"); glyph.className = "th-badge-icon"; glyph.textContent = b.icon; chip.appendChild(glyph); }
+    chip.appendChild(document.createTextNode(b.label));
+    return chip;
+  }));
+}
+
 function updateHeader() {
   if (renaming) return;                 // don't clobber the inline name input mid-edit
   const s = store.active();
@@ -765,6 +785,7 @@ function updateHeader() {
       : esc(p.label) + ' <span>· ' + esc(shortId(s.id)) + "</span>";
     title.title = "Copy ask address — " + address;
   }
+  paintHeaderBadges(s.id);
   const chip = document.getElementById("th-chip");
   chip.className = "tb-status th-pill";
   let label, dot;
