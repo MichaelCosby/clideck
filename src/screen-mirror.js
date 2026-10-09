@@ -134,7 +134,18 @@ class ScreenMirror {
     if (state.top !== 0 || state.bottom !== rows - 1) out += `\x1b[${state.top + 1};${state.bottom + 1}r`;
     // With origin mode on, cursor rows count from the top margin.
     if (modes.originMode) out += '\x1b[?6h';
-    out += `\x1b[${buffer.cursorY - (modes.originMode ? state.top : 0) + 1};${buffer.cursorX + 1}H`;
+    const row = buffer.cursorY - (modes.originMode ? state.top : 0) + 1;
+    if (buffer.cursorX >= cols && modes.wraparoundMode) {
+      // Just past a character in the last column, the next one wraps to the next row. No cursor move can say
+      // that, so print the row's last character again (with its style): that leaves exactly this state.
+      const line = buffer.getLine(buffer.viewportY + buffer.cursorY);
+      let x = cols - 1;
+      let last = line && line.getCell(x);
+      if (last && last.getWidth() === 0 && x > 0) last = line.getCell(--x);   // the second half of a wide character
+      out += `\x1b[${row};${x + 1}H${sgr(last ? cellStyle(last) : '')}${(last && last.getChars()) || ' '}`;
+    } else {
+      out += `\x1b[${row};${Math.min(buffer.cursorX, cols - 1) + 1}H`;
+    }
     out += sgr(state.style);
     if (modes.applicationCursorKeysMode) out += '\x1b[?1h';
     if (modes.applicationKeypadMode) out += '\x1b=';

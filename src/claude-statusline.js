@@ -37,13 +37,20 @@ function runUserStatusLine(command, input, { cwd = process.cwd(), env = process.
     let settled = false;
     const finish = (value) => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
     let child;
+    const posix = process.platform !== 'win32';
     try {
-      child = spawn(command, { shell: true, cwd, env, stdio: ['pipe', 'pipe', 'ignore'] });
+      // Its own process group, so a timeout can end everything the shell started; anything left holding the
+      // output pipe would keep this hook (and Claude's status line) waiting until it finished.
+      child = spawn(command, { shell: true, cwd, env, stdio: ['pipe', 'pipe', 'ignore'], detached: posix });
     } catch {
       resolve('');
       return;
     }
-    const timer = setTimeout(() => { child.kill('SIGKILL'); finish(''); }, timeoutMs);
+    const killTree = () => {
+      try { if (posix) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+      child.stdout.destroy();
+    };
+    const timer = setTimeout(() => { killTree(); finish(''); }, timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { out += chunk; });
     child.on('error', () => finish(''));

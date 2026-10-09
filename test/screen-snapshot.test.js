@@ -137,6 +137,15 @@ test('origin mode: the cursor lands where it was, relative to the margins', asyn
   assert.equal(viaSnapshot, viaReplay);
 });
 
+test('a row filled to the last column still wraps the next character onto the next row', async () => {
+  for (const [label, row] of [['ascii', 'x'.repeat(20)], ['a wide character in the last two columns', 'x'.repeat(18) + '中'], ['styled', '\x1b[31m' + 'r'.repeat(20)]]) {
+    const { viaSnapshot, viaReplay } = await sameAsReplay(`\x1b[?1049h\x1b[2J\x1b[3;1H${row}`, 'Y next row', 20, 8);
+    assert.equal(viaSnapshot, viaReplay, label);
+  }
+  const { viaSnapshot } = await sameAsReplay(`\x1b[?1049h\x1b[2J\x1b[3;1H${'x'.repeat(20)}`, 'Y', 20, 8);
+  assert.match(viaSnapshot, /^3,0:Y\|/m, 'Y starts row 4 (index 3)');
+});
+
 test('if xterm keeps that state somewhere unexpected, there is no snapshot and the engine replays instead', async () => {
   const mirror = new ScreenMirror(40, 12);
   mirror.write('\x1b[?1049h\x1b[2Jdrawn');

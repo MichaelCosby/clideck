@@ -70,3 +70,19 @@ test('no user status line, a failing one, or CliDeck\'s own leaves the line empt
   assert.equal(out, '');
   assert.equal(posts[0].url, '/hooks/session-1/start');
 });
+
+test('a status line that runs too long is ended with everything it started, so the hook can exit', async () => {
+  const marker = `sleep 7.${process.pid % 1000}`;   // unique, to find leftovers
+  const script = `require(${JSON.stringify(join(__dirname, '..', 'src', 'claude-statusline.js'))}).runUserStatusLine(${JSON.stringify(`${marker}; echo late`)}, '{}', { timeoutMs: 100 }).then((out) => process.stdout.write(JSON.stringify(out)))`;
+  const started = Date.now();
+  const child = spawn(process.execPath, ['-e', script]);
+  let out = '';
+  child.stdout.on('data', (chunk) => { out += chunk; });
+  await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(out, '""');
+  assert.ok(Date.now() - started < 3000, `the hook process exited after ${Date.now() - started} ms`);
+  const { execFileSync } = require('child_process');
+  let left = '';
+  try { left = execFileSync('pgrep', ['-f', marker], { encoding: 'utf8' }); } catch {}
+  assert.equal(left.trim(), '', 'no process from the status line is left running');
+});
