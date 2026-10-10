@@ -69,6 +69,9 @@ class AgentSession extends EventEmitter {
     this.menuContext = '';
     this.menuKey = JSON.stringify({ choices: [], context: '' });
     this.turnOpen = false;
+    // Sub-agents the agent left running in the background when its last turn ended: the session stays working
+    // until they finish, though the agent's own prompt is free.
+    this.backgroundAgents = 0;
     this.pendingFinal = false;
     this.pendingFinalText = '';
     this.baselineCandidate = '';
@@ -333,7 +336,8 @@ class AgentSession extends EventEmitter {
       if (menu.choices.length) this.setStatus('idle');
       // A menu answered without a keystroke here (a PermissionRequest hook such as an auto-approver, or another
       // terminal) closes mid-turn while the agent carries on; a stop or idle hook still ends the turn as usual.
-      else if (hadMenu && this.turnOpen && this.status === 'idle') this.setStatus('working');
+      // The same goes for a background sub-agent's menu between turns.
+      else if (hadMenu && (this.turnOpen || this.backgroundAgents > 0) && this.status === 'idle') this.setStatus('working');
     }
 
     if (this.sessionStarted && this.status === null && hasInputPrompt(lines)) {
@@ -411,10 +415,16 @@ class AgentSession extends EventEmitter {
     this.pendingPromptEchoes = [];
     this.pendingFinal = false;
     this.finalizeTurn();
-    this.setStatus('idle');
+    this.setStatus(this.backgroundAgents > 0 ? 'working' : 'idle');
+  }
+
+  // Waiting only on background sub-agents: the agent can take a prompt, and its reply ends a turn as usual.
+  awaitingBackgroundAgents() {
+    return this.backgroundAgents > 0 && this.status === 'working' && !this.turnOpen && !this.menu.length;
   }
 
   cancelTurn() {
+    this.backgroundAgents = 0;
     this.pendingPromptEchoes = [];
     this.pendingFinal = false;
     this.pendingFinalText = '';
@@ -452,6 +462,7 @@ class AgentSession extends EventEmitter {
     }
     if (route === 'stop') {
       this.completeHookTurn(turnId);
+      this.backgroundAgents = this.provider.backgroundAgents?.(payload) || 0;
       this.pendingFinalText = this.provider.finalText?.(payload) || '';
       this.analyzeScreen();
       if (this.provider.finalizeOnStop) {
@@ -464,6 +475,9 @@ class AgentSession extends EventEmitter {
     }
     if (route === 'idle' || route === 'session-end') {
       this.completeHookTurn(turnId);
+      // Claude didn't send its idle notice while sub-agents ran; taking it as nothing left also clears a count a
+      // missed Stop could leave behind.
+      this.backgroundAgents = 0;
       this.analyzeScreen();
       this.finishTurn();
       return;
@@ -553,7 +567,8 @@ class AgentSession extends EventEmitter {
     }, delay);
     if (retryWhenIdle) {
       this.submitRetryTimer = setTimeout(() => {
-        if (!this.closed && this.status === 'idle') this.terminal.write('\r');
+        // Any start hook cancels this; waiting on sub-agents keeps the status working with the prompt still free.
+        if (!this.closed && (this.status === 'idle' || this.backgroundAgents > 0)) this.terminal.write('\r');
       }, delay + this.submitRetryMs);
     }
   }

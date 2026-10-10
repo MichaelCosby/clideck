@@ -186,6 +186,10 @@ test('ask availability rejects dormant, busy, menu, and reserved sessions', () =
   assert.deepEqual(availableAskSession(target, sessions, coordinator), {
     error: 'busy', steerable: true,
   });
+  // Waiting only on background sub-agents, the agent's prompt is free.
+  session.awaitingBackgroundAgents = () => true;
+  assert.equal(availableAskSession(target, sessions, coordinator).session, session);
+  delete session.awaitingBackgroundAgents;
   session.status = 'idle';
   session.menu = ['Approve'];
   assert.deepEqual(availableAskSession(target, sessions, coordinator), { error: 'busy' });

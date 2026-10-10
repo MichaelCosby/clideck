@@ -357,6 +357,60 @@ test('a menu answered by a hook (an auto-approver) puts a running turn back to w
   }
 });
 
+test('a Claude session stays working while background sub-agents run, though its turn has ended', () => {
+  const session = claudeSession();
+  session.terminal = { write() {} };
+  const events = [];
+  session.on('event', (event) => { if (event.type === 'status' || event.type === 'agent.final') events.push(event.state || event.text); });
+  const subagent = (status) => ({ id: 'a1', type: 'subagent', status, description: 'Run the tests', agent_type: 'general-purpose' });
+  try {
+    session.handleHook('session-start', { source: 'startup' });
+    session.handleHook('start', { prompt: 'Start a background agent' });
+    session.handleHook('stop', { last_assistant_message: 'STARTED', background_tasks: [subagent('running')] });
+    assert.equal(session.status, 'working');
+    assert.equal(session.turnOpen, false);
+    assert.equal(session.awaitingBackgroundAgents(), true);
+    // The sub-agent's finish starts a short turn of its own; that Stop lists nothing still running.
+    session.handleHook('start', { prompt: '<task-notification>…</task-notification>' });
+    session.handleHook('stop', { last_assistant_message: 'It finished.', background_tasks: [] });
+    assert.equal(session.status, 'idle');
+    assert.deepEqual(events, ['working', 'STARTED', 'It finished.', 'idle'], 'the reply still arrives, with no idle in between');
+
+    // Background shells (a dev server, say) and older Claude versions without the field leave the session idle.
+    for (const payload of [{ background_tasks: [{ id: 'b1', type: 'shell', status: 'running', command: 'npm run dev' }] },
+      { background_tasks: [subagent('completed')] }, {}]) {
+      session.handleHook('start', { prompt: 'Next' });
+      session.handleHook('stop', { last_assistant_message: 'Done', ...payload });
+      assert.equal(session.status, 'idle', JSON.stringify(payload));
+    }
+  } finally {
+    session.handleExit(0, null);
+  }
+});
+
+test('a background sub-agent\'s menu between turns needs you, then returns the session to working', () => {
+  const session = claudeSession();
+  session.terminal = { write() {} };
+  try {
+    session.handleHook('session-start', { source: 'startup' });
+    session.handleHook('start', { prompt: 'Start a background agent' });
+    session.handleHook('stop', { background_tasks: [{ id: 'a1', type: 'subagent', status: 'running' }] });
+    session.screen.write(['Do you want to proceed?', '❯ 1. Yes', '  2. No', 'Esc to cancel'].join('\r\n'));
+    session.analyzeScreen();
+    assert.equal(session.status, 'idle', 'needs you while the menu shows');
+    session.screen = new Screen();
+    session.screen.write('Running the approved command\r\n');
+    session.analyzeScreen();
+    assert.equal(session.status, 'working');
+    // An idle notice, a /clear or the session ending leaves nothing to wait on.
+    session.handleHook('idle', {});
+    assert.equal(session.status, 'idle');
+    assert.equal(session.backgroundAgents, 0);
+  } finally {
+    session.handleExit(0, null);
+  }
+});
+
 test('menu input outside a turn cannot resume historical ask work', () => {
   const session = claudeSession();
   session.terminal = { write() {} };

@@ -21,6 +21,13 @@ const claudeProvider = {
   watchTitle: watchClaudeTitle,
   model: (payload) => payload.model?.display_name || payload.model?.id,
   modelId: (payload) => payload.model?.id,
+  // Stop lists the background work still running. A sub-agent's finish (or stop from /tasks) starts a short turn
+  // of its own, whose Stop brings the list up to date. Background shells are left out: one can be a server
+  // that never ends.
+  backgroundAgents(payload) {
+    const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
+    return tasks.filter((task) => task?.type === 'subagent' && task.status === 'running').length;
+  },
   finalText(payload) {
     return String(payload.last_assistant_message || '').trim();
   },

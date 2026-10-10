@@ -126,7 +126,9 @@ function availableAskSession(entry, sessions, coordinator) {
   if (getProvider(entry.provider)?.supportsAsk !== true) return { error: 'unsupported_target' };
   const session = sessions.get(entry.id);
   if (!session || session.closed) return { error: 'dormant' };
-  if (coordinator.isActive(entry.id) || session.status !== 'idle'
+  // A session waiting only on its background sub-agents still takes a prompt, as it would at its idle prompt.
+  const free = session.status === 'idle' || session.awaitingBackgroundAgents?.();
+  if (coordinator.isActive(entry.id) || !free
     || session.turnOpen || session.closeRequested || session.menu.length) {
     const steerable = !session.closeRequested && !session.menu.length
       && (coordinator.isActive(entry.id) || session.status === 'working' || session.turnOpen);
