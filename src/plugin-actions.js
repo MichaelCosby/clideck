@@ -51,7 +51,7 @@ class PluginActionHub {
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.recompute();
+      this.recompute().catch(() => {});   // a failed pass leaves the last lists in place; the next event retries
     }, RECOMPUTE_DELAY_MS);
     this.timer.unref?.();
   }
@@ -69,32 +69,31 @@ class PluginActionHub {
 
   async recompute() {
     if (this.running) { this.again = true; return this.running; }
-    this.running = (async () => {
-      try {
-        const sessions = this.sessions();
-        const contexts = sessions.flatMap((session) => SERVER_ACTION_PLACEMENTS.map((placement) => ({
-          key: `${session.id}\n${placement}`, placement, context: this.context(session, placement),
-        })));
-        const declared = this.pluginManager.serverActions();
-        const visible = contexts.length && declared.length ? await this.pluginManager.matchServerActions(contexts) : new Map();
-        for (const session of sessions) {
-          const actions = [];
-          for (const action of declared) {
-            const shown = action.placements.filter((placement) => (
-              visible.get(action.pluginId)?.[`${session.id}\n${placement}`]?.includes(action.id)
-            ));
-            if (shown.length) actions.push({ ...action, placements: shown });
-          }
-          const json = JSON.stringify(actions);
-          if ((this.sent.get(session.id) || '[]') === json) continue;
-          this.sent.set(session.id, json);
-          this.broadcast({ type: 'plugin.actions', sessionId: session.id, actions });
+    // With nothing to wait on, this body finishes before `run` is even assigned, so it never clears
+    // `running` itself.
+    const run = (async () => {
+      const sessions = this.sessions();
+      const contexts = sessions.flatMap((session) => SERVER_ACTION_PLACEMENTS.map((placement) => ({
+        key: `${session.id}\n${placement}`, placement, context: this.context(session, placement),
+      })));
+      const declared = this.pluginManager.serverActions();
+      const visible = contexts.length && declared.length ? await this.pluginManager.matchServerActions(contexts) : new Map();
+      for (const session of sessions) {
+        const actions = [];
+        for (const action of declared) {
+          const shown = action.placements.filter((placement) => (
+            visible.get(action.pluginId)?.[`${session.id}\n${placement}`]?.includes(action.id)
+          ));
+          if (shown.length) actions.push({ ...action, placements: shown });
         }
-      } finally {
-        this.running = null;
+        const json = JSON.stringify(actions);
+        if ((this.sent.get(session.id) || '[]') === json) continue;
+        this.sent.set(session.id, json);
+        this.broadcast({ type: 'plugin.actions', sessionId: session.id, actions });
       }
     })();
-    await this.running;
+    this.running = run;
+    try { await run; } finally { if (this.running === run) this.running = null; }
     if (this.again) { this.again = false; return this.recompute(); }
   }
 

@@ -133,3 +133,26 @@ test('plugin.action.run control messages are bounded', () => {
     { sessionId: '' }, { sessionId: 'x'.repeat(201) }, { placement: 'toolbar' }, { placement: undefined },
   ]) assert.equal(hasValidControlFields({ ...valid, ...bad }), false, JSON.stringify(bad));
 });
+
+test('an engine that starts with no sessions still offers actions for sessions added later', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-server-actions-empty-'));
+  const bundledDir = mkdtempSync(join(tmpdir(), 'clideck-server-actions-empty-bundled-'));
+  mkdirSync(join(bundledDir, manifest.id));
+  writeFileSync(join(bundledDir, manifest.id, 'clideck-plugin.json'), JSON.stringify(manifest));
+  writeFileSync(join(bundledDir, manifest.id, 'server.js'), server);
+  const engine = new HeadlessServer({ port: 0, dataDir, bundledPluginsDir: bundledDir, autoSaveMs: 0 });
+  t.after(async () => {
+    await engine.close();
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(bundledDir, { recursive: true, force: true });
+  });
+  const { url } = await engine.listen();
+  const client = await openSocket(url);
+  t.after(() => client.socket.close());
+  await new Promise((resolve) => setTimeout(resolve, 200));   // the first pass, with nothing to evaluate
+
+  const [entry] = engine.persistence.importMissing([{ id: 'late-one', provider: 'claude-code', name: 'Late', cwd: dataDir }]);
+  engine.broadcast(engine.dormantSnapshot(entry));
+  const offered = await waitFor(client.events, (event) => event.type === 'plugin.actions' && event.sessionId === 'late-one');
+  assert.deepEqual(offered.actions.map((action) => action.id), ['enable']);
+});
