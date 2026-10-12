@@ -1,7 +1,15 @@
 const { existsSync } = require('fs');
+const os = require('os');
 
-function defaultShell() {
-  return process.env.SHELL || (existsSync('/bin/zsh') ? '/bin/zsh' : 'sh');
+// The user's shell: $SHELL, else their login shell from the user database (a process manager such as s6 or
+// launchd often starts CliDeck without $SHELL), else zsh or sh.
+function defaultShell(env = process.env, userInfo = os.userInfo, exists = existsSync) {
+  if (env.SHELL) return env.SHELL;
+  try {
+    const shell = userInfo().shell;
+    if (shell && exists(shell)) return shell;
+  } catch {}
+  return exists('/bin/zsh') ? '/bin/zsh' : 'sh';
 }
 
 const shellProvider = {
@@ -17,4 +25,4 @@ const shellProvider = {
   },
 };
 
-module.exports = { shellProvider };
+module.exports = { defaultShell, shellProvider };
