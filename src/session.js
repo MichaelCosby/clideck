@@ -591,6 +591,13 @@ class AgentSession extends EventEmitter {
       this.beginTurn();
       this.setStatus('working');
     }
+    // Declining a dialog (Esc, "No, and tell Claude… (esc)", Cancel on a review step) ends Claude's turn without
+    // a Stop hook, so the turn ends here; any other choice continues it.
+    if (this.menu.length && this.turnOpen && this.declinesMenu(input)) {
+      this.declineTurn();
+      this.terminal.write(input);
+      return;
+    }
     // Menu approval continues the current turn, regardless of how it was submitted.
     if (this.menu.length && this.turnOpen && /[\r\n0-9]/.test(input)) {
       this.beginTurn();
@@ -598,9 +605,28 @@ class AgentSession extends EventEmitter {
     }
     if (!this.menu.length && /[\r\n]$/.test(input)) this.noteTurnStart();
     this.terminal.write(input);
-    if (this.status === 'working' && input === this.provider.interruptInput) {
+    // Waiting only on background sub-agents, Esc at Claude's prompt stops nothing.
+    if (this.status === 'working' && input === this.provider.interruptInput
+      && (this.turnOpen || !this.backgroundAgents)) {
       this.cancelTurn();
     }
+  }
+
+  declinesMenu(input) {
+    const isDecline = this.provider.screen?.isDeclineChoice;
+    if (!isDecline) return false;
+    if (input === this.provider.interruptInput) return true;
+    const choice = /^[\r\n]$/.test(input) ? this.menu.find((entry) => entry.selected)
+      : /^\d$/.test(input) ? this.menu.find((entry) => entry.value === input) : null;
+    return Boolean(choice && isDecline(choice, this.menuContext, this.menu));
+  }
+
+  // Like cancelTurn, but sub-agents still running in the background keep the session working.
+  declineTurn() {
+    const background = this.backgroundAgents;
+    this.cancelTurn();
+    this.backgroundAgents = background;
+    if (background > 0) this.setStatus('working');
   }
 
   resize(cols, rows) {

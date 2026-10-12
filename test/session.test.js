@@ -411,6 +411,67 @@ test('a background sub-agent\'s menu between turns needs you, then returns the s
   }
 });
 
+test('declining a Claude dialog ends the turn; answering it continues', () => {
+  const question = ['Tea or coffee?', '❯ 1. Tea', '  2. Coffee', '  3. Type something.', '', 'Enter to select · ↑/↓ to navigate · Esc to cancel'];
+  const review = ['Review your answers', ' ● Tea or coffee?', '   → Tea', 'Ready to submit your answers?', '❯ 1. Submit answers', '  2. Cancel'];
+  const permission = ['Do you want to proceed?', '❯ 1. Yes', '  2. Yes, and don’t ask again for this command',
+    '  3. No, and tell Claude what to do differently (esc)', '', 'Esc to cancel'];
+  const answered = ['Proceed with the refactor?', '❯ 1. Go ahead', '  2. Cancel', '  3. Type something.', '', 'Enter to select · Esc to cancel'];
+  const cases = [
+    ['Esc on a question', question, '\x1b', 'idle'],
+    ['Cancel on the review step, by number', review, '2', 'idle'],
+    ['Cancel on the review step, by Enter', review.map((line) => line.replace('❯ 1.', '  1.').replace('  2. Cancel', '❯ 2. Cancel')), '\r', 'idle'],
+    ['"No… (esc)" on a permission prompt', permission, '3', 'idle'],
+    ['Submit on the review step', review, '1', 'working'],
+    ['Yes on a permission prompt', permission, '\r', 'working'],
+    ['No on a permission prompt (2.1.296)', ['Do you want to proceed?', '❯ 1. Yes', '  2. Yes, and always allow access to /w from this project', '  3. No', '', 'Esc to cancel · Tab to amend'], '3', 'idle'],
+    ['an answer labelled Cancel', answered, '2', 'working'],
+    ['an answer labelled No', ['Do you want to migrate?', '❯ 1. Yes', '  2. No', '  3. Type something.', '', 'Enter to select · Esc to cancel'], '2', 'working'],
+  ];
+  for (const [name, lines, input, expected] of cases) {
+    const session = claudeSession();
+    session.terminal = { write() {} };
+    try {
+      session.handleHook('session-start', { source: 'startup' });
+      session.handleHook('start', { prompt: 'Ask me' });
+      session.screen.write(lines.join('\r\n'));
+      session.analyzeScreen();
+      assert.equal(session.status, 'idle', `${name}: the dialog needs you`);
+      session.writeInput(input);
+      session.screen = new Screen();
+      session.screen.write(input === '1' || expected === 'working' ? 'Carrying on\r\n' : '● User declined to answer questions\r\n\r\n❯ \r\n');
+      session.analyzeScreen();
+      assert.equal(session.status, expected, name);
+      assert.equal(session.turnOpen, expected === 'working', `${name}: turn open`);
+    } finally {
+      session.handleExit(0, null);
+    }
+  }
+});
+
+test('declining a dialog keeps a session working while background sub-agents run; Esc at the prompt then stops nothing', () => {
+  const session = claudeSession();
+  session.terminal = { write() {} };
+  try {
+    session.handleHook('session-start', { source: 'startup' });
+    session.handleHook('start', { prompt: 'Start a background agent, then ask me' });
+    session.backgroundAgents = 1;
+    session.screen.write(['Tea or coffee?', '❯ 1. Tea', '  2. Coffee', '', 'Esc to cancel'].join('\r\n'));
+    session.analyzeScreen();
+    session.writeInput('\x1b');
+    assert.equal(session.status, 'working');
+    assert.equal(session.backgroundAgents, 1);
+    session.screen = new Screen();
+    session.screen.write('❯ \r\n');
+    session.analyzeScreen();
+    session.writeInput('\x1b');
+    assert.equal(session.status, 'working', 'Esc at the prompt leaves the sub-agents running');
+    assert.equal(session.backgroundAgents, 1);
+  } finally {
+    session.handleExit(0, null);
+  }
+});
+
 test('menu input outside a turn cannot resume historical ask work', () => {
   const session = claudeSession();
   session.terminal = { write() {} };

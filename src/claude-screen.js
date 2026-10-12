@@ -5,7 +5,21 @@ const AGENT_RE = /^(?:[│ ]\s*)?[⏺•●]\s(.*)$/;
 const menu = createMenuParser({
   selectionMarker: /[❯›]/,
   turnMarker: /^(?:[│ ]\s*)?[⏺•●❯›]\s/,
+  // The review step after several questions ("Ready to submit your answers?") has no Esc hint below its
+  // choices, so its last choice is the footer.
+  footerPattern: /\besc\b|\(esc\)|press enter to continue|^\s*(?:[❯›]\s+)?\d+\.\s+Cancel\s*$/i,
 });
+
+// Choices that decline a dialog and end Claude's turn without a Stop hook: No on a permission prompt (older
+// versions label it "No, and tell Claude what to do differently (esc)"), and Cancel on the questions' review
+// step. An answer to a question is not a decline, even one labelled "No": question dialogs always offer
+// "Type something.", which permission prompts don't.
+function isDeclineChoice(choice, context = '', choices = []) {
+  const label = String(choice?.label || '');
+  if (/\(esc\)\s*$/i.test(label)) return true;
+  if (/^cancel$/i.test(label)) return /ready to submit your answers/i.test(String(context));
+  return /^no\b/i.test(label) && !choices.some((entry) => /^type something/i.test(String(entry?.label || '')));
+}
 
 function cleanAgentText(text) {
   let output = String(text || '')
@@ -118,4 +132,5 @@ module.exports = {
   stripMenu: menu.stripMenu,
   hasInputPrompt,
   hasSettledPrompt,
+  isDeclineChoice,
 };
