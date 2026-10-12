@@ -22,10 +22,11 @@ function detail(s) {
   if (!s) return "Update status unavailable.";
   if (s.state === "checking") return "Checking for updates…";
   if (s.state === "current") return "CliDeck is up to date.";
-  if (s.state === "available") return `Version ${s.latestVersion || "update"} available.${s.canInstall ? "" : " " + (s.instruction || "Update your CliDeck installation manually.")}`;
+  const pending = s.installed ? " An earlier update is installed and waiting for a restart." : "";
+  if (s.state === "available") return `Version ${s.latestVersion || "update"} available.${s.canInstall ? "" : " " + (s.instruction || "Update your CliDeck installation manually.")}${pending}`;
   if (s.state === "installing") return "Installing update… Your sessions keep running.";
-  if (s.state === "installed") return "Update installed. Restart CliDeck when ready to use it.";
-  return (s.error || "Could not check for updates. Try again.") + (s.instruction ? " " + s.instruction : "");
+  if (s.state === "installed") return "Update installed. Restart CliDeck when ready to use it." + (s.error ? " " + s.error : "");
+  return (s.error || "Could not check for updates. Try again.") + (s.instruction ? " " + s.instruction : "") + pending;
 }
 // ── Restarting onto the code on disk (after an update), optionally once every agent is idle ──
 const RESTARTED_FLAG = "clideck.restarting";
@@ -70,7 +71,6 @@ export function updateControls() {
   const s = store.engineUpdate, root = h("div", "set-update");
   const status = h("div", "set-update-status"); status.setAttribute("role", "status"); status.textContent = detail(s); root.append(status);
   const restart = restartControls();
-  if (s?.state === "installed") { if (restart) root.append(restart); return root; }
   const install = installable(s);
   const button = h("button", "set-action"); button.type = "button";
   button.textContent = install ? (s.state === "error" ? "Retry update" : "Update") : busy(s) ? (s.state === "installing" ? "Installing…" : "Checking…") : "Check for updates";

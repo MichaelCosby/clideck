@@ -234,3 +234,42 @@ test('an installation disappearing after the check reports useful recovery instr
   rmSync(root, { recursive: true });
   await assert.rejects(installer.install('2.4.0'), /Run npm install.*restart CliDeck/);
 });
+
+test('after an install, a later check finds a newer update; nothing newer keeps the restart prompt', async () => {
+  let clock = 0, latest = '2.4.0';
+  const { updates, installed } = service({ now: () => clock, check: async () => ({ state: 'available', latestVersion: latest }) });
+  await updates.check();
+  await updates.install();
+  assert.equal(updates.snapshot().state, 'installed');
+
+  clock += 60_000;
+  await updates.check();
+  assert.equal(updates.snapshot().state, 'installed', 'the installed version itself is not offered again');
+  assert.equal(updates.snapshot().latestVersion, '2.4.0');
+
+  clock += 60_000;
+  latest = '2.4.1';
+  await updates.check();
+  assert.equal(updates.snapshot().state, 'available');
+  assert.equal(updates.snapshot().installed, '2.4.0', 'the pending restart is still reported');
+  await updates.install();
+  assert.deepEqual(installed, ['2.4.0', '2.4.1']);
+  assert.equal(updates.snapshot().state, 'installed');
+  assert.equal(updates.snapshot().latestVersion, '2.4.1');
+});
+
+test('a git checkout that is current after an install still says to restart; a failed check keeps it too', async () => {
+  let clock = 0, result = { state: 'available', latestVersion: 'abc1234 (1 new commit on origin/main)' };
+  const { updates } = service({ now: () => clock, check: async () => { if (result instanceof Error) throw result; return result; } });
+  await updates.check();
+  await updates.install();
+  clock += 60_000;
+  result = { state: 'current' };
+  await updates.check();
+  assert.equal(updates.snapshot().state, 'installed');
+  clock += 60_000;
+  result = new Error('offline');
+  await updates.check();
+  assert.equal(updates.snapshot().state, 'installed');
+  assert.match(updates.snapshot().error, /newer updates/);
+});

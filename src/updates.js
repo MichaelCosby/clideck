@@ -19,6 +19,7 @@ class Updates {
     this.checking = null;
     this.installing = null;
     this.timer = null;
+    this.installed = null;   // the version installed on disk, waiting for a restart
     this.lastCheck = -Infinity;
     this.closed = false;
   }
@@ -32,7 +33,8 @@ class Updates {
   }
 
   check() {
-    if (this.closed || this.installing || this.state.state === 'installed') return Promise.resolve(this.snapshot());
+    // An installed update can still be followed by a newer one: one restart then picks up both.
+    if (this.closed || this.installing) return Promise.resolve(this.snapshot());
     if (this.checking) return this.checking;
     if (this.now() - this.lastCheck < 10_000) return Promise.resolve(this.snapshot());
     this.lastCheck = this.now();
@@ -43,9 +45,16 @@ class Updates {
         const [result, capability] = await Promise.all([
           this.checkRegistry({ currentVersion: this.currentVersion }), this.installer.capability(),
         ]);
-        this.publish({ ...capability, ...result });
+        const next = { ...capability, ...result };
+        // Nothing newer than what is already installed: it still only needs the restart.
+        if (this.installed && (next.state === 'current' || (next.state === 'available' && next.latestVersion === this.installed))) {
+          this.publishInstalled();
+        } else {
+          this.publish({ ...next, ...(this.installed && { installed: this.installed }) });
+        }
       } catch {
-        this.publish({ canInstall: false, state: 'error', error: 'Could not check for updates. Please try again.' });
+        if (this.installed) this.publishInstalled('Could not check for newer updates.');
+        else this.publish({ canInstall: false, state: 'error', error: 'Could not check for updates. Please try again.' });
       } finally {
         this.checking = null;
         if (!this.closed) {
@@ -59,6 +68,11 @@ class Updates {
     return this.checking;
   }
 
+  publishInstalled(error) {
+    return this.publish({ canInstall: false, state: 'installed', latestVersion: this.installed,
+      instruction: 'Update installed. Restart CliDeck when you are ready.', ...(error && { error }) });
+  }
+
   install() {
     if (this.installing) return this.installing;
     // Client supplies no command, destination, or version. Only our checked offer is installable.
@@ -70,11 +84,12 @@ class Updates {
     this.installing = Promise.resolve().then(async () => {
       try {
         await this.installer.install(version);
-        this.publish({ canInstall: false, state: 'installed', latestVersion: version,
-          instruction: 'Update installed. Restart CliDeck when you are ready.' });
+        this.installed = version;
+        this.publishInstalled();
       } catch (error) {
         this.publish({ canInstall: true, state: 'error', latestVersion: version,
-          error: error.message || 'The update could not be completed. Please try again.' });
+          error: error.message || 'The update could not be completed. Please try again.',
+          ...(this.installed && { installed: this.installed }) });
       } finally { this.installing = null; }
       return this.snapshot();
     });
