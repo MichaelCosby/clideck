@@ -210,6 +210,10 @@ function applyEvent(ev) {
       emit("plugins", pluginsList); return;
     case "plugin.message": emit("plugin:message", ev); return;
     case "plugin.result": emit("plugin:result", ev); return;
+    case "plugin.actions": emit("plugin:actions", ev); return;
+    case "session.badges": emit("session:badges", ev); return;
+    case "plugin.toast": emit("plugin:toast", ev); return;
+    case "plugin.action.result": emit("plugin:actionResult", ev); return;
     case "sessions.saved": emit("saved", ev.success !== false, ev.error || ""); return;
     case "session.dispatch": emit("session:dispatch", ev); return;   // {fromId,fromName,toId,toName}
     case "content.show": emit("content:show", ev); return;   // {sessionId,contentId,kind,name,url} — re-emit only; the engine holds the asset and replays it on connect

@@ -1,4 +1,5 @@
 const { parentPort, workerData } = require('worker_threads');
+const { AsyncLocalStorage } = require('async_hooks');
 const { pathToFileURL } = require('url');
 const {
   CORE_PLUGIN_EVENT_SET,
@@ -11,6 +12,9 @@ const commandHandlers = new Map();
 const settingsHandlers = new Set();
 const shutdownHandlers = new Set();
 const coreCalls = new Map();
+const actions = new Map();
+const actionRun = new AsyncLocalStorage();   // the run a toast belongs to, so it reaches the client that ran it
+const ACTION_PLACEMENTS = new Set(['session.menu', 'terminal.header']);
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const MAX_PLUGIN_CONTENT_BYTES = 10 * 1024 * 1024;
 let settings = { ...(workerData.settings || {}) };
@@ -134,6 +138,51 @@ const api = Object.freeze({
     shutdownHandlers.add(handler);
     return () => shutdownHandlers.delete(handler);
   },
+  // A session action every client can show, the phone app included: `when(context)` and `run(context)` run
+  // here. Context: {surface, selection, session: {id, name, provider, cwd, projectId, live, status}, project}.
+  // Call refreshActions() when the plugin's own state changes what `when` answers.
+  registerAction(definition) {
+    const id = String(definition?.id || '');
+    const label = String(definition?.label || '').trim();
+    const placements = [...new Set((Array.isArray(definition?.placements) ? definition.placements : [])
+      .filter((placement) => ACTION_PLACEMENTS.has(placement)))];
+    if (!safeName(id) || !label || !placements.length || typeof definition.run !== 'function'
+      || (definition.when !== undefined && typeof definition.when !== 'function')) {
+      throw new TypeError('registerAction requires a safe id, a label, a session.menu or terminal.header placement, and run().');
+    }
+    if (actions.has(id)) throw new TypeError(`Action "${id}" is already registered.`);
+    const entry = { definition, placements, when: definition.when, run: definition.run };
+    actions.set(id, entry);
+    post({
+      type: 'register-action',
+      definition: { id, label, icon: String(definition.icon || ''), description: String(definition.description || ''), placements },
+    });
+    return () => {
+      if (actions.get(id) !== entry) return;
+      actions.delete(id);
+      post({ type: 'unregister-action', id });
+    };
+  },
+  refreshActions() { post({ type: 'refresh-actions' }); },
+  // A short plain-text badge on a session ({ label, icon, title }), shown by every client; null clears it.
+  setSessionBadge(sessionId, badge) {
+    post({
+      type: 'session-badge',
+      sessionId: String(sessionId || ''),
+      badge: badge && typeof badge === 'object'
+        ? { label: String(badge.label ?? ''), icon: String(badge.icon ?? ''), title: String(badge.title ?? '') } : null,
+    });
+  },
+  // Shown by the client that ran the current action, or by every client outside an action.
+  toast(kind, options = {}) {
+    const runId = actionRun.getStore();
+    post({
+      type: 'toast',
+      kind: String(kind || 'info'),
+      options: { id: String(options?.id ?? ''), title: String(options?.title ?? ''), body: String(options?.body ?? '') },
+      ...(runId && { runId }),
+    });
+  },
   getSession(id) { return callCore('getSession', [id]); },
   getSessions() { return callCore('getSessions'); },
   getProjects() { return callCore('getProjects'); },
@@ -206,6 +255,33 @@ parentPort.on('message', async (message) => {
         },
       });
       invoke(handler, message.data, context);
+    }
+    return;
+  }
+  if (message.type === 'match-actions') {
+    // A broken or slow `when` hides that action in that context; it never hides the plugin's other actions.
+    const result = {};
+    for (const entry of Array.isArray(message.contexts) ? message.contexts : []) {
+      const ids = [];
+      for (const [id, action] of actions) {
+        if (!action.placements.includes(entry.placement)) continue;
+        try {
+          if (typeof action.when !== 'function' || await action.when.call(action.definition, structuredClone(entry.context))) ids.push(id);
+        } catch {}
+      }
+      if (ids.length) result[entry.key] = ids;
+    }
+    post({ type: 'match-result', requestId: message.requestId, result });
+    return;
+  }
+  if (message.type === 'run-action') {
+    const action = actions.get(String(message.id || ''));
+    try {
+      if (!action) throw new Error('That action is no longer registered.');
+      await actionRun.run(message.requestId, () => action.run.call(action.definition, structuredClone(message.context || {})));
+      post({ type: 'action-result', requestId: message.requestId, ok: true });
+    } catch (error) {
+      post({ type: 'action-result', requestId: message.requestId, ok: false, error: error?.message || String(error) });
     }
     return;
   }

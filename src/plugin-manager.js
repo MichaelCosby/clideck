@@ -35,6 +35,9 @@ const COMMAND_TIMEOUT_MS = 60 * 60 * 1000;
 const LOAD_TIMEOUT_MS = 10_000;
 const STOP_TIMEOUT_MS = 1_500;
 const CLIENT_REPLY_TTL_MS = 10 * 60 * 1000;
+const ACTION_MATCH_TIMEOUT_MS = 2_000;
+const ACTION_RUN_TIMEOUT_MS = 60_000;
+const SERVER_ACTION_PLACEMENTS = new Set(['session.menu', 'terminal.header']);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -104,6 +107,10 @@ class PluginManager {
     this.engineVersion = options.engineVersion || '';
     this.onChange = options.onChange || (() => {});
     this.onClientEvent = options.onClientEvent || (() => {});
+    this.onServerActionsChange = options.onServerActionsChange || (() => {});
+    this.onSessionBadge = options.onSessionBadge || (() => {});
+    this.onToast = options.onToast || (() => {});
+    this.onPluginStopped = options.onPluginStopped || (() => {});
     this.onCoreCall = options.onCoreCall || (async () => {
       throw new Error('Core plugin operations are unavailable.');
     });
@@ -211,6 +218,8 @@ class PluginManager {
       worker: null,
       pending: new Map(),
       clientReplies: new Map(),
+      actions: new Map(),        // server-declared actions: id -> {id, label, icon, description, placements}
+      actionCalls: new Map(),    // requestId -> pending match or run
       intentionalStop: false,
     };
   }
@@ -268,6 +277,7 @@ class PluginManager {
           record.status = 'failed';
           record.error = `Plugin worker exited (${code}).`;
           this.rejectPending(record, record.error);
+          this.dropServerActions(record);
           this.emitChange();
         }
       });
@@ -308,6 +318,29 @@ class PluginManager {
       clearTimeout(pending.timer);
       if (message.ok) pending.resolve(message.result);
       else pending.reject(new Error(message.error || 'Plugin command failed.'));
+    } else if (message.type === 'register-action') {
+      const action = this.serverAction(message.definition);
+      if (!action) this.log('error', record.manifest.id, 'Rejected an invalid server action.');
+      else { record.actions.set(action.id, action); this.onServerActionsChange(record.manifest.id); }
+    } else if (message.type === 'unregister-action') {
+      if (record.actions.delete(String(message.id || ''))) this.onServerActionsChange(record.manifest.id);
+    } else if (message.type === 'refresh-actions') {
+      this.onServerActionsChange(record.manifest.id);
+    } else if (message.type === 'session-badge') {
+      this.onSessionBadge(record.manifest.id, message.sessionId, message.badge);
+    } else if (message.type === 'toast') {
+      const run = message.runId && record.actionCalls.get(message.runId);
+      const toast = { kind: message.kind, options: message.options };
+      if (run?.onToast) run.onToast(toast);
+      else this.onToast(record.manifest.id, record.manifest.name, toast);
+    } else if (message.type === 'match-result' || message.type === 'action-result') {
+      const call = record.actionCalls.get(message.requestId);
+      if (!call) return;
+      record.actionCalls.delete(message.requestId);
+      clearTimeout(call.timer);
+      call.resolve(message.type === 'match-result'
+        ? (message.result && typeof message.result === 'object' ? message.result : {})
+        : { ok: message.ok === true, ...(message.ok !== true && { error: String(message.error || 'The action failed.').slice(0, 500) }) });
     } else if (message.type === 'log') {
       this.log(message.level, record.manifest.id, message.message);
     } else if (message.type === 'core-call') {
@@ -327,6 +360,73 @@ class PluginManager {
         }),
       );
     }
+  }
+
+  serverAction(definition) {
+    if (!definition || typeof definition !== 'object' || !PLUGIN_ID_RE.test(String(definition.id || ''))) return null;
+    const label = String(definition.label || '').trim().slice(0, 120);
+    const placements = [...new Set((Array.isArray(definition.placements) ? definition.placements : [])
+      .filter((placement) => SERVER_ACTION_PLACEMENTS.has(placement)))];
+    if (!label || !placements.length) return null;
+    return {
+      id: definition.id,
+      label,
+      icon: String(definition.icon || '').slice(0, 24),
+      description: String(definition.description || '').slice(0, 240),
+      placements,
+    };
+  }
+
+  // Every action a ready plugin's server part declared, in plugin order.
+  serverActions() {
+    return [...this.records.values()]
+      .filter((record) => record.status === 'ready' && record.worker && record.actions.size)
+      .flatMap((record) => [...record.actions.values()].map((action) => ({ pluginId: record.manifest.id, ...action })));
+  }
+
+  actionCall(record, message, timeoutMs, fallback) {
+    const requestId = randomUUID();
+    return new Promise((resolveCall) => {
+      const timer = setTimeout(() => {
+        record.actionCalls.delete(requestId);
+        resolveCall(fallback);
+      }, timeoutMs);
+      timer.unref?.();
+      record.actionCalls.set(requestId, { resolve: resolveCall, timer, run: message.type === 'run-action', onToast: message.onToast });
+      const { onToast, ...wire } = message;
+      record.worker.postMessage({ ...wire, requestId });
+    });
+  }
+
+  // Asks each plugin with server actions which of them apply in each context: resolves
+  // Map(pluginId -> {contextKey: [actionId]}). A plugin that doesn't answer in time shows nothing.
+  async matchServerActions(contexts) {
+    const records = [...this.records.values()]
+      .filter((record) => record.status === 'ready' && record.worker && record.actions.size);
+    const answers = await Promise.all(records.map((record) => this.actionCall(
+      record, { type: 'match-actions', contexts }, ACTION_MATCH_TIMEOUT_MS, {},
+    )));
+    return new Map(records.map((record, index) => [record.manifest.id, answers[index]]));
+  }
+
+  // Toasts the action shows while it runs go to onToast (the client that ran it) instead of every client.
+  async runServerAction(pluginId, actionId, context, onToast) {
+    const record = this.records.get(pluginId);
+    if (!record || record.status !== 'ready' || !record.worker || !record.actions.has(actionId)) {
+      return { ok: false, error: 'That action is not available.' };
+    }
+    return this.actionCall(record, { type: 'run-action', id: actionId, context, onToast },
+      ACTION_RUN_TIMEOUT_MS, { ok: false, error: 'The action timed out.' });
+  }
+
+  dropServerActions(record) {
+    for (const call of record.actionCalls.values()) {
+      clearTimeout(call.timer);
+      call.resolve(call.run ? { ok: false, error: 'The plugin stopped.' } : {});
+    }
+    record.actionCalls.clear();
+    record.actions.clear();
+    this.onPluginStopped(record.manifest.id);
   }
 
   workerClientEvent(record, message, requestId = '') {
@@ -673,6 +773,7 @@ class PluginManager {
     this.rejectPending(record, 'Plugin stopped.');
     for (const pending of record.clientReplies.values()) clearTimeout(pending.timer);
     record.clientReplies.clear();
+    this.dropServerActions(record);
     await Promise.race([
       new Promise((resolveStop) => {
         const onMessage = (message) => {

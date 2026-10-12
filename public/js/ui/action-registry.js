@@ -6,8 +6,10 @@ const PLACEMENTS = new Set([
   "session.menu", "project.menu", "toolbar", "terminal.voice",
 ]);
 const actions = new Map();                 // pluginId/actionId -> normalized action
+const serverActions = new Map();           // sessionId -> actions the engine resolved for that session
 const listeners = new Set();
 let onError = () => {};
+let runServerAction = async () => false;
 
 const keyOf = (pluginId, id) => pluginId + "/" + id;
 const safeId = (value) => /^[a-z][a-z0-9-]{0,62}$/.test(String(value || ""));
@@ -44,8 +46,35 @@ export function unregisterActionsForPlugin(pluginId) {
   if (any) changed();
 }
 
+// Actions a plugin's server part declared: the engine already decided they apply to this session and
+// placement, so they need no `when` here. `list` replaces the session's previous list.
+export function setServerActions(sessionId, list) {
+  sessionId = String(sessionId || "");
+  if (!sessionId) return;
+  const valid = (Array.isArray(list) ? list : []).filter((action) => action && safeId(action.pluginId) && safeId(action.id)
+    && typeof action.label === "string" && action.label.trim() && Array.isArray(action.placements));
+  if (!valid.length && !serverActions.has(sessionId)) return;
+  if (valid.length) serverActions.set(sessionId, valid.map((action) => ({
+    pluginId: action.pluginId, id: action.id, label: action.label.trim().slice(0, 120),
+    placements: action.placements.filter((p) => PLACEMENTS.has(p)),
+    icon: String(action.icon || "").slice(0, 24), description: String(action.description || "").slice(0, 240),
+    hasWhen: false, server: true,
+  })));
+  else serverActions.delete(sessionId);
+  changed();
+}
+export function clearServerActions() { if (serverActions.size) { serverActions.clear(); changed(); } }
+export function setServerActionRunner(fn) { runServerAction = typeof fn === "function" ? fn : async () => false; }
+
+function serverCandidates(placement, context) {
+  const sessionId = context && context.session && context.session.id;
+  return (serverActions.get(String(sessionId || "")) || []).filter((action) => action.placements.includes(placement))
+    .map((action) => ({ ...action, invoke: (method, id) => method === "run-action" ? runServerAction(action.pluginId, id, sessionId, placement) : true }));
+}
+
 export function hasActions(placement) {
   for (const action of actions.values()) if (action.placements.includes(placement)) return true;
+  for (const list of serverActions.values()) if (list.some((action) => action.placements.includes(placement))) return true;
   return false;
 }
 
@@ -57,7 +86,7 @@ export async function resolveActions(placement, context) {
     try { return (await action.invoke("match-action", action.id, snapshot)) ? action : null; }
     catch { return null; } // a broken availability predicate hides one action; it never breaks a core menu
   }));
-  return visible.filter(Boolean).map((action) => ({ ...action, context: snapshot }));
+  return [...visible.filter(Boolean), ...serverCandidates(placement, snapshot)].map((action) => ({ ...action, context: snapshot }));
 }
 
 // Context menus must decide preventDefault synchronously. Unconditional actions are safe to expose now;
@@ -66,6 +95,7 @@ export function resolveImmediateActions(placement, context) {
   const snapshot = contextSnapshot(context);
   return [...actions.values()]
     .filter((action) => action.placements.includes(placement) && !action.hasWhen)
+    .concat(serverCandidates(placement, snapshot))
     .map((action) => ({ ...action, context: snapshot }));
 }
 
@@ -79,4 +109,4 @@ export function onActionsChange(fn) { listeners.add(fn); return () => listeners.
 export function setActionErrorHandler(fn) { onError = typeof fn === "function" ? fn : () => {}; }
 
 // Small test seams: registrations remain private; tests assert normalized outcomes, not implementation maps.
-export function __clearActionsForTest() { actions.clear(); changed(); }
+export function __clearActionsForTest() { actions.clear(); serverActions.clear(); changed(); }

@@ -87,6 +87,41 @@ export interface PluginServerApi {
     url: string;
     replaces?: string;
   }>;
+  /** A session action every client shows, the phone app included. `when` and `run` run in this worker;
+   *  call `refreshActions()` when the plugin's own state changes what `when` answers. */
+  registerAction(action: PluginServerAction): () => void;
+  refreshActions(): void;
+  /** A short plain-text badge on a session, shown by every client; `null` clears it. */
+  setSessionBadge(sessionId: string, badge: PluginSessionBadge | null): void;
+  /** Shown by the client that ran the current action, or by every client outside an action. */
+  toast(kind: 'info' | 'success' | 'warn' | 'error', options: { id?: string; title?: string; body: string }): void;
+}
+
+export interface PluginSessionBadge {
+  /** Up to 32 characters. */
+  label: string;
+  /** One or two characters. */
+  icon?: string;
+  /** Up to 200 characters. */
+  title?: string;
+}
+
+export interface PluginServerActionContext {
+  surface: 'session' | 'terminal';
+  selection: { text: ''; surface: 'session' | 'terminal'; anchor?: '' };
+  session: PluginClientSessionSnapshot;
+  project: object | null;
+}
+
+export interface PluginServerAction {
+  id: string;
+  label: string;
+  /** A named mark (mic, waveform, speaker, text, clock, terminal, plugin) or a one- or two-character glyph. */
+  icon?: string;
+  description?: string;
+  placements: Array<'session.menu' | 'terminal.header'>;
+  when?: (context: PluginServerActionContext) => boolean | Promise<boolean>;
+  run(context: PluginServerActionContext): unknown;
 }
 
 export interface PluginActionContext {

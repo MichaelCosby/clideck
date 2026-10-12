@@ -1,5 +1,6 @@
 const { isValidConfigPatch } = require('./config-store');
 const { MAX_RESOLVE_PATHS } = require('./content-store');
+const { PLUGIN_ID_RE } = require('./plugin-manifest');
 
 const MAX_CONTROL_TEXT = 1024 * 1024;
 const MAX_CONTROL_BYTES = 16 * 1024 * 1024;
@@ -43,6 +44,7 @@ const CONTROL_TYPES = new Set([
   'plugin.setEnabled',
   'plugin.settings.update',
   'plugin.message',
+  'plugin.action.run',
 ]);
 
 function isString(value, max, allowEmpty = false) {
@@ -111,6 +113,13 @@ function hasValidControlFields(message) {
     return hasValidRequestId(message) && isString(message.pluginId, 63)
       && isString(message.event, 63)
       && Buffer.byteLength(JSON.stringify(message.data ?? null)) <= MAX_CONTROL_TEXT;
+  }
+  if (message.type === 'plugin.action.run') {
+    return isString(message.requestId, 100)
+      && typeof message.pluginId === 'string' && PLUGIN_ID_RE.test(message.pluginId)
+      && typeof message.actionId === 'string' && PLUGIN_ID_RE.test(message.actionId)
+      && isString(message.sessionId, MAX_SESSION_ID)
+      && (message.placement === 'session.menu' || message.placement === 'terminal.header');
   }
   if (message.type === 'prompt.answer') {
     return isString(message.promptId, 200)

@@ -2,10 +2,10 @@
 // visible surface and converts Worker registrations into action/viewer/workspace records with deterministic
 // teardown on disable, failure, replacement, or reconnect.
 import { store } from "../store.js";
-import { sendPluginMessage } from "../ws.js";
+import { sendPluginMessage, runPluginAction } from "../ws.js";
 import { terminalSelection, terminalFocusTarget, commitTerminalDraft, getTerminalSelectionSnapshot } from "./terminal.js";
 import { registerHotkey, unregisterHotkey, unregisterAllForPlugin } from "./hotkeys.js";
-import { registerAction, unregisterActionsForPlugin, resolveActions, runAction, onActionsChange, setActionErrorHandler } from "./action-registry.js";
+import { registerAction, unregisterActionsForPlugin, resolveActions, runAction, onActionsChange, setActionErrorHandler, setServerActions, clearServerActions, setServerActionRunner } from "./action-registry.js";
 import { registerPluginViewer, registerWorkspace, unregisterViewersForPlugin, workspaceFor } from "./viewer-registry.js";
 import { openWorkspaceTab, closePluginTabs, getActiveViewerText, getActiveViewerTextSnapshot } from "./content-dock.js";
 import { openMenu, closeMenu } from "./menu.js";
@@ -14,11 +14,12 @@ import { playPluginAudio, playPluginAudioAndWait, stopPluginAudio, togglePluginA
 import { startPluginMicrophone, stopPluginMicrophone } from "./plugin-microphone.js";
 import { openPluginComposition, updatePluginComposition, closePluginComposition } from "./plugin-composition.js";
 import { openPluginPicker, closePluginPicker } from "./plugin-picker.js";
-import { setSessionBadge, clearPluginBadges } from "../session-badges.js";
+import { setSessionBadge, clearPluginBadges, setServerBadges, clearServerBadges } from "../session-badges.js";
 
 const runtimes = new Map();           // pluginId -> Runtime
 const errors = new Map();             // local client failures; engine worker status remains authoritative separately
 const listeners = new Set();
+const serverRuns = new Map();         // requestId -> resolve, for actions run by a plugin's server part
 let headerBtn = null, headerPaintSeq = 0;
 
 function notify() { for (const fn of listeners) fn(); paintHeader(); }
@@ -34,6 +35,7 @@ function declaredViewer(plugin, definition) {
   const kind = rawKind.includes("/") ? rawKind : plugin.id + "/" + rawKind;
   return !!id && !!rawKind && (plugin.viewers || []).some((viewer) => viewer.id === id && viewer.kind === kind);
 }
+function pluginName(id) { return (store.plugins.find((plugin) => plugin.id === id) || {}).name || id; }
 function projectFor(session) { return session && session.projectId ? store.projects.find((p) => p.id === session.projectId) || null : null; }
 function sessionSnapshot(session) {
   if (!session) return null;
@@ -234,6 +236,23 @@ export function initPluginHost() {
   store.on("plugins", reconcile);
   store.on("plugin:message", (message) => runtimes.get(message.pluginId)?.deliver(message.event, message.data, message.requestId));
   store.on("active", paintHeader); store.on("session:update", (id) => { if (id === store.activeId) paintHeader(); });
+  // Actions and badges from plugin server parts arrive resolved per session; a run answers on this socket only.
+  store.on("plugin:actions", (ev) => setServerActions(ev.sessionId, ev.actions));
+  store.on("session:badges", (ev) => setServerBadges(ev.sessionId, ev.badges));
+  store.on("session:remove", (id) => { setServerActions(id, []); setServerBadges(id, []); });
+  store.on("reset", () => { clearServerActions(); clearServerBadges(); });
+  store.on("plugin:toast", (ev) => {
+    const kind = ["success", "warn", "error"].includes(ev.kind) ? ev.kind : "info";
+    toast[kind]({ ...(ev.toastId && { id: "plugin-" + ev.pluginId + "-" + ev.toastId }), title: ev.title || ev.pluginId, body: ev.body || "" });
+  });
+  store.on("plugin:actionResult", (ev) => {
+    const pending = serverRuns.get(ev.requestId); if (!pending) return;
+    serverRuns.delete(ev.requestId); pending(ev.ok === true);
+    if (ev.ok !== true) toast.error({ title: pluginName(ev.pluginId), body: ev.error || "The action failed." });
+  });
+  setServerActionRunner((pluginId, actionId, sessionId, placement) => new Promise((resolve) => {
+    serverRuns.set(runPluginAction(pluginId, actionId, sessionId, placement), resolve);
+  }));
   reconcile(store.plugins);
 }
 

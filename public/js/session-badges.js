@@ -1,7 +1,8 @@
 // Per-session badges that plugins set (e.g. "✓ Auto-approve"): a short label, a one- or two-character glyph and
 // a tooltip, all plain text. The host renders them in the terminal header and on the session's sidebar row;
 // plugins never supply markup.
-const badges = new Map();      // sessionId -> Map(pluginId -> badge)
+const badges = new Map();      // sessionId -> Map(pluginId -> badge)   (set by plugin client parts)
+const serverBadges = new Map();   // sessionId -> [badge]                (set by plugin server parts, via the engine)
 const listeners = new Set();
 
 const MAX_LABEL = 32, MAX_TITLE = 200;
@@ -39,9 +40,32 @@ export function clearPluginBadges(pluginId) {
   }
 }
 
+// The engine's full list for one session (session.badges); an empty list clears it.
+export function setServerBadges(sessionId, list) {
+  sessionId = String(sessionId || "");
+  if (!sessionId || sessionId.length > 200) return;
+  const next = (Array.isArray(list) ? list : []).flatMap((badge) => {
+    const label = badge && typeof badge === "object" ? text(badge.label, MAX_LABEL) : "";
+    const pluginId = text(badge && badge.pluginId, 63);
+    if (!label || !pluginId) return [];
+    const glyph = text(badge.icon, 8);
+    return [{ pluginId, label, icon: [...glyph].length <= 2 ? glyph : "", title: text(badge.title, MAX_TITLE) }];
+  });
+  if (!next.length && !serverBadges.has(sessionId)) return;
+  if (next.length) serverBadges.set(sessionId, next); else serverBadges.delete(sessionId);
+  emit(sessionId);
+}
+export function clearServerBadges() {
+  const ids = [...serverBadges.keys()]; serverBadges.clear();
+  for (const id of ids) emit(id);
+}
+
 export function sessionBadges(sessionId) {
-  const map = badges.get(String(sessionId || ""));
-  return map ? [...map.values()].sort((a, b) => a.pluginId.localeCompare(b.pluginId)) : [];
+  sessionId = String(sessionId || "");
+  const merged = new Map();
+  for (const badge of serverBadges.get(sessionId) || []) merged.set(badge.pluginId, badge);
+  for (const [pluginId, badge] of badges.get(sessionId) || []) merged.set(pluginId, badge);
+  return [...merged.values()].sort((a, b) => a.pluginId.localeCompare(b.pluginId));
 }
 
 export function onSessionBadges(fn) { listeners.add(fn); return () => listeners.delete(fn); }

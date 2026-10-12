@@ -185,6 +185,10 @@ export function removePlugin(pluginId) { return pluginControl("plugin.remove", {
 export function openPluginFolder() { return pluginControl("plugin.openFolder"); }
 export function setPluginEnabled(pluginId, enabled) { return pluginControl("plugin.setEnabled", { pluginId: String(pluginId || ""), enabled: !!enabled }); }
 export function updatePluginSettings(pluginId, settings) { return pluginControl("plugin.settings.update", { pluginId: String(pluginId || ""), settings: { ...(settings || {}) } }); }
+// Runs an action the engine resolved for a session; it replies requester-only {type:'plugin.action.result'}.
+export function runPluginAction(pluginId, actionId, sessionId, placement) {
+  return pluginControl("plugin.action.run", { pluginId: String(pluginId || ""), actionId: String(actionId || ""), sessionId: String(sessionId || ""), placement });
+}
 export function sendPluginMessage(pluginId, event, data) { return pluginControl("plugin.message", { pluginId: String(pluginId || ""), event: String(event || ""), data }); }
 
 // R2: answer a blocked-agent prompt (card buttons/text, or annotate marks JSON). Any client may resolve it;

@@ -115,6 +115,39 @@ Root commands such as `ask`, `show`, and `agents` cannot be claimed by a
 plugin. Enabled commands are advertised through `clideck plugins`, dynamic
 `clideck --help`, and the system guide injected into spawned agents.
 
+### Session actions and badges from the backend
+
+A plugin whose state lives in `server.js` can declare its session actions and
+badges there. CliDeck decides which actions apply to each session (live or
+dormant), and every client shows them, including clients with no JavaScript
+runtime such as the phone app. Placements are `session.menu` and
+`terminal.header`.
+
+```js
+exports.activate = (api) => {
+  const on = new Set();
+  const toggle = (id) => {
+    if (on.has(id)) on.delete(id); else on.add(id);
+    api.setSessionBadge(id, on.has(id) ? { label: 'Watching', icon: '👁' } : null);
+    api.refreshActions();   // `when` answers differently now
+  };
+  api.registerAction({
+    id: 'watch', label: 'Watch session', placements: ['session.menu'],
+    when: (context) => context.session.live && !on.has(context.session.id),
+    run: (context) => { toggle(context.session.id); api.toast('success', { body: 'Watching.' }); },
+  });
+};
+```
+
+The context is `{ surface, selection, session: { id, name, provider, cwd,
+projectId, live, status }, project }`. CliDeck asks again whenever a session
+appears, changes, closes or changes status, when projects change, and when the
+plugin calls `refreshActions()`. A `when` that throws hides only that action. A
+client can run only the actions CliDeck offered it for that session. A toast
+shown while an action runs goes to the client that ran it; a thrown error is
+shown to that client as the reason the action failed. Badges follow the same
+rules as client badges (below), and both disappear when the plugin stops.
+
 ## Client
 
 `client.js` exports `activate(api)`. It runs in a dedicated Worker, never in the

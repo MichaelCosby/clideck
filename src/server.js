@@ -49,6 +49,7 @@ const { readProcessInfo } = require('./process-info');
 const { ENGINE_BUILD_VERSION } = require('./build-version');
 const { createCustomCommandProvider, parseCommand } = require('./custom-command');
 const { PluginManager } = require('./plugin-manager');
+const { PluginActionHub, toastEvent } = require('./plugin-actions');
 const { createAgentSessionGuide, DEFAULT_AGENT_GUIDANCE } = require('./agent-session-guide');
 const { PluginHttp } = require('./plugin-http');
 const { downloadGithubPlugin, formatGithubSource, parseGithubSource } = require('./plugin-github');
@@ -165,6 +166,28 @@ class HeadlessServer {
       onChange: (plugins) => this.broadcast({ type: 'plugins', plugins }),
       onClientEvent: (event) => this.broadcast(event),
       onCoreCall: (pluginId, method, args) => this.pluginCoreCall(pluginId, method, args),
+      onServerActionsChange: () => this.pluginActions.schedule(),
+      onSessionBadge: (pluginId, sessionId, badge) => this.pluginActions.setBadge(pluginId, sessionId, badge),
+      onToast: (pluginId, pluginName, toast) => this.broadcast(toastEvent(pluginId, pluginName, toast)),
+      onPluginStopped: (pluginId) => this.pluginActions.clearPlugin(pluginId),
+    });
+    this.pluginActions = new PluginActionHub({
+      pluginManager: this.pluginManager,
+      sessions: () => this.persistence.list().map((entry) => {
+        const session = this.sessions.get(entry.id);
+        const live = Boolean(session && !session.closed);
+        return {
+          id: entry.id,
+          name: (live ? session.name : entry.name) || '',
+          provider: entry.provider || '',
+          cwd: entry.cwd || '',
+          projectId: (live ? session.projectId : entry.projectId) ?? null,
+          live,
+          status: (live && session.status) || '',
+        };
+      }),
+      projects: () => this.configStore.get().projects,
+      broadcast: (event) => this.broadcast(event),
     });
     this.pluginHttp = new PluginHttp({
       host: this.host,
@@ -228,6 +251,7 @@ class HeadlessServer {
 
   broadcast(event) {
     this.pluginManager?.emitCoreEvent?.(event);
+    this.pluginActions?.noteEvent(event);
     const message = JSON.stringify(event);
     for (const client of this.clients) {
       if (client.readyState !== WebSocket.OPEN) continue;
@@ -1117,6 +1141,7 @@ class HeadlessServer {
       else this.replayDormantSession(socket, entry);
     }
     socket.send(JSON.stringify({ type: 'plugins', plugins: this.pluginManager.snapshot() }));
+    for (const event of this.pluginActions.connectEvents()) socket.send(JSON.stringify(event));
     socket.send(JSON.stringify({ type: 'transcript.cache', cache: this.transcriptStore.getCache() }));
     if (this.updates) socket.send(JSON.stringify(this.updates.snapshot()));
     if (this.restart.exec) socket.send(JSON.stringify(this.restart.snapshot()));   // only engines that can restart in place
@@ -1289,6 +1314,15 @@ class HeadlessServer {
           pluginId: message.pluginId,
         }, message.requestId);
       }
+      return;
+    }
+    if (message.type === 'plugin.action.run') {
+      const { requestId, pluginId, actionId, sessionId, placement } = message;
+      const reply = (event) => this.sendControlResult(socket, { ...event, requestId });
+      this.pluginActions.run({ pluginId, actionId, sessionId, placement }, (toast) => {
+        const name = this.pluginManager.snapshot().find((plugin) => plugin.id === pluginId)?.name;
+        reply(toastEvent(pluginId, name, toast));
+      }).then((result) => reply({ type: 'plugin.action.result', pluginId, actionId, sessionId, ...result }));
       return;
     }
     if (message.type === 'prompt.answer') {
