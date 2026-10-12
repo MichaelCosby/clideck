@@ -109,6 +109,17 @@ export function initUpdates() {
     }
   });
   store.on("connection", connected => { if (!connected) { notice?.dismiss(); notice = null; lastNoticeState = null; } });
+  // This page runs the browser code of the engine build it was loaded from. After an update and restart the
+  // engine reports a different build on reconnect, and the page keeps running the old code until reloaded.
+  let loadedBuild = "";
+  store.on("config", () => {
+    const build = store.engineVersion;
+    if (!build) return;
+    if (!loadedBuild) { loadedBuild = build; return; }
+    if (build === loadedBuild) return;
+    toast.info({ id: "engine-reload", title: "CliDeck was updated", body: "Reload this page to use the new version.", duration: 0,
+      action: { label: "Reload", onClick: () => { try { location.reload(); } catch {} } } });
+  });
   let restartNotice = null;
   store.on("engine.restart", r => {
     if (r.state === "waiting") {
