@@ -53,8 +53,9 @@ try {
   createSession("claude-code", "/x", "dropped");         // arm, but its broadcast never arrives (socket drops)…
   store.reset();                                         // …reconnect wipes state (and cancels the pending create intent)
   focused.length = 0;
-  created("R1");                                         // replay: first live session auto-opens (correct, not a steal)
+  created("R1");                                         // replay: the first live session opens once the burst ends
   created("R2");                                         // replay: activeId already R1 → must NOT be stolen
+  store.applyEvent({ type: "transcript.cache", cache: {} });   // end of the replay burst (the open session B is gone)
   ok("reconnect + replay opens only the first live session (no over-steal)", store.activeId === "R1" && !focused.includes("R2"));
 
   // ── (d) a create-error snapshot disarms → a later remote spawn is not adopted ──

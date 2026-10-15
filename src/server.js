@@ -123,6 +123,9 @@ class HeadlessServer {
     this.now = options.now || (() => new Date().toISOString());
     this.autoSaveTimer = null;
     this.serverLock = options.serverLock || null;
+    // One line per browser connect and disconnect, to tell a dropped connection from anything else later.
+    this.logConnections = options.logConnections || null;
+    this.connectionSeq = 0;
     this.sessions = new Map();
     // Persistence and the CLI lock create the directory; capture first use before either does.
     const dataDir = options.dataDir || options.persistence?.dataDir || DEFAULT_DATA_DIR;
@@ -1135,6 +1138,13 @@ class HeadlessServer {
       return;
     }
     this.clients.add(socket);
+    const connection = ++this.connectionSeq;
+    const openedAt = Date.now();
+    if (this.logConnections) {
+      const forwarded = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+      const from = forwarded || req?.socket?.remoteAddress || 'unknown';
+      this.logConnections(`browser #${connection} connected from ${from} (${this.clients.size} open)`);
+    }
     for (const entry of this.persistence.list()) {
       const session = this.sessions.get(entry.id);
       if (session && !session.closed) this.replayLiveSession(socket, session);
@@ -1154,8 +1164,18 @@ class HeadlessServer {
         socket.close(1011, 'control failed');
       }
     });
-    socket.on('close', () => this.clients.delete(socket));
-    socket.on('error', () => this.clients.delete(socket));
+    let socketError = '';
+    socket.on('close', (code, reason) => {
+      this.clients.delete(socket);
+      if (!this.logConnections) return;
+      const why = [String(reason || '').slice(0, 120), socketError].filter(Boolean).join('; ');
+      const seconds = Math.round((Date.now() - openedAt) / 1000);
+      this.logConnections(`browser #${connection} disconnected: code ${code}${why ? ` (${why})` : ''} after ${seconds}s (${this.clients.size} open)`);
+    });
+    socket.on('error', (error) => {
+      socketError = error?.message || 'socket error';
+      this.clients.delete(socket);
+    });
   }
 
   handleControl(socket, raw) {
@@ -2179,7 +2199,10 @@ async function main(argv = process.argv.slice(2), env = process.env) {
       const migrated = require('./legacy-migration').migrateLegacy({ dataDir: options.dataDir || DEFAULT_DATA_DIR });
       if (migrated) console.log(`Imported ${migrated.sessions} legacy CliDeck sessions. Resume them from the sidebar.`);
     }
-    server = new HeadlessServer({ ...options, serverLock: lock, freshInstall, restartExec: reexec() });
+    server = new HeadlessServer({
+      ...options, serverLock: lock, freshInstall, restartExec: reexec(),
+      logConnections: (line) => console.log(`${new Date().toISOString()} ${line}`),
+    });
     address = await server.listen();
   } catch (error) {
     server?.persistence.close();

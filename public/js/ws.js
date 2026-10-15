@@ -11,9 +11,16 @@ let pingT = null, lastPong = 0;
 function startHeartbeat(socket) {
   clearInterval(pingT);
   lastPong = Date.now();
+  let lastTick = Date.now();
   pingT = setInterval(() => {
     if (socket !== ws || socket.readyState !== WebSocket.OPEN) return;
-    if (Date.now() - lastPong > PONG_TIMEOUT_MS) { socket.close(); return; }
+    // A background tab's timers can be slowed to about once a minute, so no pings went out meanwhile and the
+    // silence proves nothing: ping now and judge the reply from here.
+    const now = Date.now(), late = now - lastTick > PING_MS * 2;
+    lastTick = now;
+    if (late) lastPong = Math.max(lastPong, now);
+    // 4000: the engine's log then says this page gave up on a silent connection, not that the network dropped it.
+    if (Date.now() - lastPong > PONG_TIMEOUT_MS) { socket.close(4000, "no reply for 10s"); return; }
     socket.send(JSON.stringify({ type: "ping" }));
   }, PING_MS);
   pingT.unref?.();   // under the Node UI-test harness, don't hold the process open; a no-op in browsers

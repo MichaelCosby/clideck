@@ -50,6 +50,7 @@ let engineRestart = null;   // {state:'idle'|'waiting'|'restarting', busy:[names
 let pendingLocalCreate = false;     // one-shot: this client just asked to create a session (ws.createSession armed it).
                                     // The next brand-new LIVE session.created adopts selection+focus. Cleared on reset()
                                     // so a reconnect/replay burst can never consume it, and on a create-error snapshot.
+let restoreId = null;   // the session that was open when the connection dropped: the reconnect burst reopens it
 let connected = false;
 let stale = false, staleMsg = "";   // set when the engine looks outdated/unreachable (repeated instant socket closes)
 let filter = "all";     // 'all' | 'unread'
@@ -239,6 +240,11 @@ function applyEvent(ev) {
       transcripts.clear();
       const c = (ev.cache && typeof ev.cache === "object") ? ev.cache : {};
       for (const id in c) transcripts.set(id, capLower(c[id]));
+      // The burst is over. If the session that was open is gone, fall back to the first live one, as on a fresh load.
+      if (restoreId) {
+        restoreId = null;
+        if (activeId == null) { const first = [...sessions.values()].find((x) => x.live !== false); if (first) select(first.id); }
+      }
       emit("transcripts"); return;
     }
     case "transcript.append": {                                            // live turn: {id, role, text} — note `id`, not sessionId
@@ -302,7 +308,8 @@ function applyEvent(ev) {
     // becomes active — select() drives the terminal focus via store.on("active"). A replayed/reconnect burst can't
     // reach here armed (reset() disarms first) and a remote/agent spawn never armed it → neither steals the user's place.
     if (!known && pendingLocalCreate && ev.live !== false) { pendingLocalCreate = false; select(ev.sessionId); }
-    else if (activeId == null && ev.live !== false) select(ev.sessionId);   // else auto-open the first LIVE session (don't force a dormant one)
+    else if (restoreId && ev.sessionId === restoreId) { restoreId = null; select(ev.sessionId); }   // reopen it, live or not
+    else if (activeId == null && !restoreId && ev.live !== false) select(ev.sessionId);   // else auto-open the first LIVE session (don't force a dormant one)
     emit("chrome"); return;
   }
   const s = sessions.get(ev.sessionId);
@@ -374,6 +381,7 @@ function unreadCount() { let n = 0; for (const s of sessions.values()) if (s.unr
 
 function reset() {
   engineUpdate = null; engineRestart = null;
+  if (activeId != null) restoreId = activeId;   // a reset with no open session keeps any earlier pending restore
   sessions.clear(); transcripts.clear(); pluginsList = []; pluginsSeen = false; activeId = null; pendingLocalCreate = false;
   emit("plugins", pluginsList); emit("reset"); emit("chrome");
 }
