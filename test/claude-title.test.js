@@ -47,6 +47,26 @@ test('the watcher reports only titles written after it attached', async () => {
   }
 });
 
+test('a transcript that does not exist yet is picked up when Claude creates it with the rename', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'clideck-title-new-'));
+  const path = join(dir, 'project', 'session.jsonl');   // its folder does not exist yet either
+  const seen = [];
+  const stop = watchClaudeTitle(path, (title) => seen.push(title), { debounceMs: 20, pollMs: 20 });
+  try {
+    await sleep(60);
+    require('fs').mkdirSync(join(dir, 'project'));
+    writeFileSync(path, titleLine('xyz'));
+    await sleep(150);
+    assert.deepEqual(seen, ['xyz'], '/rename as the first thing in a new session');
+    appendFileSync(path, titleLine('Later'));
+    await sleep(150);
+    assert.deepEqual(seen, ['xyz', 'Later'], 'and it keeps following the file afterwards');
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('an agent title renames the session unless the name is taken', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'clideck-title-sync-'));
   const server = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0 });
