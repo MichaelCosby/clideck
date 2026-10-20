@@ -50,6 +50,7 @@ const { ENGINE_BUILD_VERSION } = require('./build-version');
 const { createCustomCommandProvider, parseCommand } = require('./custom-command');
 const { PluginManager } = require('./plugin-manager');
 const { PluginActionHub, toastEvent } = require('./plugin-actions');
+const { RunningSessions, takeRunningSessions } = require('./running-sessions');
 const { createAgentSessionGuide, DEFAULT_AGENT_GUIDANCE } = require('./agent-session-guide');
 const { PluginHttp } = require('./plugin-http');
 const { downloadGithubPlugin, formatGithubSource, parseGithubSource } = require('./plugin-github');
@@ -123,9 +124,12 @@ class HeadlessServer {
     this.now = options.now || (() => new Date().toISOString());
     this.autoSaveTimer = null;
     this.serverLock = options.serverLock || null;
-    // One line per browser connect and disconnect, to tell a dropped connection from anything else later.
-    this.logConnections = options.logConnections || null;
+    // One line per browser connect and disconnect (to tell a dropped connection from anything else later) and
+    // per storage problem.
+    this.log = options.log || null;
+    this.runningSessions = options.runningSessions || null;   // what to resume if this engine dies (CLI only)
     this.connectionSeq = 0;
+    this.storageFailures = new Map();   // what can't be saved ('sessions', 'transcripts') -> {code, message, since}
     this.sessions = new Map();
     // Persistence and the CLI lock create the directory; capture first use before either does.
     const dataDir = options.dataDir || options.persistence?.dataDir || DEFAULT_DATA_DIR;
@@ -133,6 +137,9 @@ class HeadlessServer {
     this.persistence = options.persistence || new SessionPersistence({
       dataDir: options.dataDir,
       debounceMs: options.persistenceDebounceMs,
+      retryMs: options.persistenceRetryMs,
+      onWriteError: (error) => this.storageFailed('sessions', error),
+      onWriteOk: () => this.storageRecovered('sessions'),
     });
     this.configStore = options.configStore || new ConfigStore({
       dataDir: options.dataDir || this.persistence.dataDir,
@@ -637,6 +644,7 @@ class HeadlessServer {
         if (this.sessions.get(event.sessionId) === session) this.sessions.delete(event.sessionId);
         const entry = this.persistence.get(session.id);
         if (entry) outbound = this.dormantSnapshot(entry);
+        if (!this.closing) this.noteRunningSessions();
       } else if (event.type !== 'session.created') {
         this.persistence.touch(session.id);
       }
@@ -655,14 +663,51 @@ class HeadlessServer {
       if (!register && !throwOnError) return null;
       throw error;
     }
+    this.noteRunningSessions();
     return session;
   }
 
   storeTranscriptEntry(sessionId, role, text, timestamp) {
-    const entry = this.transcriptStore.append(sessionId, role, text, timestamp);
+    let entry;
+    try {
+      entry = this.transcriptStore.append(sessionId, role, text, timestamp);
+    } catch (error) {
+      this.storageFailed('transcripts', error);   // this entry is lost; the session carries on
+      return null;
+    }
+    this.storageRecovered('transcripts');
     if (!entry) return null;
     this.broadcast({ type: 'transcript.append', id: sessionId, role, text: entry.text });
     return entry;
+  }
+
+  noteRunningSessions() {
+    this.runningSessions?.update([...this.sessions.values()].filter((session) => !session.closed).map((session) => session.id));
+  }
+
+  // Saving failed (a full disk): tell every browser and the log once, then again when saving works again.
+  storageFailed(what, error) {
+    const code = String(error?.code || 'EIO');
+    if (this.storageFailures.get(what)?.code === code) return;
+    const message = code === 'ENOSPC'
+      ? 'The disk is full, so CliDeck can\'t save session history. Free some space; CliDeck keeps retrying and carries on meanwhile.'
+      : `CliDeck can't save session history (${code}: ${String(error?.message || '').slice(0, 200)}). It keeps retrying and carries on meanwhile.`;
+    const first = !this.storageFailures.size;
+    this.storageFailures.set(what, { code, message, since: new Date().toISOString() });
+    this.log?.(`storage: cannot save ${what}: ${code} ${String(error?.message || '').slice(0, 200)}`);
+    if (first || code === 'ENOSPC') this.broadcast(this.storageEvent());
+  }
+
+  storageRecovered(what) {
+    if (!this.storageFailures.delete(what)) return;
+    this.log?.(`storage: saving ${what} again`);
+    this.broadcast(this.storageEvent());
+  }
+
+  storageEvent() {
+    const failure = [...this.storageFailures.values()].find((entry) => entry.code === 'ENOSPC')
+      || [...this.storageFailures.values()][0];
+    return failure ? { type: 'engine.storage', ok: false, ...failure } : { type: 'engine.storage', ok: true };
   }
 
   findNameConflict(name, scope, exceptId = '') {
@@ -1140,10 +1185,10 @@ class HeadlessServer {
     this.clients.add(socket);
     const connection = ++this.connectionSeq;
     const openedAt = Date.now();
-    if (this.logConnections) {
+    if (this.log) {
       const forwarded = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
       const from = forwarded || req?.socket?.remoteAddress || 'unknown';
-      this.logConnections(`browser #${connection} connected from ${from} (${this.clients.size} open)`);
+      this.log(`browser #${connection} connected from ${from} (${this.clients.size} open)`);
     }
     for (const entry of this.persistence.list()) {
       const session = this.sessions.get(entry.id);
@@ -1152,6 +1197,7 @@ class HeadlessServer {
     }
     socket.send(JSON.stringify({ type: 'plugins', plugins: this.pluginManager.snapshot() }));
     for (const event of this.pluginActions.connectEvents()) socket.send(JSON.stringify(event));
+    if (this.storageFailures.size) socket.send(JSON.stringify(this.storageEvent()));
     socket.send(JSON.stringify({ type: 'transcript.cache', cache: this.transcriptStore.getCache() }));
     if (this.updates) socket.send(JSON.stringify(this.updates.snapshot()));
     if (this.restart.exec) socket.send(JSON.stringify(this.restart.snapshot()));   // only engines that can restart in place
@@ -1167,10 +1213,10 @@ class HeadlessServer {
     let socketError = '';
     socket.on('close', (code, reason) => {
       this.clients.delete(socket);
-      if (!this.logConnections) return;
+      if (!this.log) return;
       const why = [String(reason || '').slice(0, 120), socketError].filter(Boolean).join('; ');
       const seconds = Math.round((Date.now() - openedAt) / 1000);
-      this.logConnections(`browser #${connection} disconnected: code ${code}${why ? ` (${why})` : ''} after ${seconds}s (${this.clients.size} open)`);
+      this.log(`browser #${connection} disconnected: code ${code}${why ? ` (${why})` : ''} after ${seconds}s (${this.clients.size} open)`);
     });
     socket.on('error', (error) => {
       socketError = error?.message || 'socket error';
@@ -2117,6 +2163,7 @@ class HeadlessServer {
         try {
           this.persistence.close();
         } finally {
+          this.runningSessions?.clear();
           this.serverLock?.release();
         }
       }
@@ -2164,11 +2211,21 @@ function installShutdownHandlers(server, runtime = process) {
   return shutdown;
 }
 
-// Sessions that were running when the engine restarted itself come back on their own, a little apart.
-function resumeAfterRestart(server, gapMs = 400) {
-  const ids = takeResumeList(server.persistence.dataDir).filter((id) => server.persistence.has(id));
+// Sessions that were running when the engine restarted itself come back on their own, a little apart. So do
+// those of an engine that died without shutting down, unless it died within a minute of starting.
+function resumeAfterRestart(server, gapMs = 400, crashed = null) {
+  let ids = takeResumeList(server.persistence.dataDir).filter((id) => server.persistence.has(id));
+  if (ids.length) console.log(`Restarted. Resuming ${ids.length} session${ids.length === 1 ? '' : 's'}.`);
+  else if (crashed?.sessions.length) {
+    const known = crashed.sessions.filter((id) => server.persistence.has(id));
+    if (!crashed.stable) {
+      console.log(`CliDeck stopped unexpectedly within a minute of starting, so ${known.length} session${known.length === 1 ? ' was' : 's were'} left stopped; resume from the sidebar.`);
+    } else if (known.length) {
+      console.log(`CliDeck stopped unexpectedly. Resuming ${known.length} session${known.length === 1 ? '' : 's'}.`);
+      ids = known;
+    }
+  }
   if (!ids.length) return [];
-  console.log(`Restarted. Resuming ${ids.length} session${ids.length === 1 ? '' : 's'}.`);
   ids.forEach((id, index) => {
     const timer = setTimeout(() => { if (!server.closing) server.resumeSession(id); }, index * gapMs);
     timer.unref?.();
@@ -2194,14 +2251,18 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
   let server;
   let address;
+  let crashed = null;
   try {
     if (!options.dataDir || require('path').resolve(options.dataDir) === DEFAULT_DATA_DIR) {
       const migrated = require('./legacy-migration').migrateLegacy({ dataDir: options.dataDir || DEFAULT_DATA_DIR });
       if (migrated) console.log(`Imported ${migrated.sessions} legacy CliDeck sessions. Resume them from the sidebar.`);
     }
+    // Read what a previous engine left running before this one starts recording its own.
+    crashed = takeRunningSessions(options.dataDir || DEFAULT_DATA_DIR);
     server = new HeadlessServer({
       ...options, serverLock: lock, freshInstall, restartExec: reexec(),
-      logConnections: (line) => console.log(`${new Date().toISOString()} ${line}`),
+      log: (line) => console.log(`${new Date().toISOString()} ${line}`),
+      runningSessions: new RunningSessions({ dataDir: options.dataDir || DEFAULT_DATA_DIR }),
     });
     address = await server.listen();
   } catch (error) {
@@ -2228,7 +2289,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     }
   } });
   void server.updates.check();
-  resumeAfterRestart(server);
+  resumeAfterRestart(server, undefined, crashed);
   return { server, address, lock };
 }
 

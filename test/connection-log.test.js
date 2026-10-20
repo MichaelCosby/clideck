@@ -9,7 +9,7 @@ const { HeadlessServer } = require('../src/server');
 test('each browser connect and disconnect is logged with where it came from and why it ended', async (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'clideck-connection-log-'));
   const lines = [];
-  const engine = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0, logConnections: (line) => lines.push(line) });
+  const engine = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0, log: (line) => lines.push(line) });
   let silent = null;
   t.after(async () => {
     await engine.close();

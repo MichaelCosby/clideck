@@ -109,6 +109,20 @@ export function initUpdates() {
     }
   });
   store.on("connection", connected => { if (!connected) { notice?.dismiss(); notice = null; lastNoticeState = null; } });
+  // The engine can't save (a full disk): a notice that stays until saving works again. A reconnect brings it back
+  // in the connect burst while the problem lasts, and a recovery or a reset clears it.
+  let storageNotice = null;
+  const clearStorage = () => { storageNotice?.dismiss(); storageNotice = null; };
+  store.on("engine.storage", (ev) => {
+    if (ev.ok) {
+      if (storageNotice) toast.success({ id: "engine-storage", title: "CliDeck is saving again", body: "Session history is being saved normally." });
+      storageNotice = null;
+      return;
+    }
+    storageNotice = toast.error({ id: "engine-storage", title: ev.code === "ENOSPC" ? "The disk is full" : "CliDeck can't save",
+      body: ev.message || "CliDeck can't save session history.", duration: 0 });
+  });
+  store.on("reset", clearStorage);
   // This page runs the browser code of the engine build it was loaded from. After an update and restart the
   // engine reports a different build on reconnect, and the page keeps running the old code until reloaded.
   let loadedBuild = "";

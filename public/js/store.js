@@ -175,6 +175,7 @@ function applyEvent(ev) {
   switch (ev.type) {                                  // session-less broadcasts (no sessionId)
     case "engine.update": engineUpdate = { ...ev }; emit("engine.update", engineUpdate); return;
     case "engine.restart": engineRestart = { ...ev }; emit("engine.restart", engineRestart); return;
+    case "engine.storage": emit("engine.storage", ev); return;           // {ok} or {ok:false, code, message, since}
     case "config": {
       const c = ev.config || {};
       notifyPrefs = c.notify || {};

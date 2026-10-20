@@ -89,3 +89,42 @@ test('after a restart the engine resumes the recorded sessions that still exist'
   await new Promise((r) => setTimeout(r, 400));
   assert.deepEqual([...server.sessions.keys()].sort(), [a.id, b.id].sort());
 });
+
+test('the engine records the sessions it runs; a clean shutdown clears the record', async (t) => {
+  const { RunningSessions, takeRunningSessions } = require('../src/running-sessions');
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-running-'));
+  const timers = [];
+  const running = new RunningSessions({ dataDir, schedule: (fn) => { timers.push(fn); return {}; }, cancel: () => {} });
+  const server = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0, runningSessions: running });
+  t.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  await server.listen();
+  const a = server.createSession({ provider: 'shell', cwd: dataDir, name: 'A' });
+  const read = () => JSON.parse(require('fs').readFileSync(join(dataDir, 'running-sessions.json'), 'utf8'));
+  assert.deepEqual(read(), { sessions: [a.id], stable: false });
+  timers[0]();   // a minute later
+  assert.equal(read().stable, true);
+  a.removePersistenceOnClose = false;
+  a.close();
+  for (let i = 0; i < 50 && server.sessions.size; i++) await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(read().sessions, [], 'a session that stops is no longer recorded');
+  await server.close();
+  assert.equal(takeRunningSessions(dataDir), null, 'a clean shutdown leaves nothing to resume');
+});
+
+test('after a crash the engine resumes what was running, unless it crashed within a minute of starting', async (t) => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-crash-resume-'));
+  const server = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0 });
+  t.after(async () => { await server.close(); rmSync(dataDir, { recursive: true, force: true }); });
+  await server.listen();
+  const a = server.createSession({ provider: 'shell', cwd: dataDir, name: 'A' });
+  a.removePersistenceOnClose = false;
+  a.close();
+  for (let i = 0; i < 50 && server.sessions.size; i++) await new Promise((r) => setTimeout(r, 100));
+
+  assert.deepEqual(resumeAfterRestart(server, 50, { sessions: [a.id, 'gone'], stable: false }), [],
+    'an engine that died within a minute of starting would likely die again');
+  assert.equal(server.sessions.size, 0);
+  assert.deepEqual(resumeAfterRestart(server, 50, { sessions: [a.id, 'gone'], stable: true }), [a.id]);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.deepEqual([...server.sessions.keys()], [a.id]);
+});

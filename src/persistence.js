@@ -17,6 +17,7 @@ const DEFAULT_HISTORY_LIMIT = 2 * 1024 * 1024;
 const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
 const MAX_SESSION_ASSETS = 20;
 const MAX_TURN_MARKS = 256;
+const WRITE_RETRY_MS = 10_000;
 
 function validDimension(value, fallback) {
   const number = Number(value);
@@ -101,10 +102,20 @@ function readRegistry(path) {
   return { text, entries };
 }
 
-function writeRegistry(path, text) {
+// A failed write (a full disk) leaves no half-written temporary file behind.
+function writeAtomic(path, data, options) {
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, text, { mode: 0o600 });
-  renameSync(temporary, path);
+  try {
+    writeFileSync(temporary, data, options);
+    renameSync(temporary, path);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function writeRegistry(path, text) {
+  writeAtomic(path, text, { mode: 0o600 });
 }
 
 // The last `limit` bytes of a session's output, plus where each user prompt began (turn marks, as absolute
@@ -220,6 +231,14 @@ class SessionPersistence {
     this.historyLimit = Math.max(1, Number(options.historyLimit || DEFAULT_HISTORY_LIMIT));
     this.debounceMs = Math.max(0, Number(options.debounceMs ?? 250));
     this.now = options.now || (() => new Date().toISOString());
+    // A write that fails (a full disk) is reported and retried; it never throws out of a timer or a session
+    // event, where it would end the engine and every agent with it.
+    this.onWriteError = options.onWriteError || (() => {});
+    this.onWriteOk = options.onWriteOk || (() => {});
+    this.retryMs = Math.max(1, Number(options.retryMs ?? WRITE_RETRY_MS));
+    this.writeFailing = false;
+    this.retryTimer = null;
+    this.unsavedHistory = new Set();
     this.entries = new Map();
     this.history = new Map();
     this.historyTimers = new Map();
@@ -281,15 +300,41 @@ class SessionPersistence {
     for (const path of [this.historyPath(id), this.historyMetaPath(id)]) if (path) rmSync(path, { force: true });
   }
 
-  saveRegistry() {
+  // `throwOnError`: a caller that must undo its change when the save fails (a restore) gets the error.
+  saveRegistry({ throwOnError = false } = {}) {
     if (this.closed) return;
     clearTimeout(this.registryTimer);
     this.registryTimer = null;
     const text = `${JSON.stringify(this.list(), null, 2)}\n`;
     if (text === this.lastRegistry && existsSync(this.backupPath)) return;
-    writeRegistry(this.backupPath, this.lastRegistry || text);
-    writeRegistry(this.registryPath, text);
+    try {
+      writeRegistry(this.backupPath, this.lastRegistry || text);
+      writeRegistry(this.registryPath, text);
+    } catch (error) {
+      if (throwOnError) throw error;
+      this.writeFailed(error);
+      return;
+    }
     this.lastRegistry = text;
+    this.writeSucceeded();
+  }
+
+  writeFailed(error) {
+    this.writeFailing = true;
+    this.onWriteError(error);
+    if (this.retryTimer || this.closed) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.flush();
+    }, this.retryMs);
+    this.retryTimer.unref?.();
+  }
+
+  writeSucceeded() {
+    if (!this.writeFailing || this.unsavedHistory.size) return;
+    if (this.lastRegistry !== `${JSON.stringify(this.list(), null, 2)}\n`) return;
+    this.writeFailing = false;
+    this.onWriteOk();
   }
 
   scheduleRegistry() {
@@ -306,7 +351,7 @@ class SessionPersistence {
     const added = entries.filter((entry) => !this.entries.has(entry.id));
     for (const entry of added) this.entries.set(entry.id, entry);
     try {
-      this.saveRegistry();
+      this.saveRegistry({ throwOnError: true });
     } catch (error) {
       for (const entry of added) this.entries.delete(entry.id);
       throw error;
@@ -463,12 +508,16 @@ class SessionPersistence {
     const path = this.historyPath(key);
     const history = this.history.get(key);
     if (!path || !history) return;
-    const temporary = `${path}.${process.pid}.tmp`;
-    writeFileSync(temporary, history.buffer());
-    renameSync(temporary, path);
-    const metaPath = this.historyMetaPath(key);
-    writeFileSync(temporary, JSON.stringify(history.meta()));
-    renameSync(temporary, metaPath);
+    try {
+      writeAtomic(path, history.buffer());
+      writeAtomic(this.historyMetaPath(key), JSON.stringify(history.meta()));
+    } catch (error) {
+      this.unsavedHistory.add(key);
+      this.writeFailed(error);
+      return;
+    }
+    this.unsavedHistory.delete(key);
+    this.writeSucceeded();
   }
 
   // The model a session was last using, for its next resume.
@@ -495,6 +544,7 @@ class SessionPersistence {
     clearTimeout(this.historyTimers.get(key));
     this.historyTimers.delete(key);
     this.history.delete(key);
+    this.unsavedHistory.delete(key);
     this.removeHistoryFiles(key);
     this.saveRegistry();
     return true;
@@ -511,6 +561,7 @@ class SessionPersistence {
     this.flush();
     this.closed = true;
     clearTimeout(this.registryTimer);
+    clearTimeout(this.retryTimer);
     for (const timer of this.historyTimers.values()) clearTimeout(timer);
     this.historyTimers.clear();
   }
