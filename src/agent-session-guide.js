@@ -14,7 +14,7 @@ const DEFAULT_AGENT_GUIDANCE = 'minimal';
 const MINIMAL_GUIDE = `CliDeck session tools (when CLIDECK_SESSION_ID is set):
 You are running in a CliDeck session; other sessions may be working in the same project. To contact another agent, prefer your own built-in agent messaging when you have it. Use CliDeck's commands as the fallback: when you can't find the target that way, the target is not a Claude session, or a message goes unanswered. Contact other sessions only when the user asks or the task clearly needs it.
 List sessions and their ask addresses: \`clideck agents\` (\`--group\` adds the other projects in your project group, \`--all\` every project, \`--json\` details such as cwd).
-Ask an idle session and wait for its reply: \`clideck ask "<target>" "<message>" --timeout 10m\`. Add \`--steer\` to send guidance to a working session without waiting.
+Ask an idle session and wait for its reply: \`clideck ask "<target>" "<message>" --timeout 10m\` (a number plus s, m or h, at most 2h). Add \`--steer\` to send guidance to a working session without waiting.
 Start a sibling session: \`clideck create [--provider <id>] [--name <name>] [--cwd <path>]\` (defaults to your agent and folder).
 When you write a document meant for the user to read, such as a plan or report, open it in a preview tab: \`clideck show <path>\` (markdown, html, pdf, images, mermaid, diffs and more).
 Ask the user a question in CliDeck: \`clideck prompt "<question>" --options "A,B"\`; request feedback on an image: \`clideck annotate <image-file>\`.
@@ -33,7 +33,7 @@ Render image/video/text/json/csv/markdown/html/pdf/mermaid/diff files in a previ
 Ask the user a question in CliDeck: \`clideck prompt "<question>" --options "Choice A,Choice B" --timeout 10m\` (options are optional). Request visual feedback on a project image: \`clideck annotate <image-file> --timeout 10m\`. Both wait and print the user's answer to stdout; keep the command running until it answers.
 Discover installed extensions at any time with \`clideck plugins\`.
 Full command help: \`clideck --help\`; list peers/plugins as JSON with \`--json\`. If the global clideck command is missing or incompatible, use the session's exact CLI \`${nodeCli}\` for every command above. The session environment already supplies the server address and caller identity.
-Keep a normal ask running for its stdout answer; busy asks are not queued. Give peers concrete tasks and enough context to act, then assess their findings for relevance before applying them.`;
+Keep a normal ask running for its stdout answer (--timeout is a number plus s, m or h, at most 2h); busy asks are not queued. Give peers concrete tasks and enough context to act, then assess their findings for relevance before applying them.`;
   let guide = base;
   const profile = profileContext(about, MAX_GUIDE_BYTES - Buffer.byteLength(base) - 1);
   if (profile) guide += `\n${profile}`;

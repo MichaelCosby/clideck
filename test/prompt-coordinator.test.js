@@ -42,6 +42,14 @@ test('prompt requests preserve validated options and reject oversized fields', (
   });
 });
 
+test('prompts and annotations may wait up to the same 2 hours as asks', () => {
+  const hours = 60 * 60 * 1000;
+  assert.equal(parseAnnotateRequest({ sessionId: 's', path: '/tmp/a.png', timeoutMs: 2 * hours }).timeoutMs, 2 * hours);
+  assert.equal(parseAnnotateRequest({ sessionId: 's', path: '/tmp/a.png', timeoutMs: 2 * hours + 1 }), null);
+  assert.equal(parsePromptRequest({ sessionId: 's', question: 'Ok?', timeoutMs: 2 * hours }).timeoutMs, 2 * hours);
+  assert.equal(parsePromptRequest({ sessionId: 's', question: 'Ok?', timeoutMs: 2 * hours + 1 }), null);
+});
+
 test('prompt coordinator resolves answers, timeouts, and session cancellation once', async () => {
   const events = [];
   let nextId = 0;

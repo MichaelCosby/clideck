@@ -4,9 +4,11 @@ const { open, readFile } = require('fs/promises');
 const { resolve } = require('path');
 const { MAX_CONTENT_BYTES } = require('./content-store');
 const { readPluginManifest } = require('./plugin-manifest');
+const { MAX_WAIT_MS } = require('./wait-limits');
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-const MAX_TIMEOUT_MS = 60 * 60 * 1000;
+const MAX_TIMEOUT_MS = MAX_WAIT_MS;
+const MAX_TIMEOUT_TEXT = `${MAX_TIMEOUT_MS / 3_600_000}h`;
 
 function usage(pluginCommands = []) {
   const lines = [
@@ -34,6 +36,7 @@ function usage(pluginCommands = []) {
     'Use current addresses from agents, not old handoffs. last-active is recorded activity, not a shutdown time.',
     'Create starts a sibling session; by default it uses your own agent, working directory, and project.',
     'Normal asks require an idle target and wait for its answer.',
+    `--timeout (ask, prompt, annotate) is a number plus ms, s, m or h, such as 30s, 10m or 1.5h: at most ${MAX_TIMEOUT_TEXT}, default 10m.`,
     'If the target is working, --steer injects guidance immediately and returns without waiting.',
     'Example: clideck ask "@project/agent" "Use the new constraint" --steer',
     'Show supports text, JSON, CSV, markdown, HTML, PDF, Mermaid, diff, image, and video files.',
@@ -96,8 +99,12 @@ function parseOptions(
       options.url = args[++index];
       if (!options.url) throw new Error('--url requires a value.');
     } else if (allowTimeout && argument === '--timeout') {
-      options.timeoutMs = parseDuration(args[++index]);
-      if (!options.timeoutMs) throw new Error('Invalid timeout. Use values such as 30s, 10m, or 1h.');
+      const given = args[++index];
+      options.timeoutMs = parseDuration(given);
+      if (!options.timeoutMs) {
+        const shown = given ? ` "${String(given).slice(0, 40)}"` : ' (no value given)';
+        throw new Error(`Invalid timeout${shown}. Use a number plus s, m or h, such as 30s, 10m or 1.5h, and at most ${MAX_TIMEOUT_TEXT}.`);
+      }
     } else if (allowContent && argument === '--stdin') {
       options.stdin = true;
     } else if (allowContent && argument === '--template') {

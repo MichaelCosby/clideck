@@ -1,7 +1,8 @@
 const { randomUUID } = require('crypto');
+const { MAX_WAIT_MS } = require('./wait-limits');
 
 const DEFAULT_PROMPT_TIMEOUT_MS = 10 * 60 * 1000;
-const MAX_PROMPT_TIMEOUT_MS = 60 * 60 * 1000;
+const MAX_PROMPT_TIMEOUT_MS = MAX_WAIT_MS;
 
 function validSessionId(value) {
   return typeof value === 'string' && value.trim()

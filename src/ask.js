@@ -1,9 +1,10 @@
 const { MAX_CONTROL_TEXT } = require('./control');
 const { getProvider } = require('./providers');
 const { cwdGroupName, sameSessionScope, sessionAddress } = require('./project-scope');
+const { MAX_WAIT_MS } = require('./wait-limits');
 
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
-const MAX_ASK_TIMEOUT_MS = 60 * 60 * 1000;
+const MAX_ASK_TIMEOUT_MS = MAX_WAIT_MS;
 const MIN_SESSION_ID_PREFIX = 6;
 
 function parseAskRequest(value) {

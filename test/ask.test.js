@@ -65,6 +65,9 @@ test('ask request validation applies defaults and rejects invalid fields', () =>
     callerSessionId: 'caller-id',
     timeoutMs: 60 * 60 * 1000,
   });
+  const longest = parseAskRequest({ target: 'Reviewer', text: 'hello', timeoutMs: 2 * 60 * 60 * 1000 });
+  assert.equal(longest.timeoutMs, 2 * 60 * 60 * 1000, 'the longest wait is 2 hours');
+  assert.equal(parseAskRequest({ target: 'Reviewer', text: 'hello', timeoutMs: 2 * 60 * 60 * 1000 + 1 }), null);
   assert.equal(parseAskRequest({
     target: 'Reviewer',
     text: 'hello',

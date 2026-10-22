@@ -93,8 +93,22 @@ test('CLI duration parser accepts the documented range', () => {
   assert.equal(parseDuration('30s'), 30_000);
   assert.equal(parseDuration('10m'), 600_000);
   assert.equal(parseDuration('1h'), 3_600_000);
-  assert.equal(parseDuration('2h'), null);
+  assert.equal(parseDuration('90m'), 5_400_000);
+  assert.equal(parseDuration('2h'), 7_200_000, 'the longest wait');
+  assert.equal(parseDuration('121m'), null);
+  assert.equal(parseDuration('2.1h'), null);
   assert.equal(parseDuration('soon'), null);
+});
+
+test('an invalid --timeout says what was given and what is allowed', async () => {
+  const env = { CLIDECK_SESSION_ID: 'caller' };
+  for (const [args, given] of [[['--timeout', '3h'], ' "3h"'], [['--timeout', '90'], ' "90"'], [['--timeout'], ' (no value given)']]) {
+    const result = await runCli(['ask', 'peer', 'hello', ...args], env);
+    assert.notEqual(result.code, 0);
+    assert.ok(result.stderr.includes(`Invalid timeout${given}. Use a number plus s, m or h, such as 30s, 10m or 1.5h, and at most 2h.`), result.stderr);
+  }
+  const help = await runCli(['--help'], {});
+  assert.match(help.stdout, /--timeout \(ask, prompt, annotate\) is a number plus ms, s, m or h.*at most 2h, default 10m/);
 });
 
 test('CLI help explains how busy agents can steer', async () => {
