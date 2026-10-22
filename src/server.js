@@ -311,10 +311,12 @@ class HeadlessServer {
     }
   }
 
-  publishContent(sessionId, content) {
+  // `openedBy: 'user'` marks a file the user opened in a browser, which always comes to the front; content an
+  // agent or plugin shows follows the viewer's tab-switch setting.
+  publishContent(sessionId, content, openedBy) {
     try {
       this.persistAssets(sessionId);
-      this.broadcast({ type: 'content.show', ...content });
+      this.broadcast({ type: 'content.show', ...content, ...(openedBy && { openedBy }) });
       return content;
     } catch (error) {
       this.contentStore.remove(sessionId, content.contentId);
@@ -335,7 +337,7 @@ class HeadlessServer {
           message.kind,
           message.name,
         );
-      this.publishContent(entry.id, content);
+      this.publishContent(entry.id, content, 'user');
       return true;
     } catch (error) {
       const known = error instanceof ContentError;

@@ -49,6 +49,7 @@ try {
   ok("fetch failure is contained in an accessible tab state", docTabs().length === 4 && document.querySelector(".cd-error")?.getAttribute("role") === "alert" && /HTTP 404/.test(document.querySelector(".cd-error")?.textContent || ""));
 
   show("text-2", "text", "engine.log", { replaces: "text-1" }); await flush();
+  docTabs().find((t) => t.querySelector(".cd-tab-name")?.textContent === "engine.log")?._fire("click"); await flush();   // a re-show updates the tab without switching to it
   ok("replace swaps the existing text asset without adding a tab", docTabs().length === 4 && document.querySelector(".ct-text-body")?.textContent === "replacement text");
   store.select("B"); await flush();
   ok("another session remains isolated with its terminal bare", tabsEl.hidden === true && termPanel.hidden === false);

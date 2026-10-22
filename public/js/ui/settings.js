@@ -188,6 +188,7 @@ function renderGeneral() {
   const beh = section("Behavior", "behavior");
   beh.append(toggleRow("Confirm before closing a session", "When off, Delete closes immediately — no confirm step.", store.confirmClose !== false, (on) => updateConfig({ confirmClose: on })));
   beh.append(historyPromptsRow());
+  beh.append(agentTabsRow());
   const paste = toggleRow("Paste with Ctrl+V", "In terminals on this browser. Off keeps the terminal’s normal Ctrl+V behavior.", ctrlVPasteEnabled(), (on) => {
     try { localStorage.setItem("clideck.ctrlVPaste", String(on)); }
     catch {
@@ -468,6 +469,26 @@ function historyPromptsRow() {
   const all = h("option"); all.value = "0"; all.textContent = "All saved output"; sel.appendChild(all);
   sel.value = String(current);
   sel.addEventListener("change", () => { const n = Number(sel.value); store.setHistoryPrompts(n); updateConfig({ historyPrompts: n }); });
+  r.append(lbl, sel);
+  return r;
+}
+
+const AGENT_TAB_OPTS = [
+  { v: "first", label: "The first time" },
+  { v: "always", label: "Every time" },
+  { v: "never", label: "Never" },
+];
+function agentTabsRow() {
+  const r = h("div", "set-row");
+  const lbl = h("div", "set-row-lbl");
+  lbl.append(h("div", "set-row-t", "Switch to files agents open"),
+    h("div", "set-row-s", "When an agent shows a file in the session you're viewing. The first time switches to its new tab, and showing it again updates the tab without switching. A tab you haven't looked at is marked with a dot. Files you open yourself always come to the front."));
+  const sel = h("select", "set-select");
+  sel.id = "agent-tabs";
+  sel.setAttribute("aria-label", "Switch to files agents open");
+  for (const o of AGENT_TAB_OPTS) { const op = h("option"); op.value = o.v; op.textContent = o.label; sel.appendChild(op); }
+  sel.value = store.switchToAgentTabs;
+  sel.addEventListener("change", () => { store.setSwitchToAgentTabs(sel.value); updateConfig({ switchToAgentTabs: sel.value }); });
   r.append(lbl, sel);
   return r;
 }

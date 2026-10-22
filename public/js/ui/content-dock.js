@@ -66,6 +66,10 @@ function clearTombstone(sid, id) {
   s.delete(id);
   if (!s.size) pendingCloses.delete(sid);
 }
+// The tab each session had open when the store was last reset, so the replay that follows a reconnect reopens
+// it instead of whichever document happens to arrive last. Outside `docks` for the same reason as pendingCloses,
+// and a second reset before the replay finds `docks` empty and keeps what the first one saved.
+const restoreTabs = new Map();   // sessionId -> contentId | TERMINAL_TAB
 let tabsEl = null, bodyEl = null, termPanel = null, railEl = null, dropArmed = false;
 let viewerActionEpoch = 0, viewerHeaderSeq = 0;
 const TERMINAL_TAB = "__terminal__";      // the terminal is simply the first tab, always present, never closable
@@ -80,8 +84,11 @@ export function initContentDock() {
   termPanel = document.getElementById("term-panel");
   if (!tabsEl || !bodyEl) return;
   store.on("active", renderDock);
-  store.on("reset", () => { for (const entry of docks.values()) releaseEntry(entry); docks.clear(); renderDock(); });   // NB: pendingCloses deliberately survives — see its comment
-  store.on("session:remove", (id) => { pendingCloses.delete(id); const entry = docks.get(id); if (entry) releaseEntry(entry); if (docks.delete(id)) renderDock(); });
+  store.on("reset", () => {
+    for (const [sid, entry] of docks) { restoreTabs.set(sid, entry.activeId); releaseEntry(entry); }
+    docks.clear(); renderDock();
+  });   // NB: pendingCloses deliberately survives — see its comment
+  store.on("session:remove", (id) => { pendingCloses.delete(id); restoreTabs.delete(id); const entry = docks.get(id); if (entry) releaseEntry(entry); if (docks.delete(id)) renderDock(); });
   store.on("content:closed", onContentClosed);
   onViewersChange(() => { resetPluginViewerNodes(); renderDock(); });
   onActionsChange(() => {
@@ -99,13 +106,34 @@ export function presentInDock(ev) {
   // socket opens, before it has read the close we flush on the same event. Dropping the frame is the whole
   // reconciliation — we never answer it, so there is no close to echo and nothing to loop.
   if (isTombstoned(ev.sessionId, ev.contentId)) return;
-  const entry = docks.get(ev.sessionId) || { items: [], activeId: null };
+  const entry = docks.get(ev.sessionId) || { items: [], activeId: TERMINAL_TAB };
   docks.set(ev.sessionId, entry);
   let item = ev.replaces ? entry.items.find((it) => it.id === ev.replaces) : null;
+  const fresh = !item;
+  const viewing = !fresh && entry.activeId === item.id;   // a re-show of the tab on screen stays on screen
   if (item) { releaseItemNode(item); item.id = ev.contentId; item.kind = ev.kind; item.name = ev.name; item.url = ev.url; item.sourcePath = ev.sourcePath || ""; item.sessionId = ev.sessionId; }   // swap in place
   else { item = { id: ev.contentId, kind: ev.kind, name: ev.name, url: ev.url, sourcePath: ev.sourcePath || "", sessionId: ev.sessionId, node: null, built: false }; entry.items.push(item); }
-  entry.activeId = item.id;
+  if (viewing || comesToFront(ev, fresh)) { entry.activeId = item.id; item.unseen = false; }
+  else if (ev.replay !== true) item.unseen = true;
   if (ev.sessionId === store.activeId) renderDock();
+}
+
+// Whether a shown document takes the pane. A file the user opened always does. A replay after a reconnect only
+// reopens the tab that was open before it. Content an agent shows follows Settings ▸ Behavior, and only in the
+// session on screen: one shown elsewhere waits behind its toast, and switching there lands where the user left it.
+function comesToFront(ev, fresh) {
+  if (ev.replay === true) return restoreTabs.get(ev.sessionId) === ev.contentId;
+  if (ev.sessionId !== store.activeId) return false;   // also for a file opened in another browser on another session
+  if (ev.openedBy === "user") return true;
+  const mode = store.switchToAgentTabs;
+  return mode === "always" || (mode === "first" && fresh);
+}
+
+// Bring one document to the front — the other-session toast's click, which is the user asking to see it.
+export function showDocument(sid, id) {
+  const entry = docks.get(sid); const item = entry && entry.items.find((it) => it.id === id); if (!item) return;
+  entry.activeId = id; item.unseen = false;
+  if (sid === store.activeId) renderDock();
 }
 
 // ── the strip as a DROP TARGET ───────────────────────────────────────────────────────────────────────────
@@ -516,13 +544,16 @@ function terminalTab(on) {
   return tab;
 }
 function docTab(it, on, entry) {
+  if (on) it.unseen = false;
   const tab = h("div", "cd-tab" + (on ? " on" : ""));
   tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", String(on));
   tab.append(spanIcon(it.kind));
-  const label = h("span", "cd-tab-name"); label.textContent = it.name || it.kind; label.title = it.name || it.kind;
+  const label = h("span", "cd-tab-name"); label.textContent = it.name || it.kind; label.title = (it.name || it.kind) + (it.unseen ? " (new)" : "");
   const close = h("button", "cd-tab-x", X); close.type = "button"; close.title = "Close"; close.setAttribute("aria-label", "Close " + (it.name || it.kind));
   close.addEventListener("click", (e) => { e.stopPropagation(); closeItem(store.activeId, it.id); });
-  tab.append(label, close);
+  tab.append(label);
+  if (it.unseen) tab.append(h("span", "cd-tab-new"));   // shown while the user was elsewhere: not looked at yet
+  tab.append(close);
   tab.addEventListener("click", () => { entry.activeId = it.id; renderDock(); });
   // The tab is where the document's IDENTITY lives, so its menu answers "what file is this?". Only a document
   // the engine sourced from disk has an answer; a payload the agent sent inline has no file, and the row says

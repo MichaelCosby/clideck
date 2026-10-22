@@ -10,6 +10,9 @@ const { isValidProfile, mergeProfile } = require('./user-profile');
 const { isValidOnboarding, mergeOnboarding } = require('./onboarding');
 const { AGENT_GUIDANCE_LEVELS } = require('./agent-session-guide');
 
+// When a tab an agent opens comes to the front: whenever it is shown, the first time only, or never.
+const TAB_SWITCH_MODES = Object.freeze(['always', 'first', 'never']);
+
 const STARTER_PROMPTS = Object.freeze([
   Object.freeze({
     id: 'starter-prompt-update-documentation',
@@ -203,6 +206,7 @@ function isValidConfigPatch(value) {
     return false;
   }
   if (value.agentGuidance !== undefined && !AGENT_GUIDANCE_LEVELS.includes(value.agentGuidance)) return false;
+  if (value.switchToAgentTabs !== undefined && !TAB_SWITCH_MODES.includes(value.switchToAgentTabs)) return false;
   if (value.historyPrompts !== undefined
     && (!Number.isInteger(value.historyPrompts) || value.historyPrompts < 0 || value.historyPrompts > 20)) return false;
   if (value.about !== undefined && !isValidProfile(value.about)) return false;

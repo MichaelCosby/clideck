@@ -1139,6 +1139,7 @@ body.resizing iframe { pointer-events:none; } /* Embedded documents must not tak
 .cd-tab-ic { flex:0 0 auto; display:grid; place-items:center; color:var(--faint); }
 .cd-tab.on .cd-tab-ic { color:var(--accent); }
 .cd-tab-name { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cd-tab-new { flex:0 0 auto; width:6px; height:6px; border-radius:50%; background:var(--accent); }
 .cd-tab-x { flex:0 0 auto; display:grid; place-items:center; width:16px; height:16px; padding:0; border:0; border-radius:4px; background:transparent; color:var(--faint); cursor:pointer; opacity:0; transition:opacity .12s, background .12s, color .12s; }
 .cd-tab:hover .cd-tab-x, .cd-tab.on .cd-tab-x { opacity:.75; }
 .cd-tab-x:hover { opacity:1; background:var(--surface-2); color:var(--text); }

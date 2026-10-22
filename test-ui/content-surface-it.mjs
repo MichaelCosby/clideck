@@ -118,7 +118,10 @@ try {
   await flush();
   ok("replayed other-session content restores without a toast", !document.querySelector(".toast"));
   store.select("B"); await flush();
-  ok("switching to B reveals quietly restored content", dockVisible() && !!document.querySelector("#pane-body .diff"));
+  // A replay reopens only the tab that was open before the reconnect; this page had none in B, so B opens on its terminal.
+  ok("switching to B shows the restored tab, with B still on its terminal", dockVisible() && tabs().length === 1 && termVisible());
+  tabs()[0]._fire("click"); await flush();
+  ok("and the restored content renders when its tab is opened", !!document.querySelector("#pane-body .diff"));
   store.select("A"); await flush();
 
   // ── other-session rich content → recorded + toast, no dock steal; switching reveals it ──
@@ -127,7 +130,10 @@ try {
   ok("other-session content does NOT open a tab here (A active)", !dockVisible());
   ok("other-session content raised a toast", !!document.querySelector(".toast"));
   store.select("B"); await flush();
-  ok("switching to B reveals its recorded content in the dock", dockVisible() && !!document.querySelector("#pane-body .tr"));
+  const suite = tabs().find((t) => t.querySelector(".cd-tab-name").textContent === "suite");
+  ok("switching to B keeps the tab B was on, and the new one waits with a dot", !!suite && !!suite.querySelector(".cd-tab-new") && !!document.querySelector("#pane-body .diff"));
+  suite._fire("click"); await flush();
+  ok("opening it shows the content and clears the dot", !!document.querySelector("#pane-body .tr") && !tabs().find((t) => t.querySelector(".cd-tab-name").textContent === "suite").querySelector(".cd-tab-new"));
   ok("B's test-results rendered (FAILED verdict)", document.querySelector("#pane-body .tr-verdict.fail") && document.querySelector("#pane-body .tr-verdict").textContent === "FAILED");
   // A video for the OTHER session used to exist only as a toast — click it or lose it, and the asset was
   // stranded either way. It is a tab in B now, whether or not the toast is ever touched.
@@ -147,6 +153,7 @@ try {
   await flush();
   ok("content from a plugin that is not loaded still opens a tab", tabs().length === 1
     && tabs()[0].querySelector(".cd-tab-name").textContent === "weekly.report");
+  tabs()[0]._fire("click"); await flush();
   ok("and the tab says why it cannot draw it, naming the kind",
     /gone-tool\/report/.test((document.querySelector("#pane-body .cd-error") || {}).textContent || ""));
   document.querySelector(".cd-tab .cd-tab-x")._fire("click", { target: document.querySelector(".cd-tab .cd-tab-x") });
