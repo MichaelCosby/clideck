@@ -41,6 +41,7 @@ const { servePluginStatic, serveStatic } = require('./static');
 const { ServerLock } = require('./server-lock');
 const { alreadyRunningLine, startupBanner, notifyUpdate } = require('./startup');
 const { TranscriptStore } = require('./transcript-store');
+const { TaskManager } = require('./task-manager');
 const { SessionArchive } = require('./session-archive');
 const { MAX_UPLOAD_BYTES, UploadError, saveUpload } = require('./upload');
 const { checkCommandAvailability } = require('./availability');
@@ -147,6 +148,13 @@ class HeadlessServer {
       }
     }
     this.clients = new Set();
+    this.taskManager = options.taskManager || new TaskManager({ sessions: () => {
+      const projects = this.configStore.get().projects || [];
+      return this.persistence.list().map(entry => ({ id: entry.id, name: entry.name,
+        project: projects.find(p => p.id === entry.projectId)?.name
+          || String(entry.cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'No project',
+        pid: this.sessions.get(entry.id)?.closed ? null : this.sessions.get(entry.id)?.terminal?.pid }));
+    } });
     this.transcriptSearches = new WeakMap();
     this.archive = new SessionArchive({ dataDir: this.persistence.dataDir,
       now: this.now, onStatus: event => this.broadcast(event) });
@@ -383,6 +391,7 @@ class HeadlessServer {
       port: this.port,
       theme,
       muted: entry.muted,
+      readAloud: entry.readAloud,
       lastAgentAt: entry.lastAgentAt,
       contextTranscriptPath: entry.transcriptPath,
       ...(hasProjectId(entry) && { projectId: entry.projectId }),
@@ -527,6 +536,7 @@ class HeadlessServer {
       port: this.port,
       theme: message.theme,
       muted: session.muted,
+      readAloud: session.readAloud,
       lastAgentAt: session.lastAgentAt,
       contextTranscriptPath: entry?.transcriptPath,
       ...(hasProjectId(session) && { projectId: session.projectId }),
@@ -668,6 +678,7 @@ class HeadlessServer {
       cols: entry.cols,
       rows: entry.rows,
       muted: entry.muted === true,
+      readAloud: entry.readAloud === true,
       live: false,
       lastActive: entry.lastActive,
       bracketedPaste: false,
@@ -788,6 +799,20 @@ class HeadlessServer {
     this.broadcast(session && !session.closed
       ? session.snapshot()
       : this.dormantSnapshot({ ...entry, muted: value }));
+    return true;
+  }
+
+  setSessionReadAloud(sessionId, enabled) {
+    const id = String(sessionId || '');
+    const entry = this.persistence.get(id);
+    if (!entry) return false;
+    const readAloud = enabled === true;
+    const session = this.sessions.get(id);
+    if (session && !session.closed) session.readAloud = readAloud;
+    this.persistence.update(id, { readAloud }, true);
+    this.broadcast(session && !session.closed
+      ? session.snapshot()
+      : this.dormantSnapshot({ ...entry, readAloud }));
     return true;
   }
 
@@ -1089,6 +1114,10 @@ class HeadlessServer {
       this.setSessionMute(message.sessionId, message.muted);
       return;
     }
+    if (message.type === 'session.readAloud') {
+      this.setSessionReadAloud(message.sessionId, message.enabled);
+      return;
+    }
     if (message.type === 'session.setProject') {
       this.setSessionProject(message.sessionId, message.projectId);
       return;
@@ -1261,8 +1290,11 @@ class HeadlessServer {
       }
       return;
     }
-    if (message.type === 'prompt') session.sendPrompt(message.text);
-    else if (message.type === 'input') session.writeInput(message.data);
+    if (message.type === 'prompt') session.sendPrompt(message.text, { fromUser: true });
+    else if (message.type === 'input') {
+      if (message.userActivity === true) session.markUserActivity();
+      if (message.data) session.writeInput(message.data);
+    }
     else if (message.type === 'resize') {
       session.resize(message.cols, message.rows);
       this.persistence.touch(session.id, { cols: session.cols, rows: session.rows });
@@ -1271,7 +1303,7 @@ class HeadlessServer {
       session.removePersistenceOnClose = true;
       session.close();
     }
-    if (message.type === 'prompt' || message.type === 'input') this.persistence.touch(session.id);
+    if (message.type === 'prompt' || (message.type === 'input' && message.data)) this.persistence.touch(session.id);
   }
 
   replayLiveSession(socket, session) {
@@ -1327,6 +1359,28 @@ class HeadlessServer {
 
   async handleHttp(req, res) {
     const pathname = String(req.url || '').split('?')[0];
+    if (pathname === '/api/tasks' || pathname === '/api/tasks/stop') {
+      res.setHeader('Cache-Control', 'no-store');
+      if (!isAllowedWebSocketOrigin(req.headers.origin, req.headers.host, this.host)
+        || req.headers['sec-fetch-site'] === 'cross-site') {
+        sendJson(res, 403, { error: 'origin_forbidden' }); return;
+      }
+      if (pathname === '/api/tasks' && req.method === 'GET') {
+        const result = await this.taskManager.snapshot();
+        if (!res.destroyed) sendJson(res, result.error ? 503 : 200, result);
+      } else if (pathname === '/api/tasks/stop' && req.method === 'POST') {
+        if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) {
+          sendJson(res, 415, { error: 'Expected JSON.' }); return;
+        }
+        try {
+          const body = await readJson(req, 1024);
+          if (typeof body.token !== 'string' || body.token.length > 100 || typeof body.force !== 'boolean'
+            || Object.keys(body).some(k => !['token', 'force'].includes(k))) throw new Error('Invalid stop request.');
+          sendJson(res, 200, await this.taskManager.stop(body.token, body.force));
+        } catch (error) { sendJson(res, 409, { error: error.message }); }
+      } else sendJson(res, 405, { error: 'Method not allowed.' });
+      return;
+    }
     if (req.method === 'POST' && ['/api/session/backup', '/api/session/restore/preview', '/api/session/restore'].includes(pathname)) {
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -1518,6 +1572,7 @@ class HeadlessServer {
       sendJson(res, 409, {
         ok: false,
         error: available.error,
+        ...(available.message && { message: available.message }),
         ...(available.error === 'busy' && available.steerable && {
           message: 'Target session is working. Re-run with --steer to inject this message now.',
         }),
@@ -1530,7 +1585,7 @@ class HeadlessServer {
       ? `[CliDeck ${request.steer ? 'steer' : 'ask'} from ${sessionAddress(caller.entry, projects)}]\n\n${request.text}`
       : request.text;
     if (request.steer) {
-      const result = this.askCoordinator.steer(available.session, text, source);
+      const result = await this.askCoordinator.steer(available.session, text, source);
       sendJson(res, result.ok ? 200 : 409, result);
       return;
     }
@@ -1542,7 +1597,7 @@ class HeadlessServer {
     );
     const statusCode = result.ok ? 200
       : result.error === 'timeout' ? 504
-        : ['busy', 'unavailable', 'target_closed'].includes(result.error) ? 409 : 500;
+        : ['busy', 'unavailable', 'target_closed', 'user_typing', 'delivery_interrupted'].includes(result.error) ? 409 : 500;
     sendJson(res, statusCode, result);
   }
 

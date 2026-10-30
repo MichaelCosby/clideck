@@ -13,6 +13,7 @@ const BRACKETED_PASTE_END = '\x1b[201~';
 const TRANSCRIPT_READY_TIMEOUT_MS = 5000;
 const CLOSE_GRACE_MS = 1500;
 const OUTPUT_BATCH_MS = 100;
+const USER_ACTIVITY_GRACE_MS = 4000;
 const COLORFGBG_BY_THEME = {
   light: '0;15',
   dark: '15;0',
@@ -52,8 +53,11 @@ class AgentSession extends EventEmitter {
     this.port = options.port;
     this.serverUrl = options.serverUrl || `http://127.0.0.1:${this.port}`;
     this.muted = options.muted === true;
+    this.readAloud = options.readAloud === true;
     this.lastAgentAt = Number(options.lastAgentAt) || null;
     this.now = options.now || Date.now;
+    this.userActivityUntil = 0;
+    this.pendingSubmission = null;
     this.colorfgbg = COLORFGBG_BY_THEME[options.theme];
     this.screen = new Screen(this.cols, this.rows);
     this.userPrompts = [];
@@ -152,6 +156,7 @@ class AgentSession extends EventEmitter {
       cols: this.cols,
       rows: this.rows,
       muted: this.muted,
+      readAloud: this.readAloud,
       live: true,
       bracketedPaste: this.bracketedPasteMode,
       projectId: this.projectId ?? null,
@@ -228,7 +233,11 @@ class AgentSession extends EventEmitter {
 
   setStatus(state) {
     if (state !== 'working' && state !== 'idle') return;
-    if (state === 'working') clearTimeout(this.submitRetryTimer);
+    if (state === 'working') {
+      clearTimeout(this.submitRetryTimer);
+      this.submitRetryTimer = null;
+      if (this.pendingSubmission?.submitted) this.pendingSubmission = null;
+    }
     if (this.status === state) return;
     this.status = state;
     this.emitProtocol('status', {
@@ -506,9 +515,39 @@ class AgentSession extends EventEmitter {
     this.emitProtocol('turn.user', { text });
   }
 
-  sendPrompt(text) {
+  isUserTyping() {
+    return this.now() < this.userActivityUntil;
+  }
+
+  isSubmitting() {
+    return Boolean(this.pendingSubmission && !this.pendingSubmission.submitted);
+  }
+
+  markUserActivity() {
+    if (this.closed || !this.terminal) return;
+    this.userActivityUntil = this.now() + USER_ACTIVITY_GRACE_MS;
+    // Human edits also win after an automatic paste but before its delayed CR.
+    // Never clear/reconstruct the native draft; tell the sender text was inserted.
+    clearTimeout(this.submitTimer);
+    clearTimeout(this.submitRetryTimer);
+    this.submitTimer = this.submitRetryTimer = null;
+    const pending = this.pendingSubmission;
+    this.pendingSubmission = null;
+    if (pending && !pending.submitted) {
+      // This paste may now be edited or discarded, so it is no longer an
+      // expected native submission. Do not let it block later echo matching.
+      if (this.pendingPromptEchoes.at(-1) === pending.prompt) this.pendingPromptEchoes.pop();
+      if (pending.newTurn && this.status === 'idle') this.turnOpen = false;
+      pending.resolve({ ok: false, error: 'delivery_interrupted', message:
+        'The user started typing during delivery. Text was already inserted, but automatic submission was cancelled. Check the terminal before retrying.' });
+    }
+  }
+
+  sendPrompt(text, { fromUser = false } = {}) {
     const prompt = String(text || '').trim();
     if (!prompt || !this.terminal || this.closed) return false;
+    if (fromUser) this.markUserActivity();
+    else if (this.isUserTyping() || this.isSubmitting()) return false;
     this.flushScreen();
     this.baselineCandidate = this.currentCandidate();
     this.pendingFinal = false;
@@ -521,7 +560,7 @@ class AgentSession extends EventEmitter {
 
   steerPrompt(text) {
     const prompt = String(text || '').trim();
-    if (!prompt || !this.terminal || this.closed) return false;
+    if (!prompt || !this.terminal || this.closed || this.isUserTyping() || this.isSubmitting()) return false;
     this.flushScreen();
     if (this.menu.length) return false;
     this.submitPrompt(prompt, false);
@@ -529,6 +568,10 @@ class AgentSession extends EventEmitter {
   }
 
   submitPrompt(prompt, retryWhenIdle) {
+    let resolve;
+    const completion = new Promise(done => { resolve = done; });
+    const pending = { completion, resolve, prompt, submitted: false, newTurn: retryWhenIdle };
+    this.pendingSubmission = pending;
     this.userPrompts.push(prompt);
     if (this.provider.userText) {
       this.pendingPromptEchoes.push(prompt);
@@ -539,13 +582,23 @@ class AgentSession extends EventEmitter {
     const delay = this.promptSubmitDelay(prompt.length);
     clearTimeout(this.submitTimer);
     clearTimeout(this.submitRetryTimer);
+    this.submitTimer = this.submitRetryTimer = null;
     clearTimeout(this.activityTimer);
     this.submitTimer = setTimeout(() => {
-      if (!this.closed) this.terminal.write('\r');
+      this.submitTimer = null;
+      if (!this.closed && this.pendingSubmission === pending) {
+        pending.submitted = true;
+        this.terminal.write('\r');
+        pending.resolve({ ok: true });
+        if (!this.submitRetryTimer) this.pendingSubmission = null;
+      }
     }, delay);
     if (retryWhenIdle) {
       this.submitRetryTimer = setTimeout(() => {
+        this.submitRetryTimer = null;
+        if (this.pendingSubmission !== pending) return;
         if (!this.closed && this.status === 'idle') this.terminal.write('\r');
+        this.pendingSubmission = null;
       }, delay + this.submitRetryMs);
     }
   }
@@ -604,6 +657,7 @@ class AgentSession extends EventEmitter {
       cols: this.cols,
       rows: this.rows,
       muted: this.muted,
+      readAloud: this.readAloud,
       live: true,
       model: this.model,
       bracketedPaste: this.bracketedPasteMode,
@@ -660,6 +714,8 @@ class AgentSession extends EventEmitter {
   close() {
     if (this.closed || this.closeRequested) return;
     this.closeRequested = true;
+    this.pendingSubmission?.resolve({ ok: false, error: 'target_closed' });
+    this.pendingSubmission = null;
     clearTimeout(this.submitTimer);
     clearTimeout(this.submitRetryTimer);
     const pendingTranscript = this.provider.requiresResumeTranscript
@@ -681,6 +737,8 @@ class AgentSession extends EventEmitter {
     if (this.closed) return this.closedPromise;
     this.restarting = true;
     this.closeRequested = true;
+    this.pendingSubmission?.resolve({ ok: false, error: 'target_closed' });
+    this.pendingSubmission = null;
     clearTimeout(this.submitTimer);
     clearTimeout(this.submitRetryTimer);
     clearTimeout(this.activityTimer);
@@ -696,6 +754,8 @@ class AgentSession extends EventEmitter {
     if (this.closed) return;
     this.flushScreen();
     this.closed = true;
+    this.pendingSubmission?.resolve({ ok: false, error: 'target_closed' });
+    this.pendingSubmission = null;
     this.pendingPromptEchoes = [];
     this.recordedPromptIds.clear();
     clearTimeout(this.outputTimer);

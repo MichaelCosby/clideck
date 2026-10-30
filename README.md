@@ -38,7 +38,13 @@ counts, and activity times let you follow many sessions while working in one.
 - **Search.** Find sessions and search their conversation text. Conversation
   History searches the full saved conversation with highlighted matches, and
   offers Jump to latest when new messages arrive without moving your reading
-  position. Filter to unread sessions when catching up.
+  position. Ctrl/Cmd+F in the terminal searches retained scrollback, with
+  highlights that stay visible as you scroll. Filter to unread sessions when
+  catching up.
+- **Task Manager.** See running processes, CPU and memory use, grouped by project
+  and agent. Open the bar-chart button beside Plugins. Filter, expand child
+  processes, and stop a selected job after confirmation. It refreshes only while
+  open and visible; available on macOS and Linux.
 - **Saved prompts.** Type `//` to reuse a prompt. `{{session_name}}` and
   `{{project_name}}` fill in the current context.
 - **Controls.** Light and dark themes and configurable shortcuts.
@@ -69,7 +75,10 @@ files onto the tab strip yourself.
 ## Plugins
 
 - **Git Changes** — inspect edits, branches, and worktree comparisons.
-- **Supertonic Voice** — listen to replies or selected text. Voice models download during setup.
+- **Supertonic Voice** — listen to replies or selected text with twelve local voices
+  and quick previews. Automatic reading is enabled per session and waits until you
+  open that session. Tables, code blocks and diagrams get a short spoken cue.
+  The speech model downloads on first use.
 - **Emoji** — emoji support in the terminal.
 - **Smart Dictation** — optional voice input for prompts.
 
@@ -90,6 +99,11 @@ images in CliDeck for your review.
 
 Type `@@` to find sessions such as `@game/sound`. Agents find teammates with
 `clideck agents` and contact them with `clideck ask`.
+
+While you type or paste in a terminal, incoming asks and steering messages are
+refused with a retry message. They become available after four seconds without
+input. This protects active typing; an unfinished draft is not protected after
+that pause. Nothing is queued for automatic delivery.
 
 ![An FPS team with map, SFX, visual assets, story, QA, and player agents. Your character programmer chooses SFX for the voice request; SFX replies to the programmer, who brings the update back to you.](public/clideck-teamwork.png)
 

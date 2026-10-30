@@ -37,9 +37,22 @@ try {
   closePluginComposition("dictation-fixture"); await sleep();
   ok("mic clears when composition closes", !mic.classList.contains("on") && mic.getAttribute("aria-pressed") === "false");
 
+  store.applyEvent({ type: "plugins", plugins: [{ id: "supertonic", name: "Supertonic Voice", enabled: true, status: "ready", values: { "auto-read": true } }] });
+  store.select("A"); await sleep();
+  ok("a stale global auto-read setting never turns the session toggle on", say.getAttribute("aria-pressed") === "false" && !say.classList.contains("on"));
   ws.clear(); say._fire("click");
-  const cfg = ws.last("plugin.settings.update");
-  ok("read-aloud still toggles Supertonic auto-read", cfg?.pluginId === "supertonic" && cfg.settings?.["auto-read"] === true);
+  const toggle = ws.last("session.readAloud");
+  ok("read-aloud toggles the ACTIVE session only", toggle?.sessionId === "A" && toggle.enabled === true && !ws.last("plugin.settings.update"));
+  store.applyEvent({ type: "session.created", sessionId: "A", provider: "shell", cwd: "/a", name: "alpha", live: true, pid: 1, readAloud: true }); await sleep();
+  ok("engine re-broadcast lights the toggle for that session", say.getAttribute("aria-pressed") === "true" && say.classList.contains("on") && /click to turn off/.test(say.title));
+  store.applyEvent({ type: "session.created", sessionId: "B", provider: "shell", cwd: "/b", name: "beta", live: true, pid: 2 });
+  store.select("B"); await sleep();
+  ok("another session keeps its own (off) state", say.getAttribute("aria-pressed") === "false");
+  ws.clear(); say._fire("click");
+  ok("toggling B sends only B", ws.last("session.readAloud")?.sessionId === "B");
+  store.setConnected(false); await sleep();
+  ok("toggle is disabled while disconnected (nothing would persist)", say.disabled && say.title === "Reconnecting…");
+  store.setConnected(true); await sleep();
   ok("no Web Speech TTS path is introduced", typeof window.speechSynthesis === "undefined");
 
   console.log(`\n${fail === 0 ? "✓" : "✗"} ${pass} passed, ${fail} failed`);

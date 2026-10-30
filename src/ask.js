@@ -126,6 +126,8 @@ function availableAskSession(entry, sessions, coordinator) {
   if (getProvider(entry.provider)?.supportsAsk !== true) return { error: 'unsupported_target' };
   const session = sessions.get(entry.id);
   if (!session || session.closed) return { error: 'dormant' };
+  if (session.isUserTyping?.()) return userTypingResponse();
+  if (session.isSubmitting?.()) return { error: 'busy' };
   if (coordinator.isActive(entry.id) || session.status !== 'idle'
     || session.turnOpen || session.closeRequested || session.menu.length) {
     const steerable = !session.closeRequested && !session.menu.length
@@ -139,11 +141,17 @@ function availableSteerSession(entry, sessions, coordinator) {
   if (getProvider(entry.provider)?.supportsAsk !== true) return { error: 'unsupported_target' };
   const session = sessions.get(entry.id);
   if (!session || session.closed) return { error: 'dormant' };
+  if (session.isUserTyping?.()) return userTypingResponse();
+  if (session.isSubmitting?.()) return { error: 'busy' };
   if (session.closeRequested || session.menu.length) return { error: 'busy' };
   if (session.status !== 'working' && !session.turnOpen && !coordinator.isActive(entry.id)) {
     return { error: 'not_working' };
   }
   return { session };
+}
+
+function userTypingResponse() {
+  return { error: 'user_typing', message: 'The user is typing to this agent. Nothing was sent. Try again after a few seconds without user input.' };
 }
 
 class AskCoordinator {
@@ -168,22 +176,29 @@ class AskCoordinator {
     } catch {}
   }
 
-  steer(session, text, source = {}) {
+  async steer(session, text, source = {}) {
+    if (session.isUserTyping?.()) return { ok: false, ...userTypingResponse() };
     if (!session.steerPrompt(text)) return { ok: false, error: 'unavailable' };
+    const delivered = await session.pendingSubmission?.completion;
+    if (delivered && !delivered.ok) return delivered;
     this.dispatch(session, source);
     return { ok: true, steered: true };
   }
 
   ask(session, text, timeoutMs, source = {}) {
+    if (session.isUserTyping?.()) return Promise.resolve({ ok: false, ...userTypingResponse() });
     if (this.isActive(session.id)) return Promise.resolve({ ok: false, error: 'busy' });
     return new Promise((resolve) => {
       let responded = false;
+      let released = false;
       const finishResponse = (result) => {
         if (responded) return;
         responded = true;
         resolve(result);
       };
       const release = () => {
+        if (released) return;
+        released = true;
         clearTimeout(timer);
         session.off('event', onEvent);
         this.active.delete(session.id);
@@ -207,7 +222,12 @@ class AskCoordinator {
         release();
         finishResponse({ ok: false, error: 'unavailable' });
       } else {
-        this.dispatch(session, source);
+        const delivery = session.pendingSubmission?.completion;
+        if (delivery) delivery.then(result => {
+          if (!result.ok) { release(); finishResponse(result); }
+          else this.dispatch(session, source);
+        });
+        else this.dispatch(session, source);
       }
     });
   }

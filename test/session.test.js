@@ -749,9 +749,10 @@ test('native submissions record edited multiline user text, not keystrokes, once
   }
 });
 
-test('native echoes reconcile ask and same-turn steering without losing repeated human messages', () => {
+test('native echoes reconcile ask and same-turn steering without losing repeated human messages', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   for (const provider of ['claude-code', 'codex']) {
-    const session = new AgentSession({ provider: getProvider(provider) });
+    const session = new AgentSession({ provider: getProvider(provider), promptSubmitDelay: () => 25 });
     session.terminal = { write() {} };
     const messages = [];
     session.on('event', (e) => { if (e.type === 'turn.user') messages.push(e.text); });
@@ -760,16 +761,19 @@ test('native echoes reconcile ask and same-turn steering without losing repeated
       prompt, turn_id, prompt_id: String(++sequence),
     });
     try {
-      session.sendPrompt('same');
+      assert(session.sendPrompt('same'));
+      t.mock.timers.tick(25); // The native hook follows actual submission, not just the paste.
       start('same');
-      session.steerPrompt('same');
+      assert(session.steerPrompt('same'));
+      t.mock.timers.tick(25);
       start('same');
       start('same'); // A real identical human submission within the active turn.
       assert.deepEqual(messages, ['same', 'same', 'same']);
       session.handleHook('stop', { turn_id: 'one' });
       start('same', 'two');
       assert.deepEqual(messages, ['same', 'same', 'same', 'same']);
-      session.steerPrompt('cancelled');
+      assert(session.steerPrompt('cancelled'));
+      t.mock.timers.tick(25);
       session.cancelTurn();
       start('cancelled', 'three');
       assert.deepEqual(messages.slice(-2), ['cancelled', 'cancelled']);

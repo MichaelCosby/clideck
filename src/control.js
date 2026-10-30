@@ -18,6 +18,7 @@ const CONTROL_TYPES = new Set([
   'session.resume',
   'session.restart',
   'session.mute',
+  'session.readAloud',
   'session.setProject',
   'project.delete',
   'project.open',
@@ -146,7 +147,8 @@ function hasValidControlFields(message) {
   if (message.type === 'content.close') return isString(message.contentId, MAX_SESSION_ID);
   if (message.type === 'prompt') return isString(message.text, MAX_CONTROL_TEXT);
   if (message.type === 'input') {
-    return typeof message.data === 'string' && message.data.length <= MAX_CONTROL_TEXT;
+    return typeof message.data === 'string' && message.data.length <= MAX_CONTROL_TEXT
+      && (message.userActivity === undefined || typeof message.userActivity === 'boolean');
   }
   if (message.type === 'resize') {
     return isDimension(message.cols, 20, 1000) && isDimension(message.rows, 5, 500);
@@ -161,6 +163,7 @@ function hasValidControlFields(message) {
       && (message.rows === undefined || isDimension(message.rows, 5, 500));
   }
   if (message.type === 'session.mute') return typeof message.muted === 'boolean';
+  if (message.type === 'session.readAloud') return typeof message.enabled === 'boolean';
   if (message.type === 'session.setProject') return isProjectId(message.projectId);
   return message.type === 'session.close';
 }

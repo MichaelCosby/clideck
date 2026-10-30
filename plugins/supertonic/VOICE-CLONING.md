@@ -33,3 +33,29 @@ the voice; the training loss alone cannot establish listening quality.
 Reload the plugin inventory (Settings or an engine restart) after adding voice
 options, and refresh the browser to load the updated client. Source recordings
 and the training environment are not shipped inside CliDeck.
+
+## Voice batch: 2026-10-29
+
+The eight additions use the user's local `Downloads/voices` collection:
+
+| Voice | Reference clips |
+| --- | --- |
+| Jake | `processed/jake/good1.ogg` through `good6.ogg` |
+| Kabbi | `processed/kabbi/good1.ogg` through `good6.ogg` |
+| Lilly | `processed/lilly/good1.ogg` through `good5.ogg` |
+| Lola | `processed/lola/good1.ogg` through `good3.ogg` |
+| Nikki | `processed/nikki/good1.ogg` through `good14.ogg` |
+| Transi | `processed/transi/good1.ogg` through `good15.ogg` |
+| Myers | `raw/Myers/good.mp3` and `good2.mp3` |
+| Chun-Li | Twelve largest top-level WAV clips in `raw/Chun-Li`; excludes `Efforts` |
+
+Lilly and Lola are separate curated selections of the same original speaker;
+both are kept for listening comparison. Tifa and Emma were already bundled as
+Female 1 and Female 2. Their existing profiles are unchanged. Mika keeps the
+`mike` ID for saved preferences; Dov is no longer bundled.
+
+This batch uses the preparation and 500-step training procedure above. Each
+reference has an adjacent `.sources.json` inventory with original file hashes.
+The generated English previews use 12 synthesis steps and the same sentence:
+"Hello. This is a preview of my voice in CliDeck. Let me know what you think."
+These are candidate voices for listening comparison, not a quality ranking.

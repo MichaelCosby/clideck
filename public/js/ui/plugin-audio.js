@@ -251,7 +251,7 @@ function playSegment(index, at = 0, start = true) {
   if (current) { const active = current; current = null; release(active, false); }
   const audio = new Audio(segment.url);
   audio.playbackRate = PLAYBACK_RATES[rateIndex];
-  current = { pluginId: timeline.pluginId, audio, url: segment.url, id: timeline.id, done: null, keepUrl: true, segment: index };
+  current = { pluginId: timeline.pluginId, audio, url: segment.url, id: timeline.id, done: null, keepUrl: true, segment: index, auto: timeline.auto };
   timeline.playing = index;
   // Evict only now that the channel has MOVED. Doing it as a part is appended protects the wrong one: at
   // that moment `playing` still names the part that just ended, which is exactly the audio worth releasing.
@@ -335,7 +335,15 @@ function seekDocument(fraction) {
   }
   playSegmentOrStop(target.index, at, playing);
 }
-function hidePlayer() { if (player) { player.hidden = true; seekEl.value = "0"; } }
+function hidePlayer() { if (player) { player.hidden = true; seekEl.value = "0"; } if (autoHooks) queueMicrotask(() => autoHooks && autoHooks.idle()); }
+
+// Automatic read-aloud (read-aloud.js) marks its clips with options.autoToken. The host decides at play time
+// whether that token may still sound (its session on screen, enabled, tab visible) — a clip synthesised before
+// the person moved away is refused here rather than trusted to the plugin. Untokened audio is manual.
+let autoHooks = null;
+export function setAutoAudioHooks(hooks) { autoHooks = hooks || null; }
+// Who owns the channel: "" when silent, an auto token, or "manual".
+export function audioOwner() { const a = current || live || timeline; return !a ? "" : a.auto || "manual"; }
 
 // Stop pressed while nothing is playing: the transport is still up because the read is not over, so this is
 // the user cancelling the READ, and the part being prepared must never start.
@@ -349,12 +357,18 @@ function endSequence(pluginId) {
 
 export async function playPluginAudio(pluginId, buffer, options = {}, done = null) {
   if (!(buffer instanceof ArrayBuffer) || !buffer.byteLength || buffer.byteLength > MAX_AUDIO_BYTES) throw new Error("Plugin audio payload is invalid or too large.");
+  const auto = options.autoToken == null ? "" : String(options.autoToken);
+  if (auto && !(autoHooks && autoHooks.allow(auto))) { if (typeof done === "function") done(false); return; }
+  if (!auto && autoHooks) autoHooks.manualStarted();
   const id = String(options.sequence || "");
   // Retiring the clip we are replacing is NOT the same as the user stopping: the next part of the same read,
   // from the same plugin, is a continuation and leaves the read alive. Anything else ENDS the live read — and
   // it has to end it even when nothing is playing, because a read in the gap still owns the channel and a
   // clip prefetched before the user moved on must never come back and replace what is playing now.
   const continuation = !!id && !!live && live.pluginId === pluginId && live.id === id;
+  // A plugin's default speed applies when a NEW reading starts; later parts keep whatever the listener chose.
+  const startRate = continuation ? -1 : PLAYBACK_RATES.indexOf(Number(options.playbackRate));
+  if (startRate >= 0) { rateIndex = startRate; paintRate(); }
   // A part of a reading that already has a timeline JOINS it — it does not replace what is playing. That is
   // the whole point: after seeking backwards the listener is somewhere earlier, and the next part arriving
   // must queue behind them rather than yank them to the end.
@@ -374,9 +388,9 @@ export async function playPluginAudio(pluginId, buffer, options = {}, done = nul
   const mime = /^audio\/[a-z0-9.+-]+$/i.test(String(options.mime || "")) ? options.mime : "audio/wav";
   const url = URL.createObjectURL(new Blob([buffer], { type: mime }));
   if (meta) {
-    if (!timeline) timeline = { pluginId, id, segments: [], bytes: 0, playing: -1 };
+    if (!timeline) timeline = { pluginId, id, segments: [], bytes: 0, playing: -1, auto };
     const segment = appendSegment(url, buffer.byteLength, meta, options, typeof done === "function" ? done : null);
-    live = id ? { pluginId, id } : null;
+    live = id ? { pluginId, id, auto } : null;
     titleEl.textContent = String(options.title || "Plugin audio").slice(0, 100);
     // Only take the channel if nobody is listening to an earlier part. `ended` is the tell: the previous part
     // finished and we are holding at the frontier waiting for exactly this.
@@ -387,14 +401,15 @@ export async function playPluginAudio(pluginId, buffer, options = {}, done = nul
     const owner = timeline;
     const attempt = playSegment(segment.index, 0);
     const mine = current && current.audio;
-    try { await attempt; }
+    try { await attempt; if (auto && autoHooks) autoHooks.started(auto); }
     catch (error) {
+      if (auto && autoHooks) autoHooks.blocked(auto, error);
       if (timeline === owner && current && current.audio === mine) stopPluginAudio(pluginId);
       throw error;
     }
     return;
   }
-  const audio = new Audio(url); audio.playbackRate = PLAYBACK_RATES[rateIndex]; current = { pluginId, audio, url };
+  const audio = new Audio(url); audio.playbackRate = PLAYBACK_RATES[rateIndex]; current = { pluginId, audio, url, auto };
   audio.addEventListener("ended", () => { if (current && current.audio === audio) { current.ended = true; stopPluginAudio(); } }, { once: true });
   audio.addEventListener("error", () => { if (current && current.audio === audio) { stopPluginAudio(); toast.error({ title: options.title || "Plugin audio", body: "Couldn’t play this audio." }); } }, { once: true });
   // Resolve the source against the terminal as it is NOW, before the first sound: the highlight must never
@@ -402,11 +417,17 @@ export async function playPluginAudio(pluginId, buffer, options = {}, done = nul
   current.id = id; current.done = typeof done === "function" ? done : null;
   // A clip that belongs to a read keeps the transport — and its Stop — on screen after it ends, so the user
   // can still stop between parts and the player does not flicker away at every batch boundary.
-  live = id ? { pluginId, id } : null;
+  live = id ? { pluginId, id, auto } : null;
   if (options.readAlong) startReadAlong(options.readAlong);
   for (const event of ["play", "pause", "loadedmetadata", "durationchange", "timeupdate", "seeked"]) audio.addEventListener(event, paintPlayback);
   titleEl.textContent = String(options.title || "Plugin audio").slice(0, 100); player.hidden = false; paintPlayback();
-  try { await audio.play(); paintPlayback(); } catch (error) { stopPluginAudio(pluginId); throw error; }
+  try { await audio.play(); if (auto && autoHooks) autoHooks.started(auto); if (current && current.audio === audio) paintPlayback(); }
+  catch (error) {
+    if (auto && autoHooks) autoHooks.blocked(auto, error);
+    // A late rejection belongs to THIS clip only — never stop whatever replaced it meanwhile.
+    if (current && current.audio === audio) stopPluginAudio(pluginId);
+    throw error;
+  }
 }
 
 export function togglePluginAudio(pluginId) {

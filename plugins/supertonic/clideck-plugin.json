@@ -1,7 +1,7 @@
 {
   "id": "supertonic",
   "name": "Supertonic Voice",
-  "version": "1.2.10",
+  "version": "1.4.0",
   "apiVersion": 1,
   "enabledByDefault": true,
   "description": "Private, on-device multilingual speech powered by Supertonic 3. The model loads only when you ask CliDeck to speak.",
@@ -19,13 +19,20 @@
       "label": "Voice",
       "type": "select",
       "default": "female-2",
-      "description": "Five bundled local voices. Preview a voice before selecting it.",
+      "description": "Twelve local voices. Female 1 is Tifa; Female 2 is Emma. Preview a voice before selecting it.",
       "options": [
         { "value": "female-1", "label": "Female 1", "preview": "public/voices/female-1-preview.mp3" },
         { "value": "female-2", "label": "Female 2", "preview": "public/voices/female-2-preview.mp3" },
         { "value": "yara", "label": "Yara", "preview": "public/voices/yara-preview.mp3" },
-        { "value": "mike", "label": "Mike", "preview": "public/voices/mike-preview.mp3" },
-        { "value": "dov", "label": "Dov", "preview": "public/voices/dov-preview.mp3" }
+        { "value": "mike", "label": "Mika", "preview": "public/voices/mike-preview.mp3" },
+        { "value": "chun-li", "label": "Chun-Li", "preview": "public/voices/chun-li-preview.mp3" },
+        { "value": "jake", "label": "Jake", "preview": "public/voices/jake-preview.mp3" },
+        { "value": "kabbi", "label": "Kabbi", "preview": "public/voices/kabbi-preview.mp3" },
+        { "value": "lilly", "label": "Lilly", "preview": "public/voices/lilly-preview.mp3" },
+        { "value": "lola", "label": "Lola", "preview": "public/voices/lola-preview.mp3" },
+        { "value": "myers", "label": "Myers", "preview": "public/voices/myers-preview.mp3" },
+        { "value": "nikki", "label": "Nikki", "preview": "public/voices/nikki-preview.mp3" },
+        { "value": "transi", "label": "Transi", "preview": "public/voices/transi-preview.mp3" }
       ]
     },
     {
@@ -85,6 +92,19 @@
       "max": 12
     },
     {
+      "key": "playback-rate",
+      "label": "Default playback speed",
+      "type": "select",
+      "default": "1",
+      "description": "Start each reading at this speed. You can still change it in the audio player.",
+      "options": [
+        { "value": "1", "label": "1×" },
+        { "value": "1.1", "label": "1.1×" },
+        { "value": "1.25", "label": "1.25×" },
+        { "value": "1.5", "label": "1.5×" }
+      ]
+    },
+    {
       "key": "normalization",
       "label": "Text normalization",
       "type": "select",
@@ -94,12 +114,6 @@
         { "value": "english", "label": "English technical" },
         { "value": "off", "label": "Off / original text" }
       ]
-    },
-    {
-      "key": "auto-read",
-      "label": "Read completed replies automatically",
-      "type": "toggle",
-      "default": false
     }
   ]
 }

@@ -105,6 +105,24 @@ test('CLI help explains how busy agents can steer', async () => {
   assert.match(result.stdout, /Show supports text, JSON, CSV, markdown/);
 });
 
+test('CLI typing refusals explain retry without offering a steering bypass', async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(409, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'user_typing', message: 'The user is typing to this agent. Nothing was sent.' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    for (const flags of [[], ['--steer']]) {
+      const result = await runCli(['ask', 'peer', 'hello', ...flags], {
+        CLIDECK_URL: `http://127.0.0.1:${server.address().port}`, CLIDECK_SESSION_ID: 'caller',
+      });
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /user is typing/); assert.match(result.stderr, /Nothing was sent/);
+      assert.match(result.stderr, /--steer does not bypass/); assert.doesNotMatch(result.stderr, /Re-run with --steer/);
+    }
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
 test('HTML starter and focused show help work without an engine or caller', async () => {
   const offline = { CLIDECK_SESSION_ID: '', CLIDECK_NEXT_SESSION_ID: '', CLIDECK_URL: 'http://127.0.0.1:1' };
   const result = await runCli(['show', '--template'], offline);

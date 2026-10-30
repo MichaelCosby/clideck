@@ -6,7 +6,7 @@ const { join, resolve } = require('path');
 const { pathToFileURL } = require('url');
 const { ConfigStore } = require('../src/config-store');
 const { PluginManager } = require('../src/plugin-manager');
-const { readPluginManifest } = require('../src/plugin-manifest');
+const { readPluginManifest, defaultSettings } = require('../src/plugin-manifest');
 
 const PLUGIN_ROOT = resolve(__dirname, '../plugins');
 
@@ -44,8 +44,15 @@ test('Supertonic is a valid lazy, namespaced plugin', () => {
     { value: 'female-1', label: 'Female 1', preview: 'public/voices/female-1-preview.mp3' },
     { value: 'female-2', label: 'Female 2', preview: 'public/voices/female-2-preview.mp3' },
     { value: 'yara', label: 'Yara', preview: 'public/voices/yara-preview.mp3' },
-    { value: 'mike', label: 'Mike', preview: 'public/voices/mike-preview.mp3' },
-    { value: 'dov', label: 'Dov', preview: 'public/voices/dov-preview.mp3' },
+    { value: 'mike', label: 'Mika', preview: 'public/voices/mike-preview.mp3' },
+    { value: 'chun-li', label: 'Chun-Li', preview: 'public/voices/chun-li-preview.mp3' },
+    { value: 'jake', label: 'Jake', preview: 'public/voices/jake-preview.mp3' },
+    { value: 'kabbi', label: 'Kabbi', preview: 'public/voices/kabbi-preview.mp3' },
+    { value: 'lilly', label: 'Lilly', preview: 'public/voices/lilly-preview.mp3' },
+    { value: 'lola', label: 'Lola', preview: 'public/voices/lola-preview.mp3' },
+    { value: 'myers', label: 'Myers', preview: 'public/voices/myers-preview.mp3' },
+    { value: 'nikki', label: 'Nikki', preview: 'public/voices/nikki-preview.mp3' },
+    { value: 'transi', label: 'Transi', preview: 'public/voices/transi-preview.mp3' },
   ]);
   assert.equal(voices.default, 'female-2');
   assert.equal(manifest.settings.find((setting) => setting.key === 'shortcut').type, 'shortcut');
@@ -66,6 +73,10 @@ test('Supertonic is a valid lazy, namespaced plugin', () => {
     assert.equal(readFileSync(preview, { encoding: 'latin1', flag: 'r' }).slice(0, 3), 'ID3');
   }
   assert.equal(manifest.settings.some((setting) => setting.key === 'speed'), false);
+  const rate = manifest.settings.find(setting => setting.key === 'playback-rate');
+  assert.equal(rate.default, '1');
+  assert.deepEqual(rate.options.map(option => option.value), ['1', '1.1', '1.25', '1.5']);
+  assert.equal(defaultSettings(manifest, { 'playback-rate': '99' })['playback-rate'], '1');
   assert.match(
     readFileSync(join(PLUGIN_ROOT, 'supertonic', 'public/helper.js'), 'utf8'),
     /ort\.env\.logLevel\s*=\s*['"]error['"]/,
@@ -77,7 +88,32 @@ test('Supertonic is a valid lazy, namespaced plugin', () => {
   );
 });
 
-test('Supertonic dispatches manual and opted-in automatic speech', async (t) => {
+test('Mika keeps the saved Mike voice ID; removed Dov falls back to the default', () => {
+  const manifest = readPluginManifest(join(PLUGIN_ROOT, 'supertonic'));
+  assert.equal(defaultSettings(manifest, { voice: 'mike' }).voice, 'mike');
+  assert.equal(defaultSettings(manifest, { voice: 'dov' }).voice, 'female-2');
+  assert.equal(manifest.settings.find(s => s.key === 'voice').options.find(o => o.value === 'mike').label, 'Mika');
+});
+
+test('every selectable voice loads its own profile; removed voices use the default', async () => {
+  const path = join(PLUGIN_ROOT, 'supertonic', 'client.js');
+  const source = readFileSync(path, 'utf8').replaceAll('import.meta.url', JSON.stringify(pathToFileURL(path).href));
+  const { voiceStyle } = await import(`data:text/javascript;base64,${Buffer.from(source + '\nexport { voiceStyle };').toString('base64')}`);
+  const loaded = [];
+  const engine = { styles: new Map(), helper: { loadVoiceStyle: async ([url]) => { loaded.push(url); return url; } } };
+  const manifest = readPluginManifest(join(PLUGIN_ROOT, 'supertonic'));
+  const options = manifest.settings.find(s => s.key === 'voice').options;
+  for (const { value } of options) {
+    const expected = pathToFileURL(join(PLUGIN_ROOT, 'supertonic', 'public/voices', `${value}.json`)).href;
+    assert.equal(await voiceStyle(engine, value), expected, value);
+    assert.equal(await voiceStyle(engine, value), expected, 'repeat selection reuses the style');
+  }
+  assert.equal(loaded.length, options.length);
+  assert.equal(await voiceStyle(engine, 'dov'), await voiceStyle(engine, 'female-2'));
+  assert.equal(loaded.length, options.length, 'removed Dov does not request a missing asset');
+});
+
+test('Supertonic dispatches manual speech; global auto-read cannot broadcast automatic speech', async (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'clideck-supertonic-'));
   const events = [];
   const replies = [];
@@ -92,7 +128,7 @@ test('Supertonic dispatches manual and opted-in automatic speech', async (t) => 
   await manager.start();
   const snapshot = manager.snapshot().find((plugin) => plugin.id === 'supertonic');
   assert.equal(snapshot.status, 'ready');
-  assert.equal(snapshot.values['auto-read'], false);
+  assert.equal(snapshot.values['auto-read'], undefined);
 
   manager.emitCoreEvent({ type: 'agent.final', sessionId: 'one', text: 'not opted in' });
   await new Promise((resolveWait) => setTimeout(resolveWait, 15));
@@ -124,16 +160,23 @@ test('Supertonic dispatches manual and opted-in automatic speech', async (t) => 
   assert.equal(settings.data.voice, 'female-2');
   assert.equal(settings.data.shortcut, 'F5');
   assert.equal(settings.data.normalization, 'english');
+  assert.equal(settings.data.playbackRate, 1);
   assert.equal('speed' in settings.data, false);
 
-  await manager.updateSettings('supertonic', { 'auto-read': true, language: 'fr' });
+  await manager.updateSettings('supertonic', { language: 'fr', 'playback-rate': '1.5' });
+  assert.equal(manager.snapshot().find(plugin => plugin.id === 'supertonic').values['playback-rate'], '1.5');
+  const before = events.filter(event => event.event === 'speak').length;
   manager.emitCoreEvent({ type: 'agent.final', sessionId: 'two', text: 'bonjour' });
-  const automatic = await waitFor(events, (event) => (
-    event.event === 'speak' && event.data.source === 'auto'
-  ));
-  assert.deepEqual(automatic.data, {
-    text: 'bonjour', sessionId: 'two', source: 'auto',
+  await new Promise(resolveWait => setTimeout(resolveWait, 20));
+  assert.equal(events.filter(event => event.event === 'speak').length, before);
+  assert.equal(defaultSettings(readPluginManifest(join(PLUGIN_ROOT, 'supertonic')), { 'auto-read': true })['auto-read'], undefined);
+  manager.clientMessage('supertonic', 'auto-read-result', { token: 'browser-one', status: 'deferred' }, {
+    requestId: 'result-1', reply: event => replies.push(event),
   });
+  const completion = await waitFor(replies, event => event.event === 'auto-read-result');
+  assert.equal(completion.requestId, 'result-1');
+  assert.deepEqual(completion.data, { token: 'browser-one', status: 'deferred' });
+  assert.equal(events.some(event => event.event === 'auto-read-result'), false, 'completion is not broadcast to other browsers');
 });
 
 test('Supertonic contributes selection and whole-document reader actions', async () => {

@@ -10,6 +10,7 @@ import { copyText, askAddress } from "../util.js";
 import { openThemePicker } from "./theme-picker.js";
 import { restartWithTheme } from "../terminal-themes.js";
 import { pastePayload } from "./paste.js";
+import { userInputFrame } from "./user-activity.js";
 
 // THE TERMINAL'S MENU IS NOT THE SESSION'S MENU. On a row you right-click a SESSION, so the menu offers
 // session things — rename, theme, restart, delete. In the terminal you right-click TEXT, with a selection
@@ -66,7 +67,7 @@ function projectItems(id, s) {
 }
 
 async function pasteInto(id) {
-  try { const t = await navigator.clipboard.readText(); if (t) send({ type: "input", sessionId: id, data: pastePayload(t) }); } catch {}
+  try { const t = await navigator.clipboard.readText(); if (t) send(userInputFrame(id, pastePayload(t))); } catch {}
 }
 
 function baseItems(id, opts) {

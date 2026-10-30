@@ -172,7 +172,10 @@ hidden; tabs remain mounted. Git Changes provides a complete workspace example.
 Generated audio crosses the Worker boundary as an `ArrayBuffer` and is played
 by one host-owned player through `playAudio()`; `stopAudio()` only stops that
 plugin's clip. This keeps playback controls accessible and consistent without
-giving plugin code DOM access. Audio may include a bounded `readAlong` timeline:
+giving plugin code DOM access. An optional `playbackRate` (1, 1.1, 1.25 or 1.5)
+sets the player's speed when a new reading starts; later parts of the same
+reading keep any speed the listener picked, and other values are ignored.
+Audio may include a bounded `readAlong` timeline:
 the terminal session, the exact text that was spoken, and source ranges paired
 with audio start/end times. Ranges may overlap, so a sliding window is expressed
 simply as one cue per advance; the current cue is the last one to have started.

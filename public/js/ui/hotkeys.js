@@ -6,6 +6,7 @@
 //   OSC52 (output) → Ctrl+C-copy → Shift+Enter → clear/Ctrl+K → // interception → registry
 import { send } from "../ws.js";
 import { pastePayload } from "./paste.js";
+import { userInputFrame } from "./user-activity.js";
 import { toast } from "./toast.js";
 import { store } from "../store.js";
 import { handleTerminalKey } from "./prompts.js";
@@ -26,8 +27,9 @@ async function pasteOnMac(term) {
   try {
     const text = await navigator.clipboard.readText();
     if (!text || store.active() !== session || session.pid !== pid || session.live === false || document.activeElement !== target) return;
-    if (session.bracketedPaste ?? term.modes.bracketedPasteMode) send({ type: "input", sessionId: session.id, data: pastePayload(text) });
-    else term.paste(text);
+    // Marked at the actual insertion, after the clipboard wait, not only at the shortcut.
+    if (session.bracketedPaste ?? term.modes.bracketedPasteMode) send(userInputFrame(session.id, pastePayload(text)));
+    else { send(userInputFrame(session.id, "")); term.paste(text); }
   } catch { toast({ type: "error", body: "Could not read the clipboard. Use Cmd+V to paste." }); }
 }
 

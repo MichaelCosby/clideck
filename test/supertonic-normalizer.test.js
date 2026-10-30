@@ -63,6 +63,33 @@ test('Supertonic keeps terminal wrapping out of technical normalization', async 
   );
 });
 
+test('signed money and numbers keep their sign without changing ranges or hyphenated text', async () => {
+  const { normalizeText, normalizeTextWithRanges, parseLexicon, normalizeEnglishPatterns } = await import(MODULE);
+  const entries = parseLexicon(readFileSync(LEXICON, 'utf8'));
+  const source = 'rule went from -$1.30M to +$0.11M.';
+  const expected = 'rule went from minus one point three million dollars to plus zero point one one million dollars.';
+  assert.equal(normalizeText(source, entries), expected);
+  for (const [text, spoken] of [
+    ['−$1.30M', 'minus one point three million dollars'],
+    ['$-1.30M', 'minus one point three million dollars'],
+    ['-$12.50', 'minus twelve dollars and fifty cents'],
+    ['-€2k', 'minus two thousand euros'],
+    ['+$0.00', 'plus zero dollars'],
+    ['-3.5%', 'minus three point five percent'],
+    ['(-2), +5, −0.25', '(minus two), plus five, minus zero point two five'],
+  ]) assert.equal(normalizeText(text, entries), spoken, text);
+  for (const text of ['1-3', '2026-10-30', 'state-of-the-art', 'x-2', '$1-$2', '$5 - $10', '- $20 per month']) {
+    assert.doesNotMatch(normalizeEnglishPatterns(text), /minus/, text);
+  }
+  assert.equal(normalizeEnglishPatterns('-$5 - $6'), 'minus five dollars - six dollars');
+  assert.equal(normalizeText(source, entries, 'off'), source);
+  const mapped = normalizeTextWithRanges(source, entries);
+  assert.equal(mapped.text, expected); assert.equal(mapped.ranges.length, expected.length);
+  for (const range of mapped.ranges) assert(range.start >= 0 && range.end > range.start && range.end <= source.length);
+  const at = mapped.text.indexOf('minus');
+  assert(mapped.ranges.slice(at, at + 5).every(range => source.slice(range.start, range.end).includes('-')));
+});
+
 test('Supertonic speaks version components as whole numbers separated by point', async () => {
   const { normalizeText, normalizeTextWithRanges, parseLexicon } = await import(MODULE);
   const entries = parseLexicon(readFileSync(LEXICON, 'utf8'));

@@ -131,6 +131,7 @@ function makeSession(ev) {
     status: null, menu: [], menuContext: "", latestAgent: "", lastAgentMessage: "",
     contextUsage: contextUsage(ev.contextUsage), lastAgentAt: epochMs(ev.lastAgentAt), model: modelName(ev.model),
     muted: ev.muted === true,
+    readAloud: ev.readAloud === true,          // per-session automatic read-aloud (engine-persisted, default off)
     bracketedPaste: typeof ev.bracketedPaste === "boolean" ? ev.bracketedPaste : null,
     workStartedAt: 0,
     // The ENGINE's last-activity stamp (persistence.js `lastActive`), epoch ms, or null when it did not send
@@ -241,7 +242,7 @@ function applyEvent(ev) {
         known.live = ev.live !== false; known.pid = ev.pid; known.name = ev.name || ""; known.lastActivity = Date.now();
         applySessionTelemetry(known, ev);
         known.lastActive = engineActive(ev) || known.lastActive;
-        known.muted = ev.muted === true;
+        known.muted = ev.muted === true; known.readAloud = ev.readAloud === true;
         if (typeof ev.bracketedPaste === "boolean") known.bracketedPaste = ev.bracketedPaste;
         known.projectId = ev.projectId || null;
         emit("session:update", known.id);
@@ -264,6 +265,7 @@ function applyEvent(ev) {
       applySessionTelemetry(known, ev);
       known.lastActive = engineActive(ev) || known.lastActive;
       known.muted = ev.muted === true;   // mute toggles arrive as a session.created re-broadcast
+      known.readAloud = ev.readAloud === true;   // so do read-aloud toggles
       if (typeof ev.bracketedPaste === "boolean") known.bracketedPaste = ev.bracketedPaste;
       known.projectId = ev.projectId || null;   // setProject re-broadcasts the snapshot with the new projectId
       emit("session:update", known.id);
@@ -302,7 +304,9 @@ function applyEvent(ev) {
       if (ev.text) s.lastAgentMessage = ev.text;    // finalized agent message → the pure preview source
       if (epochMs(ev.at)) s.lastAgentAt = ev.at;
       if (!active) s.unread += 1;                   // unread = final while unfocused
-      emit("session:update", s.id); emit("chrome"); break;
+      emit("session:update", s.id); emit("chrome");
+      if (ev.text) emit("session:final", s.id, ev.text);   // live finals only — reconnect replays none
+      break;
     case "menu": s.menu = ev.choices || []; s.menuContext = ev.context || ""; emit("session:update", s.id); break;
     case "output": appendBuf(s, ev.data); emit("session:output", s.id, ev.data, ev.replay === true); break;
     // turn.user is intentionally ignored — the terminal already echoes what you type.

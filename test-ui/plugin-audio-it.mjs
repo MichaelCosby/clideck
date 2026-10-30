@@ -341,6 +341,43 @@ ok("a reading whose audio is refused settles rather than hanging the plugin", re
 ok("and the timeline is not left behind with a transport nobody can use", __audioStateForTest().timeline === null);
 FakeAudio.prototype.play = async function () { this.paused = false; };
 
+// Same rule on the single-clip path: an auto clip whose play() is refused LATE, after a manual clip from the
+// same plugin replaced it, must not stop the manual clip.
+const { setAutoAudioHooks, audioOwner } = await import("../public/js/ui/plugin-audio.js");
+const hookLog = [];
+setAutoAudioHooks({ allow: () => true, started: (t) => hookLog.push("started " + t), blocked: (t) => hookLog.push("blocked " + t), manualStarted: () => hookLog.push("manual"), idle: () => {} });
+audios.length = 0;
+let holdAuto = null;
+FakeAudio.prototype.play = function () { return new Promise((_, reject) => { holdAuto = reject; }); };
+const autoClip = playPluginAudio("voice", new ArrayBuffer(8), { title: "Auto", autoToken: "auto-1" }).catch(() => "rejected");
+await sleep();
+FakeAudio.prototype.play = async function () { this.paused = false; };
+await playPluginAudio("voice", new ArrayBuffer(8), { title: "Manual" });
+holdAuto(Object.assign(new Error("blocked"), { name: "NotAllowedError" }));
+ok("a late-refused auto clip reports blocked to the host but leaves the manual clip playing",
+  await autoClip === "rejected" && __audioStateForTest().clip?.paused === false && audioOwner() === "manual" && hookLog.join() === "manual,blocked auto-1", hookLog.join());
+stopPluginAudio(); setAutoAudioHooks(null);
+
+// ── default speed: applied when a reading STARTS, never over the listener's choice mid-reading ─────────
+audios.length = 0;
+const rateBtnNow = () => document.querySelector(".plugin-audio-rate");
+await playPluginAudio("voice", new ArrayBuffer(8), { title: "Default speed", sequence: "rate-a", playbackRate: 1.25 });
+ok("a new reading starts at the plugin's default speed", audios[0].playbackRate === 1.25 && rateBtnNow().textContent === "1.25×");
+rateBtnNow()._fire("click");
+ok("the listener can still change it", audios[0].playbackRate === 1.5);
+await playPluginAudio("voice", new ArrayBuffer(8), { title: "Default speed", sequence: "rate-a", playbackRate: 1.25 });
+ok("the next part of the same reading keeps the listener's speed", audios[1].playbackRate === 1.5 && rateBtnNow().textContent === "1.5×");
+await playPluginAudio("voice", new ArrayBuffer(8), { title: "Next", sequence: "rate-b", playbackRate: 1.1 });
+ok("the next reading starts at the default again", audios[2].playbackRate === 1.1);
+for (const bad of [2, "fast", 0, -1, NaN]) {
+  await playPluginAudio("voice", new ArrayBuffer(8), { title: "Bad", sequence: "rate-bad-" + bad, playbackRate: bad });
+  ok("an unsupported speed (" + bad + ") is ignored", audios.at(-1).playbackRate === 1.1);
+}
+await playPluginAudio("voice", new ArrayBuffer(8), { title: "Unspecified" });
+ok("audio without a default keeps the current speed (existing behaviour)", audios.at(-1).playbackRate === 1.1);
+rateBtnNow()._fire("click"); rateBtnNow()._fire("click"); rateBtnNow()._fire("click");   // back to 1×
+stopPluginAudio();
+
 // ── a plugin that sends no timeline is untouched ────────────────────────────────────────────────────────
 audios.length = 0;
 await playPluginAudio("voice", new ArrayBuffer(8), { title: "Plain" });

@@ -37,7 +37,7 @@ function declaredViewer(plugin, definition) {
 function projectFor(session) { return session && session.projectId ? store.projects.find((p) => p.id === session.projectId) || null : null; }
 function sessionSnapshot(session) {
   if (!session) return null;
-  return { id: session.id, name: session.name || "", provider: session.provider || "", cwd: session.cwd || "", projectId: session.projectId || null, live: session.live !== false, status: session.status || "" };
+  return { id: session.id, name: session.name || "", provider: session.provider || "", cwd: session.cwd || "", projectId: session.projectId || null, live: session.live !== false, status: session.status || "", readAloud: session.readAloud === true };
 }
 // `selection.anchor` is an opaque token saying WHERE on the terminal those cells are — a plugin carries it
 // back untouched (read-along, speech caching) and never parses it. Empty on every other surface, and empty
@@ -214,6 +214,15 @@ export function initPluginHost() {
   store.on("plugin:message", (message) => runtimes.get(message.pluginId)?.deliver(message.event, message.data, message.requestId));
   store.on("active", paintHeader); store.on("session:update", (id) => { if (id === store.activeId) paintHeader(); });
   reconcile(store.plugins);
+}
+
+// Host-originated message to a plugin client (no engine hop). False until its activate() has finished, since
+// a message delivered before the client registers its handlers would be silently lost.
+export function deliverPluginMessage(pluginId, event, data) {
+  const runtime = runtimes.get(pluginId);
+  if (!runtime || !runtime.ready) return false;
+  runtime.deliver(event, data);
+  return true;
 }
 
 export function pluginClientError(pluginId) { return errors.get(pluginId) || ""; }

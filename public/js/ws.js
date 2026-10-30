@@ -15,7 +15,7 @@ let retry = null;
 // offline lands as one write. Capped; past the cap the newest action is dropped with a one-time toast.
 const QUEUEABLE = new Set([
   "session.create", "session.close", "session.resume", "session.rename", "session.setProject",
-  "session.restart", "session.mute", "project.open", "project.delete", "config.update",
+  "session.restart", "session.mute", "session.readAloud", "project.open", "project.delete", "config.update",
   "dirs.list", "dirs.mkdir",
   // Closing a document is a user action like any other, and "closed stays closed" does not acquire an
   // exception because the socket happened to be down. Dropped here, the close is lost and the engine replays
@@ -107,6 +107,11 @@ export function renameSession(id, name) {
   // Works live AND dormant; empty string clears the name. The engine re-broadcasts
   // session.created with the new name for the same id → the store folds it in as an update.
   send({ type: "session.rename", sessionId: id, name: String(name == null ? "" : name) });
+}
+
+export function setReadAloud(id, enabled) {
+  // Engine persists it + re-broadcasts session.created with the new `readAloud`, like mute.
+  send({ type: "session.readAloud", sessionId: id, enabled: !!enabled });
 }
 
 export function setMute(id, muted) {
