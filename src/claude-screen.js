@@ -114,8 +114,13 @@ function latestAgentText(lines, userPrompts = []) {
   return cleanAgentText(latest.text);
 }
 
+// An empty prompt, or one showing Claude's greyed suggestion for a fresh conversation (`Try "fix lint errors"`).
+// The suggestion is not typed text: before this, a session that opened with one never went idle, and every ask to
+// it was refused as busy.
+const EMPTY_PROMPT = /^\s*[❯›](?:\s|\u00a0)*(?:Try "[^"\n]*")?(?:\s|\u00a0)*$/u;
+
 function hasInputPrompt(lines) {
-  return lines.slice(-8).some((line) => /^\s*[❯›](?:\s|\u00a0)*$/u.test(line));
+  return lines.slice(-8).some((line) => EMPTY_PROMPT.test(line));
 }
 
 function hasSettledPrompt(lines) {
