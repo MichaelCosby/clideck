@@ -29,7 +29,9 @@ const { listDirectories, makeDirectory } = require('./directories');
 const { DEFAULT_DATA_DIR, SessionPersistence } = require('./persistence');
 const { modePreamble } = require('./terminal-modes');
 const { openProjectPath } = require('./project-open');
-const { hasProjectId, sameSessionScope, sessionAddress } = require('./project-scope');
+const {
+  hasProjectId, projectForFolder, resolveProjectRef, sameSessionScope, sessionAddress,
+} = require('./project-scope');
 const {
   PromptCoordinator,
   parseAnnotateRequest,
@@ -1693,6 +1695,33 @@ class HeadlessServer {
       return;
     }
     const inherit = body.provider === undefined && body.commandId === undefined;
+    const projects = this.configStore.get().projects || [];
+    // Which project the new session joins: the one named with --project ("here" keeps the caller's); otherwise,
+    // for a --cwd that is another project's folder, that project, since the folder says where it belongs.
+    let placement = null;
+    if (body.project !== undefined) {
+      if (typeof body.project !== 'string' || !body.project.trim()) {
+        sendJson(res, 400, { ok: false, error: 'invalid_request' });
+        return;
+      }
+      if (body.project.trim().toLowerCase() !== 'here') {
+        const found = resolveProjectRef(projects, body.project);
+        if (found.error) {
+          sendJson(res, 400, {
+            ok: false,
+            error: found.error,
+            message: found.error === 'ambiguous_project'
+              ? `More than one project is named "${body.project}". Use the project id.`
+              : `No project named "${body.project}".`,
+          });
+          return;
+        }
+        placement = { project: found.project, by: 'name' };
+      }
+    } else if (typeof body.cwd === 'string' && body.cwd) {
+      const match = projectForFolder(projects, body.cwd);
+      if (match && match.id !== caller.entry.projectId) placement = { project: match, by: 'folder' };
+    }
     const message = {
       type: 'session.create',
       ...(inherit && caller.session.commandId ? { commandId: caller.session.commandId }
@@ -1701,7 +1730,8 @@ class HeadlessServer {
       name: body.name,
       cwd: body.cwd === undefined ? caller.entry.cwd : body.cwd,
       // Copy the caller's scope exactly: a missing projectId (legacy cwd scope) is not the same as null.
-      ...(hasProjectId(caller.entry) && { projectId: caller.entry.projectId ?? null }),
+      ...(placement ? { projectId: placement.project.id }
+        : hasProjectId(caller.entry) && { projectId: caller.entry.projectId ?? null }),
     };
     if (!hasValidControlFields(message)) {
       sendJson(res, 400, { ok: false, error: 'invalid_request' });
@@ -1731,7 +1761,9 @@ class HeadlessServer {
         provider: entry?.provider || session.provider.id,
         cwd: message.cwd,
         projectId: message.projectId ?? null,
-        address: entry ? sessionAddress(entry, this.configStore.get().projects) : session.id,
+        projectName: message.projectId ? projects.find((project) => project.id === message.projectId)?.name || '' : '',
+        address: entry ? sessionAddress(entry, projects) : session.id,
+        ...(placement?.by === 'folder' && { placedByFolder: true }),
       },
     });
   }

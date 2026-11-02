@@ -615,3 +615,37 @@ test('CLI show broadcasts scoped content and serves ranged media', async () => {
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('create reports its project, and says when the folder chose it', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-cli-create-'));
+  const mine = join(dataDir, 'mine');
+  const theirs = join(dataDir, 'theirs');
+  mkdirSync(mine);
+  mkdirSync(theirs);
+  const server = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0 });
+  try {
+    const { httpUrl } = await server.listen();
+    server.configStore.update({ projects: [
+      { id: 'pm', name: 'Mine', path: mine, color: '#111111', collapsed: false },
+      { id: 'pt', name: 'Theirs', path: theirs, color: '#222222', collapsed: false },
+    ] });
+    const caller = server.createSession({ provider: 'shell', cwd: mine, name: 'Lead', projectId: 'pm' });
+    const env = { CLIDECK_SESSION_ID: caller.id, CLIDECK_URL: httpUrl };
+
+    const moved = await runCli(['create', '--cwd', theirs, '--name', 'Helper'], env, '', mine);
+    assert.equal(moved.code, 0, moved.stderr);
+    assert.match(moved.stdout, /\| project="Theirs" \| ask="@Theirs\/Helper"/);
+    assert.match(moved.stdout, /Note: placed in project "Theirs" because .* is inside that project's folder\. Pass --project <name> to choose another, or --project here for your own\./);
+
+    const own = await runCli(['create', '--cwd', theirs, '--project', 'here', '--name', 'Mine2'], env, '', mine);
+    assert.match(own.stdout, /\| project="Mine" \| ask="@Mine\/Mine2"/);
+    assert.doesNotMatch(own.stdout, /Note:/);
+
+    const missing = await runCli(['create', '--project', 'nowhere'], env, '', mine);
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /No project named "nowhere"/);
+  } finally {
+    await server.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

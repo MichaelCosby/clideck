@@ -16,7 +16,7 @@ function usage(pluginCommands = []) {
     '  clideck [--port <port>] [--host <host>] [--data-dir <folder>]',
     '  clideck --version',
     '  clideck agents [--group | --all] [--json] [--url <url>]',
-    '  clideck create [--provider <id> | --command <id>] [--name <name>] [--cwd <path>] [--json] [--url <url>]',
+    '  clideck create [--provider <id> | --command <id>] [--name <name>] [--cwd <path>] [--project <name>] [--json] [--url <url>]',
     '  clideck ask status [--group | --all] [--json] [--url <url>]',
     '  clideck ask <target> <message> [--timeout 10m] [--url <url>]',
     '  clideck ask <target> <message> --steer [--url <url>]',
@@ -112,11 +112,12 @@ function parseOptions(
     } else if (allowContent && argument === '--kind') {
       options.kind = args[++index];
       if (!options.kind) throw new Error('--kind requires a value.');
-    } else if (allowCreate && (argument === '--provider' || argument === '--command' || argument === '--cwd')) {
+    } else if (allowCreate && (argument === '--provider' || argument === '--command' || argument === '--cwd' || argument === '--project')) {
       const value = args[++index];
       if (!value) throw new Error(`${argument} requires a value.`);
       if (argument === '--provider') options.provider = value;
       else if (argument === '--command') options.commandId = value;
+      else if (argument === '--project') options.project = value;
       else options.cwd = resolve(value);
     } else if ((allowContent || allowCreate) && argument === '--name') {
       options.name = args[++index];
@@ -255,7 +256,7 @@ async function getAgents(url, callerId, all = false, group = false) {
 async function runCreate(args, env, io) {
   const options = parseOptions(args, env, { allowCreate: true });
   if (options.help) return io.stdout.write(`${usage()}\n`);
-  if (options.positional.length) throw new Error('Unexpected create argument. Hint: use clideck create [--provider <id>] [--name <name>] [--cwd <path>].');
+  if (options.positional.length) throw new Error('Unexpected create argument. Hint: use clideck create [--provider <id>] [--name <name>] [--cwd <path>] [--project <name>].');
   if (options.provider && options.commandId) throw new Error('Use either --provider or --command, not both.');
   const { session } = await requestJson(options.url, '/api/session/create', {
     method: 'POST',
@@ -266,10 +267,14 @@ async function runCreate(args, env, io) {
       commandId: options.commandId,
       name: options.name || undefined,
       cwd: options.cwd,
+      project: options.project,
     }),
   });
   io.stdout.write(options.json ? `${JSON.stringify(session, null, 2)}\n`
-    : `Created ${oneLine(session.name || session.id)} | ${oneLine(session.provider)} | ask=${JSON.stringify(session.address)} id=${session.id} | cwd=${session.cwd}\n`
+    : `Created ${oneLine(session.name || session.id)} | ${oneLine(session.provider)}${session.projectName ? ` | project=${JSON.stringify(session.projectName)}` : ''} | ask=${JSON.stringify(session.address)} id=${session.id} | cwd=${session.cwd}\n`
+      + (session.placedByFolder
+        ? `Note: placed in project ${JSON.stringify(session.projectName)} because ${oneLine(session.cwd)} is inside that project's folder. Pass --project <name> to choose another, or --project here for your own.\n`
+        : '')
       + 'Hint: it needs a moment to start; check clideck ask status before asking it.\n');
 }
 

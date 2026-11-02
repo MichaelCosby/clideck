@@ -15,7 +15,7 @@ const MINIMAL_GUIDE = `CliDeck session tools (when CLIDECK_SESSION_ID is set):
 You are running in a CliDeck session; other sessions may be working in the same project. To contact another agent, prefer your own built-in agent messaging when you have it. Use CliDeck's commands as the fallback: when you can't find the target that way, the target is not a Claude session, or a message goes unanswered. Contact other sessions only when the user asks or the task clearly needs it.
 List sessions and their ask addresses: \`clideck agents\` (\`--group\` adds the other projects in your project group, \`--all\` every project, \`--json\` details such as cwd).
 Ask an idle session and wait for its reply: \`clideck ask "<target>" "<message>" --timeout 10m\` (a number plus s, m or h, at most 2h). Add \`--steer\` to send guidance to a working session without waiting.
-Start a sibling session: \`clideck create [--provider <id>] [--name <name>] [--cwd <path>]\` (defaults to your agent and folder).
+Start a sibling session: \`clideck create [--provider <id>] [--name <name>] [--cwd <path>]\` (defaults to your agent and folder). A \`--cwd\` inside another project's folder starts it in that project; \`--project <name>\` chooses one.
 When you write a document meant for the user to read, such as a plan or report, open it in a preview tab: \`clideck show <path>\` (markdown, html, pdf, images, mermaid, diffs and more).
 Ask the user a question in CliDeck: \`clideck prompt "<question>" --options "A,B"\`; request feedback on an image: \`clideck annotate <image-file>\`.
 If the clideck command is missing, use \`${nodeCli}\` instead. Full help: \`clideck --help\`.`;
