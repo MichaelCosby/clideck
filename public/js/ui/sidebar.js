@@ -123,6 +123,7 @@ export function initSidebar() {
   store.on("session:setProjectRejected", onSetProjectRejected);
   // a restart respawn failed — the store already flipped the row dormant; surface why.
   store.on("session:restartFailed", (id, msg) => toast.error({ id: "restart:" + id, title: "Restart failed", body: msg || "The session could not be restarted." }));
+  store.on("session:startFailed", (id, msg) => toast.error({ id: "start:" + id, title: `${store.sessions.get(id)?.name || "Session"} didn't start`, body: msg || "The agent stopped right after starting." }));
   // config.projects changed (create / rename / recolour / reorder / delete cascade) → reconcile project groups.
   store.on("config", reconcileProjects);
   store.on("config", () => { refreshFaces(); if (pickerRefresh) pickerRefresh(); });   // faces + picker visibility follow config immediately

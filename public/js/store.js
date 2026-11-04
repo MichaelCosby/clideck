@@ -4,7 +4,7 @@
 // Events emitted:
 //   session:add(id) · session:remove(id) · session:update(id) · session:output(id,data,replay)
 //   session:renameRejected(id, name) · session:createRejected(message, err) · session:setProjectRejected(id, err)
-//   session:restartFailed(id, message)
+//   session:restartFailed(id, message) · session:startFailed(id, message)
 //   session:wentIdle(id, workMs) · session:dispatch(ev) · content:show(ev) · saved(ok, err) · config() · project:openResult(ev)
 //   dirs:list(ev) · dirs:mkdir(ev) · transcripts() · transcript:append(id) · transcript:page(ev) · availability(data)
 //   active(id|null) · chrome() · filter() · connection(bool) · stale(on, message) · reset()
@@ -295,7 +295,8 @@ function applyEvent(ev) {
       else if (op === "session.titleSync") emit("session:titleRejected", ev.sessionId, ev.error);   // the agent's /rename name is taken
       else if (op.endsWith("setProject")) emit("session:setProjectRejected", ev.sessionId, ev.error);   // name_conflict | unknown_project
       else if (op.endsWith("rename")) emit("session:renameRejected", ev.sessionId, ev.error.value || "");
-      else if (op.endsWith("restart")) emit("session:restartFailed", ev.sessionId, ev.error.message || "");   // respawn failed → row already went dormant above
+      else if (op.endsWith("restart")) emit("session:restartFailed", ev.sessionId, ev.error.message || "");
+      else if (op === "session.start") emit("session:startFailed", ev.sessionId, ev.error.message || "");   // the agent exited as it started → row already dormant   // respawn failed → row already went dormant above
       else { pendingLocalCreate = false; emit("session:createRejected", ev.error.message || "That name is already taken in this project.", ev.error); }   // our create bounced → disarm the focus one-shot
       return;
     }

@@ -8,6 +8,7 @@ const { migrateLegacyHooks } = require('./legacy-hooks');
 const { hasNonemptyFile, waitForNonemptyFile } = require('./transcript-file');
 const { augmentedPath } = require('./custom-command');
 const { nativeProfile } = require('./session-archive');
+const { MAX_OUTPUT: MAX_START_OUTPUT, START_FAILURE_MS, describeStartFailure } = require('./start-failure');
 
 const BRACKETED_PASTE_START = '\x1b[200~';
 const BRACKETED_PASTE_END = '\x1b[201~';
@@ -83,6 +84,11 @@ class AgentSession extends EventEmitter {
     this.lastUpdate = '';
     this.latestUpdate = '';
     this.closed = false;
+    // For telling a launch that failed from an agent that ran: when it started, what it printed first, and
+    // whether anyone has given it input since.
+    this.startedAt = 0;
+    this.startOutput = '';
+    this.inputSeen = false;
     this.sessionStarted = !this.provider.requiresSessionStart;
     this.submitTimer = null;
     this.submitRetryTimer = null;
@@ -156,6 +162,8 @@ class AgentSession extends EventEmitter {
       throw error;
     }
 
+    this.startedAt = this.now();
+    this.launchCommand = launch.command;
     this.terminal.onData((data) => this.handleOutput(data));
     this.terminal.onExit(({ exitCode, signal }) => this.handleExit(exitCode, signal));
     this.attachContextMonitor(this.contextTranscriptPath);
@@ -394,6 +402,7 @@ class AgentSession extends EventEmitter {
   }
 
   handleOutput(data) {
+    if (this.startOutput.length < MAX_START_OUTPUT) this.startOutput = `${this.startOutput}${data}`.slice(0, MAX_START_OUTPUT);
     this.queueOutput(data, Boolean(this.provider.screen));
     if (!this.resumeHandle && this.provider.captureResumeHandle) {
       this.resumeOutput = `${this.resumeOutput}${data}`.slice(-64 * 1024);
@@ -628,6 +637,7 @@ class AgentSession extends EventEmitter {
   }
 
   submitPrompt(prompt, retryWhenIdle) {
+    this.inputSeen = true;
     let resolve;
     const completion = new Promise(done => { resolve = done; });
     const pending = { completion, resolve, prompt, submitted: false, newTurn: retryWhenIdle };
@@ -667,6 +677,7 @@ class AgentSession extends EventEmitter {
 
   writeInput(data) {
     if (!this.terminal || this.closed) return;
+    this.inputSeen = true;
     this.flushScreen();
     const input = String(data || '');
     // Codex delays its native clear hook until the next prompt. Invalidate the
@@ -868,10 +879,15 @@ class AgentSession extends EventEmitter {
     if (!this.restarting) this.finalizeTurn();
     this.launchCleanup();
     this.mirror.dispose();
+    const failedToStart = !this.restarting && !this.closeRequested && !this.inputSeen && this.startedAt
+      && this.now() - this.startedAt < START_FAILURE_MS;
     this.emitProtocol('session.closed', {
       exitCode,
       signal,
       ...(this.restarting && { restarting: true }),
+      ...(failedToStart && {
+        startFailure: describeStartFailure({ cwd: this.cwd, command: this.launchCommand, output: this.startOutput, exitCode, signal }),
+      }),
     });
     this.resolveClosed();
   }

@@ -667,6 +667,10 @@ class HeadlessServer {
         else this.persistence.markClosed(session);
         if (session.deleteTranscriptOnClose) this.transcriptStore.delete(session.id);
         if (this.sessions.get(event.sessionId) === session) this.sessions.delete(event.sessionId);
+        if (event.startFailure) {
+          // Left in its terminal too, so the reason is there whenever the session is opened.
+          this.persistence.appendHistory(session.id, `\r\n\x1b[31mCliDeck: this session didn't start. ${event.startFailure}\x1b[0m\r\n`);
+        }
         const entry = this.persistence.get(session.id);
         if (entry) outbound = this.dormantSnapshot(entry);
         if (!this.closing) this.noteRunningSessions();
@@ -674,6 +678,9 @@ class HeadlessServer {
         this.persistence.touch(session.id);
       }
       this.broadcast(outbound);
+      if (event.type === 'session.closed' && event.startFailure) {
+        this.broadcastSessionError(session.id, { code: 'start_failed', operation: 'session.start', message: event.startFailure });
+      }
     };
     session.on('event', onEvent);
     session.on('resume-metadata', (metadata) => {
