@@ -8,5 +8,10 @@ separate from your usual workspace. Run UI checks with
 `node --test test-ui/*-it.mjs`. Native agent smoke scripts require the relevant
 agent CLI and its account setup.
 
+`npm run test:browser` drives a real Chromium against a real engine with real
+mouse clicks, which catches what the fake-DOM UI checks cannot: a button or menu
+covered by something else, or a menu that closes before it can be used. It needs
+a Chrome or Chromium; set `CLIDECK_TEST_CHROME` to its path if it isn't found.
+
 Include the problem, resulting behavior, and relevant checks in your pull request.
 Test interface changes in both light and dark themes.
