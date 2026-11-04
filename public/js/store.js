@@ -47,6 +47,7 @@ let order = 0;
 let activeId = null;
 let engineUpdate = null;
 let engineRestart = null;   // {state:'idle'|'waiting'|'restarting', busy:[names], canRestart}
+let archive = { enabled: false, directory: "" }, archiveStatus = null;
 let pendingLocalCreate = false;     // one-shot: this client just asked to create a session (ws.createSession armed it).
                                     // The next brand-new LIVE session.created adopts selection+focus. Cleared on reset()
                                     // so a reconnect/replay burst can never consume it, and on a create-error snapshot.
@@ -139,6 +140,7 @@ function makeSession(ev) {
     status: null, menu: [], menuContext: "", latestAgent: "", lastAgentMessage: "",
     contextUsage: contextUsage(ev.contextUsage), lastAgentAt: epochMs(ev.lastAgentAt), model: modelName(ev.model),
     muted: ev.muted === true,
+    readAloud: ev.readAloud === true,          // per-session automatic read-aloud (engine-persisted, default off)
     bracketedPaste: typeof ev.bracketedPaste === "boolean" ? ev.bracketedPaste : null,
     workStartedAt: 0,
     // The ENGINE's last-activity stamp (persistence.js `lastActive`), epoch ms, or null when it did not send
@@ -174,11 +176,13 @@ function appendBuf(s, data) {
 function applyEvent(ev) {
   if (!ev || !ev.type) return;
   switch (ev.type) {                                  // session-less broadcasts (no sessionId)
+    case "archive.status": archiveStatus = { ...ev }; emit("archive.status", archiveStatus); return;
     case "engine.update": engineUpdate = { ...ev }; emit("engine.update", engineUpdate); return;
     case "engine.restart": engineRestart = { ...ev }; emit("engine.restart", engineRestart); return;
     case "engine.storage": emit("engine.storage", ev); return;           // {ok} or {ok:false, code, message, since}
     case "config": {
       const c = ev.config || {};
+      archive = { enabled: c.archive?.enabled === true, directory: typeof c.archive?.directory === "string" ? c.archive.directory : "" };
       notifyPrefs = c.notify || {};
       voicePrefs = (c.voice && typeof c.voice === "object") ? c.voice : {};   // R2 voice prefs ride config unknown-keys (like notify)
       promptMru = (c.promptMru && typeof c.promptMru === "object") ? c.promptMru : {};
@@ -279,7 +283,7 @@ function applyEvent(ev) {
         known.live = ev.live !== false; known.pid = ev.pid; known.name = ev.name || ""; known.lastActivity = Date.now();
         applySessionTelemetry(known, ev);
         known.lastActive = engineActive(ev) || known.lastActive;
-        known.muted = ev.muted === true;
+        known.muted = ev.muted === true; known.readAloud = ev.readAloud === true;
         if (typeof ev.bracketedPaste === "boolean") known.bracketedPaste = ev.bracketedPaste;
         known.projectId = ev.projectId || null;
         emit("session:update", known.id);
@@ -303,6 +307,7 @@ function applyEvent(ev) {
       applySessionTelemetry(known, ev);
       known.lastActive = engineActive(ev) || known.lastActive;
       known.muted = ev.muted === true;   // mute toggles arrive as a session.created re-broadcast
+      known.readAloud = ev.readAloud === true;   // so do read-aloud toggles
       if (typeof ev.bracketedPaste === "boolean") known.bracketedPaste = ev.bracketedPaste;
       known.projectId = ev.projectId || null;   // setProject re-broadcasts the snapshot with the new projectId
       emit("session:update", known.id);
@@ -342,7 +347,9 @@ function applyEvent(ev) {
       if (ev.text) s.lastAgentMessage = ev.text;    // finalized agent message → the pure preview source
       if (epochMs(ev.at)) s.lastAgentAt = ev.at;
       if (!active) s.unread += 1;                   // unread = final while unfocused
-      emit("session:update", s.id); emit("chrome"); break;
+      emit("session:update", s.id); emit("chrome");
+      if (ev.text) emit("session:final", s.id, ev.text);   // live finals only — reconnect replays none
+      break;
     case "menu": s.menu = ev.choices || []; s.menuContext = ev.context || ""; emit("session:update", s.id); break;
     case "output":
       // An engine that pushes history on connect (not lazy) has delivered it: nothing to fetch on open.
@@ -384,6 +391,7 @@ function unreadCount() { let n = 0; for (const s of sessions.values()) if (s.unr
 
 function reset() {
   engineUpdate = null; engineRestart = null;
+  archive = { enabled: false, directory: "" }; archiveStatus = null;
   if (activeId != null) restoreId = activeId;   // a reset with no open session keeps any earlier pending restore
   sessions.clear(); transcripts.clear(); pluginsList = []; pluginsSeen = false; activeId = null; pendingLocalCreate = false;
   emit("plugins", pluginsList); emit("reset"); emit("chrome");
@@ -396,6 +404,8 @@ export const store = {
   sessions,
   get activeId() { return activeId; },
   get connected() { return connected; },
+  get archive() { return archive; },
+  get archiveStatus() { return archiveStatus; },
   get engineUpdate() { return engineUpdate; },
   get engineRestart() { return engineRestart; },
   get filter() { return filter; },

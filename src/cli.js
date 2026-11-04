@@ -150,10 +150,15 @@ function oneLine(value, max = 160) {
 }
 
 function friendlyError(body, status, pathname) {
+  if (body.error === 'cancelled' && (pathname === '/prompt' || pathname === '/annotate')) {
+    return 'User dismissed the question without answering. No option was selected.';
+  }
   if (body.error === 'timeout' && (pathname === '/prompt' || pathname === '/annotate')) {
     return 'Timed out waiting for the user. Hint: the question is closed; ask again only if an answer is still needed.';
   }
   const messages = {
+    user_typing: 'The user is typing to this agent. Nothing was sent.',
+    delivery_interrupted: 'User input interrupted delivery. Text may already be in the terminal.',
     busy: 'Target session is busy and cannot be steered right now.',
     not_working: 'Target session is idle. Send a normal ask without --steer.',
     dormant: 'Target session is dormant (stopped).',
@@ -164,6 +169,8 @@ function friendlyError(body, status, pathname) {
     target_closed: 'Target session stopped before answering.',
   };
   const hints = {
+    user_typing: 'Try again after a few seconds without user input. --steer does not bypass this protection.',
+    delivery_interrupted: 'Check the terminal with the user before retrying; do not resend automatically.',
     dormant: 'Run clideck agents for current peers, or clideck agents --all for other projects. Ask the user to resume this session only if it is still needed.',
     unknown_target: 'Run clideck agents; use --all to search other projects. Copy the current ask address.',
     unknown_project: 'Run clideck agents --all for current project names and ask addresses.',

@@ -171,11 +171,11 @@ test('release plugins expose the requested fresh defaults without overriding sav
   assert.equal(plugins.get('smart-dictation').status, 'disabled');
   assert.deepEqual(plugins.get('supertonic').values, {
     voice: 'female-2', shortcut: 'F5', language: 'en', quality: 12,
-    normalization: 'english', 'auto-read': false,
+    normalization: 'english', 'playback-rate': '1',
   });
   await manager.updateSettings('supertonic', {
     voice: 'female-1', shortcut: '', language: 'na', quality: 7,
-    normalization: 'off', 'auto-read': true,
+    normalization: 'off',
   });
   await manager.setEnabled('supertonic', false);
   await manager.setEnabled('emoji', false);
@@ -187,7 +187,7 @@ test('release plugins expose the requested fresh defaults without overriding sav
   assert.equal(saved.get('smart-dictation').status, 'ready');
   assert.deepEqual(saved.get('supertonic').values, {
     voice: 'female-1', shortcut: '', language: 'na', quality: 7,
-    normalization: 'off', 'auto-read': true,
+    normalization: 'off', 'playback-rate': '1',
   });
 });
 

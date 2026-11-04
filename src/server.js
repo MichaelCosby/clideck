@@ -45,6 +45,8 @@ const { servePluginStatic, serveStatic } = require('./static');
 const { ServerLock } = require('./server-lock');
 const { alreadyRunningLine, nonLoopbackWarning, startupBanner, notifyUpdate } = require('./startup');
 const { TranscriptStore } = require('./transcript-store');
+const { TaskManager } = require('./task-manager');
+const { SessionArchive } = require('./session-archive');
 const { MAX_UPLOAD_BYTES, UploadError, saveUpload } = require('./upload');
 const { checkCommandAvailability } = require('./availability');
 const { readProcessInfo } = require('./process-info');
@@ -105,7 +107,9 @@ function sendPromptResult(res, result) {
     ...result,
     message: timeout
       ? 'Prompt timed out.'
-      : 'Session closed before the prompt was answered.',
+      : result.error === 'cancelled'
+        ? 'User dismissed the question without answering. No option was selected.'
+        : 'Session closed before the prompt was answered.',
   });
 }
 
@@ -161,6 +165,17 @@ class HeadlessServer {
       }
     }
     this.clients = new Set();
+    this.taskManager = options.taskManager || new TaskManager({ sessions: () => {
+      const projects = this.configStore.get().projects || [];
+      return this.persistence.list().map(entry => ({ id: entry.id, name: entry.name,
+        project: projects.find(p => p.id === entry.projectId)?.name
+          || String(entry.cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'No project',
+        pid: this.sessions.get(entry.id)?.closed ? null : this.sessions.get(entry.id)?.terminal?.pid }));
+    } });
+    this.transcriptSearches = new WeakMap();
+    this.archive = new SessionArchive({ dataDir: this.persistence.dataDir,
+      now: this.now, onStatus: event => this.broadcast(event) });
+    this.archive.configure(this.configStore.get().archive);
     this.updates = options.updates || null;
     this.restart = new RestartCoordinator({
       server: this,
@@ -319,6 +334,8 @@ class HeadlessServer {
     try {
       this.persistAssets(sessionId);
       this.broadcast({ type: 'content.show', ...content, ...(openedBy && { openedBy }) });
+      const asset = this.contentStore.get(content.contentId);
+      if (asset) this.archive.asset(this.sessions.get(sessionId), { ...asset, origin: 'content.show' });
       return content;
     } catch (error) {
       this.contentStore.remove(sessionId, content.contentId);
@@ -447,6 +464,7 @@ class HeadlessServer {
       port: this.port,
       theme,
       muted: entry.muted,
+      readAloud: entry.readAloud,
       lastAgentAt: entry.lastAgentAt,
       contextTranscriptPath: entry.transcriptPath,
       ...(hasProjectId(entry) && { projectId: entry.projectId }),
@@ -597,6 +615,7 @@ class HeadlessServer {
       port: this.port,
       theme: message.theme,
       muted: session.muted,
+      readAloud: session.readAloud,
       lastAgentAt: session.lastAgentAt,
       contextTranscriptPath: entry?.transcriptPath,
       ...(hasProjectId(session) && { projectId: session.projectId }),
@@ -629,6 +648,8 @@ class HeadlessServer {
     this.sessions.set(session.id, session);
     if (register) this.persistence.register(session);
     const onEvent = (event) => {
+      if (event.type === 'session.created') this.archive.start(session, this.archiveInfo(session));
+      this.archive.event(session, event);
       if (event.type === 'session.closed' && event.restarting) return;
       let outbound = event;
       if (event.type === 'output') this.persistence.appendHistory(session.id, event.data);
@@ -657,6 +678,7 @@ class HeadlessServer {
     session.on('event', onEvent);
     session.on('resume-metadata', (metadata) => {
       this.persistence.recordResumeMetadata(session.id, metadata);
+      this.archive.hook(session, 'resume-metadata', {}, metadata);
     });
     session.on('title', (title) => this.applyAgentTitle(session, title));
     try {
@@ -669,6 +691,18 @@ class HeadlessServer {
     }
     this.noteRunningSessions();
     return session;
+  }
+
+  archiveInfo(session) {
+    const entry = this.persistence.get(session.id);
+    const project = this.configStore.get().projects?.find(item => item.id === session.projectId);
+    return { sessionId: session.id, name: session.name, provider: session.provider.id,
+      projectId: session.projectId || null, projectName: project?.name || '',
+      cwd: session.cwd, pid: session.terminal?.pid || null, model: session.model || null,
+      commandId: session.commandId || null, profileRoot: session.archiveProfileRoot || '',
+      nativeId: entry?.resumeHandle || session.resumeHandle || '',
+      transcriptPath: entry?.transcriptPath || session.resumeTranscriptPath || '',
+      suppliedCliDeckGuide: session.launchOptions?.agentGuide || null };
   }
 
   storeTranscriptEntry(sessionId, role, text, timestamp) {
@@ -766,6 +800,7 @@ class HeadlessServer {
       cols: entry.cols,
       rows: entry.rows,
       muted: entry.muted === true,
+      readAloud: entry.readAloud === true,
       live: false,
       lastActive: entry.lastActive,
       bracketedPaste: false,
@@ -922,6 +957,20 @@ class HeadlessServer {
     });
   }
 
+  setSessionReadAloud(sessionId, enabled) {
+    const id = String(sessionId || '');
+    const entry = this.persistence.get(id);
+    if (!entry) return false;
+    const readAloud = enabled === true;
+    const session = this.sessions.get(id);
+    if (session && !session.closed) session.readAloud = readAloud;
+    this.persistence.update(id, { readAloud }, true);
+    this.broadcast(session && !session.closed
+      ? session.snapshot()
+      : this.dormantSnapshot({ ...entry, readAloud }));
+    return true;
+  }
+
   sendControlResult(socket, event) {
     if (socket.readyState !== undefined && socket.readyState !== WebSocket.OPEN) return;
     try {
@@ -1011,6 +1060,8 @@ class HeadlessServer {
   }
 
   broadcastConfig(config) {
+    this.archive.configure(config.archive, [...this.sessions.values()]
+      .filter(session => !session.closed).map(session => ({ session, info: this.archiveInfo(session) })));
     this.broadcast({ type: 'config', config: this.configForClient(config) });
   }
 
@@ -1202,6 +1253,7 @@ class HeadlessServer {
     socket.send(JSON.stringify({ type: 'plugins', plugins: this.pluginManager.snapshot() }));
     for (const event of this.pluginActions.connectEvents()) socket.send(JSON.stringify(event));
     if (this.storageFailures.size) socket.send(JSON.stringify(this.storageEvent()));
+    socket.send(JSON.stringify(this.archive.snapshot()));
     socket.send(JSON.stringify({ type: 'transcript.cache', cache: this.transcriptStore.getCache() }));
     if (this.updates) socket.send(JSON.stringify(this.updates.snapshot()));
     if (this.restart.exec) socket.send(JSON.stringify(this.restart.snapshot()));   // only engines that can restart in place
@@ -1216,6 +1268,8 @@ class HeadlessServer {
     });
     let socketError = '';
     socket.on('close', (code, reason) => {
+      this.transcriptSearches.get(socket)?.abort();
+      this.transcriptSearches.delete(socket);
       this.clients.delete(socket);
       if (!this.log) return;
       const why = [String(reason || '').slice(0, 120), socketError].filter(Boolean).join('; ');
@@ -1295,6 +1349,10 @@ class HeadlessServer {
     }
     if (message.type === 'session.mute') {
       this.setSessionMute(message.sessionId, message.muted);
+      return;
+    }
+    if (message.type === 'session.readAloud') {
+      this.setSessionReadAloud(message.sessionId, message.enabled);
       return;
     }
     if (message.type === 'session.setProject') {
@@ -1395,6 +1453,10 @@ class HeadlessServer {
       }).then((result) => reply({ type: 'plugin.action.result', pluginId, actionId, sessionId, ...result }));
       return;
     }
+    if (message.type === 'prompt.cancel') {
+      this.promptCoordinator.cancel(message.promptId);
+      return;
+    }
     if (message.type === 'prompt.answer') {
       this.promptCoordinator.answer(message.promptId, message.value);
       return;
@@ -1407,23 +1469,43 @@ class HeadlessServer {
       return;
     }
     if (message.type === 'transcript.page') {
+      this.transcriptSearches.get(socket)?.abort();
+      this.transcriptSearches.delete(socket);
+      const response = {
+        type: 'transcript.page.result', sessionId: message.sessionId, before: message.before ?? null,
+        ...(message.query !== undefined && { query: message.query }),
+        ...(message.requestId !== undefined && { requestId: message.requestId }),
+      };
       if (!this.persistence.has(message.sessionId)) {
         this.sendControlResult(socket, {
-          type: 'transcript.page.result',
-          sessionId: message.sessionId,
-          before: message.before ?? null,
+          ...response,
           success: false,
           error: 'Unknown session.',
         });
         return;
       }
-      this.sendControlResult(socket, {
-      type: 'transcript.page.result',
-        sessionId: message.sessionId,
-        before: message.before ?? null,
-        success: true,
-        ...this.transcriptStore.getPage(message.sessionId, message.before, message.limit),
-      });
+      if (message.query?.trim()) {
+        const controller = new AbortController();
+        this.transcriptSearches.set(socket, controller);
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+        this.transcriptStore.searchPage(message.sessionId, message.query, message.before, message.limit, signal)
+          .then(page => {
+            if (!controller.signal.aborted) this.sendControlResult(socket, this.persistence.has(message.sessionId)
+              ? { ...response, success: true, ...page } : { ...response, success: false, error: 'Unknown session.' });
+          }).catch(error => {
+            if (!controller.signal.aborted) this.sendControlResult(socket, { ...response, success: false,
+              error: error.name === 'TimeoutError' ? 'Searching this conversation took too long. Please try again.' : error.message });
+          }).finally(() => {
+            if (this.transcriptSearches.get(socket) === controller) this.transcriptSearches.delete(socket);
+          });
+      } else {
+        try {
+          this.sendControlResult(socket, { ...response, success: true,
+            ...this.transcriptStore.getPage(message.sessionId, message.before, message.limit) });
+        } catch {
+          this.sendControlResult(socket, { ...response, success: false, error: 'Could not read saved conversation. Try again.' });
+        }
+      }
       return;
     }
     if (message.type === 'content.open') {
@@ -1473,8 +1555,11 @@ class HeadlessServer {
       }
       return;
     }
-    if (message.type === 'prompt') session.sendPrompt(message.text);
-    else if (message.type === 'input') session.writeInput(message.data);
+    if (message.type === 'prompt') session.sendPrompt(message.text, { fromUser: true });
+    else if (message.type === 'input') {
+      if (message.userActivity === true) session.markUserActivity();
+      if (message.data) session.writeInput(message.data);
+    }
     else if (message.type === 'resize') {
       session.resize(message.cols, message.rows);
       this.persistence.touch(session.id, { cols: session.cols, rows: session.rows });
@@ -1483,7 +1568,7 @@ class HeadlessServer {
       session.removePersistenceOnClose = true;
       session.close();
     }
-    if (message.type === 'prompt' || message.type === 'input') this.persistence.touch(session.id);
+    if (message.type === 'prompt' || (message.type === 'input' && message.data)) this.persistence.touch(session.id);
   }
 
   replayLiveSession(socket, session) {
@@ -1539,6 +1624,28 @@ class HeadlessServer {
 
   async handleHttp(req, res) {
     const pathname = String(req.url || '').split('?')[0];
+    if (pathname === '/api/tasks' || pathname === '/api/tasks/stop') {
+      res.setHeader('Cache-Control', 'no-store');
+      if (!isAllowedWebSocketOrigin(req.headers.origin, req.headers.host, this.host)
+        || req.headers['sec-fetch-site'] === 'cross-site') {
+        sendJson(res, 403, { error: 'origin_forbidden' }); return;
+      }
+      if (pathname === '/api/tasks' && req.method === 'GET') {
+        const result = await this.taskManager.snapshot();
+        if (!res.destroyed) sendJson(res, result.error ? 503 : 200, result);
+      } else if (pathname === '/api/tasks/stop' && req.method === 'POST') {
+        if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) {
+          sendJson(res, 415, { error: 'Expected JSON.' }); return;
+        }
+        try {
+          const body = await readJson(req, 1024);
+          if (typeof body.token !== 'string' || body.token.length > 100 || typeof body.force !== 'boolean'
+            || Object.keys(body).some(k => !['token', 'force'].includes(k))) throw new Error('Invalid stop request.');
+          sendJson(res, 200, await this.taskManager.stop(body.token, body.force));
+        } catch (error) { sendJson(res, 409, { error: error.message }); }
+      } else sendJson(res, 405, { error: 'Method not allowed.' });
+      return;
+    }
     if (req.method === 'POST' && ['/api/session/backup', '/api/session/restore/preview', '/api/session/restore'].includes(pathname)) {
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -1655,6 +1762,7 @@ class HeadlessServer {
 
     try {
       const payload = await readJson(req);
+      this.archive.hook(session, match[2], payload, session.provider.resumeMetadata?.(payload));
       // Clear the previous conversation before attaching this hook's new
       // transcript, or the clear handler would stop the new context monitor.
       session.handleHook(match[2], payload);
@@ -1832,6 +1940,7 @@ class HeadlessServer {
       sendJson(res, 409, {
         ok: false,
         error: available.error,
+        ...(available.message && { message: available.message }),
         ...(available.error === 'busy' && available.steerable && {
           message: 'Target session is working. Re-run with --steer to inject this message now.',
         }),
@@ -1844,7 +1953,7 @@ class HeadlessServer {
       ? `[CliDeck ${request.steer ? 'steer' : 'ask'} from ${sessionAddress(caller.entry, projects)}]\n\n${request.text}`
       : request.text;
     if (request.steer) {
-      const result = this.askCoordinator.steer(available.session, text, source);
+      const result = await this.askCoordinator.steer(available.session, text, source);
       sendJson(res, result.ok ? 200 : 409, result);
       return;
     }
@@ -1856,7 +1965,7 @@ class HeadlessServer {
     );
     const statusCode = result.ok ? 200
       : result.error === 'timeout' ? 504
-        : ['busy', 'unavailable', 'target_closed'].includes(result.error) ? 409 : 500;
+        : ['busy', 'unavailable', 'target_closed', 'user_typing', 'delivery_interrupted'].includes(result.error) ? 409 : 500;
     sendJson(res, statusCode, result);
   }
 
@@ -2003,6 +2112,7 @@ class HeadlessServer {
     try {
       const upload = await saveUpload(req, caller.entry.cwd, name);
       const event = { type: 'upload.done', sessionId: caller.entry.id, ...upload };
+      this.archive.asset(this.sessions.get(caller.entry.id), { ...upload, origin: 'upload' });
       this.broadcast(event);
       sendJson(res, 200, { ok: true, path: upload.path, name: upload.name });
     } catch (error) {
@@ -2187,6 +2297,7 @@ class HeadlessServer {
         const closed = sessions.map((session) => session.waitForClose?.() || Promise.resolve());
         for (const session of sessions) session.close();
         await Promise.all(closed);
+        await this.archive.close();
         await this.pluginManager.close();
         this.saveState('shutdown');
         for (const client of this.clients) client.close();

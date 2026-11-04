@@ -31,6 +31,9 @@ class FakeTerminal {
   scrollToBottom() {} focus() {}
 }
 window.Terminal = FakeTerminal;
+// The terminal needs xterm's Unicode 11 addon loaded before it opens, as in the real page.
+window.Unicode11Addon = { Unicode11Addon: class { activate(t) { t.unicode = { activeVersion: "6" }; } } };
+FakeTerminal.prototype.loadAddon = function(addon) { addon.activate(this); };
 
 const { store } = await import("../public/js/store.js");
 const { connectWs } = await import("../public/js/ws.js");

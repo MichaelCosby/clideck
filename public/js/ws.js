@@ -35,7 +35,7 @@ let retry = null;
 // offline lands as one write. Capped; past the cap the newest action is dropped with a one-time toast.
 const QUEUEABLE = new Set([
   "session.create", "session.close", "session.resume", "session.rename", "session.setProject",
-  "session.restart", "session.mute", "project.open", "project.delete", "config.update",
+  "session.restart", "session.mute", "session.readAloud", "project.open", "project.delete", "config.update",
   "dirs.list", "dirs.mkdir",
   // Closing a document is a user action like any other, and "closed stays closed" does not acquire an
   // exception because the socket happened to be down. Dropped here, the close is lost and the engine replays
@@ -129,6 +129,11 @@ export function renameSession(id, name) {
   send({ type: "session.rename", sessionId: id, name: String(name == null ? "" : name) });
 }
 
+export function setReadAloud(id, enabled) {
+  // Engine persists it + re-broadcasts session.created with the new `readAloud`, like mute.
+  send({ type: "session.readAloud", sessionId: id, enabled: !!enabled });
+}
+
 export function setMute(id, muted) {
   // Engine persists it + re-broadcasts session.created with the new `muted` for the same id.
   send({ type: "session.mute", sessionId: id, muted: !!muted });
@@ -200,6 +205,11 @@ export function sendPluginMessage(pluginId, event, data) { return pluginControl(
 
 // R2: answer a blocked-agent prompt (card buttons/text, or annotate marks JSON). Any client may resolve it;
 // the engine broadcasts prompt.resolved to dismiss the card everywhere. `value` is an opaque string.
+export function cancelPrompt(promptId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify({ type: "prompt.cancel", promptId }));
+  return true;
+}
 export function answerPrompt(promptId, value) { send({ type: "prompt.answer", promptId, value: String(value == null ? "" : value) }); }
 
 // R2: raw file upload for a live session — PUT /upload?sessionId&name with the file as the body. Resolves to
@@ -249,8 +259,11 @@ export function makeDir(parent, name) {
   send({ type: "dirs.mkdir", parent, name });
 }
 
-export function requestTranscriptPage(sessionId, before, limit = 30) {
+export function requestTranscriptPage(sessionId, before, limit = 30, options = {}) {
+  if (!store.connected) return;
   const message = { type: "transcript.page", sessionId, limit };
+  if (typeof options.query === "string") message.query = options.query.slice(0, 256);
+  if (typeof options.requestId === "string") message.requestId = options.requestId.slice(0, 100);
   if (Number.isSafeInteger(before) && before >= 0) message.before = before;
   send(message);
 }

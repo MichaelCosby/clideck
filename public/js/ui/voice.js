@@ -1,7 +1,8 @@
 // Dictation is a generic plugin action: CliDeck owns the microphone/composition surfaces, while a plugin owns
-// transcription. Read-aloud remains the bundled Supertonic plugin's concise auto-read control.
+// transcription. Read-aloud is the bundled Supertonic plugin's per-session auto-read toggle (read-aloud.js
+// decides when a finished reply may sound).
 import { store } from "../store.js";
-import { updatePluginSettings } from "../ws.js";
+import { setReadAloud } from "../ws.js";
 import { resolveActions, runAction, onActionsChange } from "./action-registry.js";
 import { pluginActionContext } from "./plugin-host.js";
 import { pluginCompositionState, onPluginCompositionChange } from "./plugin-composition.js";
@@ -24,25 +25,28 @@ export function initVoice() {
   }
   if (sayBtn) {
     sayBtn.addEventListener("click", toggleSay);
-    store.on("plugins", paintSay); store.on("connection", paintSay); paintSay();
+    store.on("plugins", paintSay); store.on("connection", paintSay); store.on("active", paintSay);
+    store.on("session:update", (id) => { if (id === store.activeId) paintSay(); });
+    paintSay();
   }
 }
 
 function supertonic() { return store.plugins.find((plugin) => plugin.id === "supertonic") || null; }
-function readAloud(plugin = supertonic()) { return !!(plugin && plugin.values && plugin.values["auto-read"]); }
 function paintSay() {
   if (!sayBtn) return;
   const plugin = supertonic(), ready = !!(plugin && plugin.enabled !== false && plugin.status === "ready");
-  const on = readAloud(plugin);
-  sayBtn.disabled = !store.pluginsLoaded || !plugin;
+  const session = store.active(), on = session?.readAloud === true;
+  sayBtn.disabled = !store.pluginsLoaded || !plugin || !session || !store.connected;
   sayBtn.classList.toggle("v-unsupported", !ready);
   sayBtn.classList.toggle("on", on && ready);
   sayBtn.setAttribute("aria-disabled", String(sayBtn.disabled));
   sayBtn.setAttribute("aria-pressed", String(on && ready));
   sayBtn.title = !store.pluginsLoaded ? "Loading voice plugin…"
     : !plugin ? "Supertonic Voice is unavailable"
+    : !session ? "Select a session to read its replies aloud"
+    : !store.connected ? "Reconnecting…"
     : !ready ? "Open Supertonic Voice settings"
-    : on ? "Read completed replies aloud (on)" : "Read completed replies aloud";
+    : on ? "Reading this session’s replies aloud — click to turn off" : "Read this session’s replies aloud";
 }
 
 async function paintMic() {
@@ -84,5 +88,6 @@ function toggleSay() {
     import("./settings.js").then(({ openPluginSettings }) => openPluginSettings("supertonic"));
     return;
   }
-  updatePluginSettings("supertonic", { "auto-read": !readAloud(plugin) });
+  const session = store.active();
+  if (session) setReadAloud(session.id, session.readAloud !== true);
 }

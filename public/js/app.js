@@ -1,3 +1,5 @@
+import { initArchiveStatus } from "./ui/archive-status.js";
+import { initTaskManager } from "./ui/task-manager.js";
 import { initUpdates } from "./ui/updates.js";
 // Bootstrap: wire the store to the components and open the socket.
 import { initSidebar } from "./ui/sidebar.js";
@@ -11,11 +13,14 @@ import { initContentViewer } from "./ui/content-viewer.js";
 import { initPrompt } from "./ui/prompt.js";
 import { initDrop } from "./ui/drop.js";
 import { initVoice } from "./ui/voice.js";
+import { initReadAloud } from "./ui/read-aloud.js";
 import { initPluginHost } from "./ui/plugin-host.js";
 import { initTour } from "./ui/tour.js";
 import { connectWs } from "./ws.js";
 
 initUpdates();
+initArchiveStatus();
+initTaskManager();
 initSidebar();
 initSidebarResize();   // E1: drag handle on the sidebar/terminal divider
 initTerminal();
@@ -27,6 +32,7 @@ initContentViewer();   // content.show → lightbox (open session) or a clickabl
 initPrompt();          // R2: prompt.show → question card / annotate modal; prompt.resolved dismisses
 initDrop();            // R2: drag a file onto the deck → upload → path pasted into the terminal
 initVoice();           // plugin-owned dictation + the bundled Supertonic auto-read control
+initReadAloud();       // per-session auto-read: finished replies sound only while their session is on screen
 initPluginHost();      // sandboxed client workers + host-owned actions/viewers/workspaces
 initTour();            // first-run walkthrough + unseen feature tips — decides ONCE, on the first config frame
 connectWs();

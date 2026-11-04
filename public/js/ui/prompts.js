@@ -9,6 +9,7 @@ import { send, updateConfig } from "../ws.js";
 import { esc, askAddress, shortId, basename } from "../util.js";
 import { toast } from "./toast.js";
 import { pastePayload } from "./paste.js";
+import { userInputFrame } from "./user-activity.js";
 import { spellingScore } from "../search-similarity.js";
 
 // ── prompt data (single source = store.prompts) ────────────────────────────────
@@ -96,7 +97,7 @@ function projectFirstPrompts(list) {
 function pastePrompt(text) {
   const s = store.active();
   if (!s || s.live === false) return;                         // no live PTY (nothing selected / dormant read-only)
-  send({ type: "input", sessionId: s.id, data: pastePayload(fillPlaceholders(text)) });
+  send(userInputFrame(s.id, pastePayload(fillPlaceholders(text))));
   focusTerminal();
 }
 
@@ -144,7 +145,7 @@ function agentRank(a, q) {
 function insertMention(address) {
   const s = store.active();
   if (!s || s.live === false) return;
-  send({ type: "input", sessionId: s.id, data: pastePayload(address + " ") });
+  send(userInputFrame(s.id, pastePayload(address + " ")));
   focusTerminal();
 }
 
@@ -153,7 +154,7 @@ function insertMention(address) {
 export function pasteToTerminal(text, bracketed = true) {
   const s = store.active();
   if (!s || s.live === false || text == null) return false;
-  send({ type: "input", sessionId: s.id, data: bracketed ? pastePayload(text) : String(text) });
+  send(userInputFrame(s.id, bracketed ? pastePayload(text) : String(text)));
   focusTerminal();
   return true;
 }
@@ -488,7 +489,7 @@ export function handleTerminalKey(e) {
       lastTriggerTime = 0; lastTriggerKey = ""; lastKeyWasPrintable = false;
       e.preventDefault();
       const s = store.active();
-      if (s && s.live !== false) send({ type: "input", sessionId: s.id, data: "\x7f" });   // erase the first trigger char
+      if (s && s.live !== false) send(userInputFrame(s.id, "\x7f"));   // erase the first trigger char
       acMode = trigMode;
       openPromptDropdown();
       return false;

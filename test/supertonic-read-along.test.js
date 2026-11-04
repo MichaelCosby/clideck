@@ -180,6 +180,99 @@ test('cached speech reanchors across terminal and viewer selections and changed 
   assert.equal(h.playback[3].readAlong.sourceText, 'Indented selection');
 });
 
+test('Markdown tables, code and diagrams are spoken as notices with original prose offsets', async t => {
+  const h = await readerHarness(); t.after(h.cleanup);
+  const table = '| Name | Value |\n| --- | --- |\n' + '| secret-cell | 999 |\n'.repeat(250);
+  const source = `# Summary\n\nFirst paragraph.\n\n${table}\nAfter the table.\n\n\`\`\`mermaid\ngraph TD; Hidden --> Diagram\n\`\`\`\n\n\`\`\`python\nsecret_code()\n\`\`\`\n\nLast paragraph.`;
+  assert(await h.speak(h.api, source, { surface: 'terminal', sessionId: 'one', sourceOffset: 10 }));
+  const spoken = h.spoken.join('\n');
+  assert.match(spoken, /See the table in the conversation/);
+  assert.match(spoken, /See the diagram in the conversation/);
+  assert.match(spoken, /See the code block in the conversation/);
+  assert.doesNotMatch(spoken, /secret-cell|999|Hidden|secret_code|# Summary/);
+  assert.match(spoken, /Summary/); assert.match(spoken, /Last paragraph/);
+  const last = h.playback.at(-1).readAlong;
+  assert.equal(last.sourceOffset, source.indexOf('Last paragraph.') + 10);
+  assert.equal(last.sourceText, 'Last paragraph.');
+  for (const clip of h.playback.filter(clip => clip.text.startsWith('See the'))) {
+    assert.equal(clip.readAlong, undefined, 'synthetic notices must not falsely highlight prose');
+  }
+});
+
+test('automatic speech requires session opt-in and token, and repeated equal replies play afresh', async t => {
+  const h = await readerHarness(); t.after(h.cleanup);
+  h.api.getActiveSession = async () => ({ id: 'one', readAloud: false });
+  const deliver = token => h.messages.get('speak')({ source: 'auto', sessionId: 'one', text: 'Same answer', token });
+  await deliver('off'); assert.equal(h.playback.length, 0);
+  h.api.getActiveSession = async () => ({ id: 'one', readAloud: true });
+  await deliver(undefined); assert.equal(h.playback.length, 0, 'old global broadcasts are ignored');
+  let toggles = 0; h.api.toggleAudio = async () => { toggles++; return true; };
+  await deliver('first'); await deliver('second');
+  assert.equal(h.playback.length, 2); assert.equal(toggles, 0);
+  assert.deepEqual(h.playback.map(clip => clip.autoToken), ['first', 'second']);
+  assert.equal(h.spoken.length, 2);
+});
+
+test('the first automatic reply uses host-supplied settings before the server settings reply', async t => {
+  const h = await readerHarness(); h.cleanup();
+  h.api.getSettings = () => ({ values: { normalization: 'off', quality: 7, 'playback-rate': '1.25' } });
+  h.api.getActiveSession = async () => ({ id: 'one', readAloud: true });
+  const cleanup = await h.activate(h.api); t.after(cleanup);
+  await h.messages.get('speak')({ source: 'auto', sessionId: 'one', text: 'Keep 123 literal.', token: 'early' });
+  assert.equal(h.spoken.at(-1), 'Keep 123 literal.');
+  assert.equal(h.playback.at(-1).playbackRate, 1.25);
+});
+
+test('saved playback speed reaches fresh and cached reading without resynthesizing identical speech', async t => {
+  const h = await readerHarness(); t.after(h.cleanup);
+  h.messages.get('settings')({ normalization: 'off', playbackRate: 1.1 });
+  await h.speak(h.api, 'Cached text', { surface: 'terminal', sessionId: 'one' });
+  assert.equal(h.playback.at(-1).playbackRate, 1.1);
+  h.messages.get('settings')({ normalization: 'off', playbackRate: 1.5 });
+  await h.speak(h.api, 'Cached text', { surface: 'terminal', sessionId: 'one' });
+  assert.equal(h.playback.at(-1).playbackRate, 1.5); assert.equal(h.spoken.length, 1);
+  h.messages.get('settings')({ normalization: 'off', playbackRate: 99 });
+  await h.speak(h.api, 'New text', { surface: 'terminal', sessionId: 'one' });
+  assert.equal(h.playback.at(-1).playbackRate, 1);
+});
+
+test('automatic speech cancellation covers awaited focus lookup and in-flight synthesis', async t => {
+  const h = await readerHarness(); t.after(h.cleanup);
+  let focus;
+  h.api.getActiveSession = () => new Promise(resolve => { focus = resolve; });
+  const before = h.messages.get('speak')({ source: 'auto', sessionId: 'one', text: 'Before lookup', token: 'before' });
+  h.messages.get('speak-cancel')({ token: 'before' });
+  focus({ id: 'one', readAloud: true }); await before;
+  assert.equal(h.playback.length, 0);
+  let finish;
+  const { chunkTextRanges } = await import('../plugins/supertonic/public/text-chunks.js');
+  h.setEngineForTest({ styles: new Map([['female-2', {}]]), helper: { chunkTextRanges, writeWavFile: () => new ArrayBuffer(16) },
+    textToSpeech: { sampleRate: 100, call: () => new Promise(resolve => { finish = resolve; }) } });
+  h.api.getActiveSession = async () => ({ id: 'one', readAloud: true });
+  const during = h.messages.get('speak')({ source: 'auto', sessionId: 'one', text: 'During synthesis', token: 'during' });
+  for (let i = 0; i < 30 && !finish; i++) await new Promise(setImmediate);
+  assert.equal(typeof finish, 'function');
+  h.messages.get('speak-cancel')({ token: 'during' });
+  finish({ wav: new Float32Array(100), duration: [1] }); await during;
+  assert.equal(h.playback.length, 0); assert.equal(h.toasts.length, 0);
+});
+
+test('an automatic reply cannot cancel manual speech being prepared', async t => {
+  const h = await readerHarness(); t.after(h.cleanup);
+  let finish;
+  const { chunkTextRanges } = await import('../plugins/supertonic/public/text-chunks.js');
+  h.setEngineForTest({ styles: new Map([['female-2', {}]]), helper: { chunkTextRanges, writeWavFile: () => new ArrayBuffer(16) },
+    textToSpeech: { sampleRate: 100, call: () => new Promise(resolve => { finish = resolve; }) } });
+  const manual = h.speak(h.api, 'Manual selection', { surface: 'terminal', sessionId: 'one' });
+  for (let i = 0; i < 30 && !finish; i++) await new Promise(setImmediate);
+  h.api.getActiveSession = async () => ({ id: 'one', readAloud: true });
+  await h.messages.get('speak')({ source: 'auto', sessionId: 'one', text: 'Automatic', token: 'auto' });
+  assert.equal(h.stops(), 0);
+  finish({ wav: new Float32Array(100), duration: [1] }); await manual;
+  assert.equal(h.playback[0].readAlong.sourceText, 'Manual selection');
+  assert.equal(h.playback[0].autoToken, undefined);
+});
+
 test('headings and paragraphs never splice silence into either female voice waveform', async () => {
   const { synthesize } = await clientForTest();
   const { chunkTextRanges } = await import('../plugins/supertonic/public/text-chunks.js');

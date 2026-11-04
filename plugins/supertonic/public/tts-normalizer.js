@@ -184,7 +184,7 @@ function monthYearWords(month, year, original) {
 function moneyWords(symbol, value, scale = '') {
   const currency = CURRENCIES.get(symbol);
   if (!currency) return `${symbol}${value}${scale}`;
-  if (scale) return `${decimalWords(value)} ${MONEY_SCALES[scale.toLowerCase()]} ${currency.major[1]}`;
+  if (scale) return `${decimalWords(value.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1'))} ${MONEY_SCALES[scale.toLowerCase()]} ${currency.major[1]}`;
   const [wholeRaw, fraction = ''] = value.replaceAll(',', '').split('.');
   const whole = wholeRaw.replace(/^0+/, '') || '0';
   if (!currency.minor) return `${decimalWords(value)} ${currency.major[Number(value) === 1 ? 0 : 1]}`;
@@ -238,6 +238,12 @@ function durationWords(value, unit) {
   return `${decimalWords(value)} ${Number(String(value).replaceAll(',', '')) === 1 ? forms[0] : forms[1]}`;
 }
 
+const signWords = sign => sign === '+' ? 'plus ' : sign ? 'minus ' : '';
+function signedMoney(original, before, symbol, after, value, scale = '') {
+  if (before && after) return original; // Ambiguous double signs stay literal.
+  return signWords(before || after) + moneyWords(symbol, value, scale);
+}
+
 export function normalizeEnglishPatterns(source, replace = replaceText) {
   let text = String(source || '');
   // Bare three-part versions and explicit v-prefixed versions use whole-number
@@ -256,10 +262,11 @@ export function normalizeEnglishPatterns(source, replace = replaceText) {
     (original, cue, month, year) => `${cue} ${monthYearWords(Number(month), year, original.slice(cue.length + 1))}`);
   text = replace(text, /\b(since|from)\s+(\d{4})[-/](0?[1-9]|1[0-2])\b(?![-/]\d)/gi,
     (original, cue, year, month) => `${cue} ${monthYearWords(Number(month), year, original.slice(cue.length + 1))}`);
-  text = replace(text, new RegExp(`([${CURRENCY_SYMBOLS}])\\s*(${NUMBER}(?:\\.\\d+)?)([kmbt])(?![\\p{L}\\p{N}_]|[.,]\\d)`, 'giu'),
-    (_original, symbol, value, scale) => moneyWords(symbol, value, scale));
-  text = replace(text, new RegExp(`([${CURRENCY_SYMBOLS}])\\s*(${NUMBER}(?:\\.\\d{1,2})?)(?![\\p{L}\\p{N}_]|[.,]\\d)`, 'gu'),
-    (_original, symbol, value) => moneyWords(symbol, value));
+  // A leading sign must touch the currency: "$5 - $10" is a range, not a loss.
+  const currencyPrefix = `(?:(?<![\\p{L}\\p{N}_])([+−-]))?([${CURRENCY_SYMBOLS}])\\s*([+−-]?)\\s*`;
+  text = replace(text, new RegExp(`${currencyPrefix}(${NUMBER}(?:\\.\\d+)?)([kmbt])(?![\\p{L}\\p{N}_]|[.,]\\d)`, 'giu'), signedMoney);
+  text = replace(text, new RegExp(`${currencyPrefix}(${NUMBER}(?:\\.\\d{1,2})?)(?![\\p{L}\\p{N}_]|[.,]\\d)`, 'gu'),
+    (original, before, symbol, after, value) => signedMoney(original, before, symbol, after, value));
   text = replace(text, /\b([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(?:\s*([ap])\.?m\.?)?\b/gi,
     (original, hourText, minuteText, secondText, meridiem) => {
       let hour = Number(hourText);
@@ -274,6 +281,8 @@ export function normalizeEnglishPatterns(source, replace = replaceText) {
     (_original, value, unit) => durationWords(value, unit));
   text = replace(text, new RegExp(`\\b(${NUMBER}(?:\\.\\d+)?)\\s*(milliseconds?|msecs?|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|wks?)\\b`, 'giu'),
     (_original, value, unit) => durationWords(value, unit));
+  text = replace(text, new RegExp(`(?<![\\p{L}\\p{N}_.,:/\\\\+−${CURRENCY_SYMBOLS}-])([+−-])(${NUMBER}(?:\\.\\d+)?)(?![\\p{L}\\p{N}_]|[.,:/\\\\-]\\d)`, 'gu'),
+    (_original, sign, value) => signWords(sign) + decimalWords(value));
   text = replace(text, new RegExp(`(?<![\\p{L}\\p{N}_.,:/\\-${CURRENCY_SYMBOLS}])(${NUMBER})\\.(\\d+)(?![\\p{L}\\p{N}_]|[.,:/\\-]\\d)`, 'gu'),
     (_original, whole, fraction) => decimalWords(`${whole}.${fraction}`));
   text = replace(text, /(?<![\p{L}\p{N}_.,])(\d+)(?:st|nd|rd|th)\b/giu,
@@ -311,8 +320,19 @@ function bucketsFor(entries, language) {
 }
 
 function normalize(source, entries, language, trace) {
+  source = String(source || '');
   const normalizedLanguage = String(language).toLowerCase();
-  const references = normalizeSpokenReferences(source, normalizedLanguage, trace?.replace);
+  const replace = trace?.replace || replaceText;
+  // Preserve words and meaningful inline code; remove only presentation syntax.
+  let prose = replace(source, /!\[[^\]\n]*\]\([^\n)]*\)/g, () => 'See the image in the conversation.');
+  prose = replace(prose, /\[([^\]\n]+)\]\((?:[^\s()]|\([^\n()]*\))+\)/g,
+    (_match, label) => `${label} (see the link in the conversation)`);
+  prose = replace(prose, /^ {0,3}(?:#{1,6}\s+|>\s?|[-+*]\s+(?:\[[ xX]\]\s+)?)/gm, () => '');
+  prose = replace(prose, /^ {0,3}(?:-{3,}|_{3,}|\*{3,})\s*$/gm, () => '');
+  prose = replace(prose, /(`+)([^`\n]+)\1/g, (_match, _ticks, text) => text);
+  prose = replace(prose, /(\*\*|__|~~)(\S(?:[^\n]*?\S)?)\1/g, (_match, _marks, text) => text);
+  prose = replace(prose, /(?<![\p{L}\p{N}_])([*_])(\S(?:[^\n]*?\S)?)\1(?![\p{L}\p{N}_])/gu, (_match, _mark, text) => text);
+  const references = normalizeSpokenReferences(prose, normalizedLanguage, trace?.replace);
   const text = normalizedLanguage === 'english'
     ? normalizeEnglishPatterns(references, trace?.replace)
     : references;

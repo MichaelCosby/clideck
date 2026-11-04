@@ -14,6 +14,7 @@ const CONTROL_TYPES = new Set([
   'session.create',
   'prompt',
   'prompt.answer',
+  'prompt.cancel',
   'input',
   'resize',
   'session.close',
@@ -21,6 +22,7 @@ const CONTROL_TYPES = new Set([
   'session.resume',
   'session.restart',
   'session.mute',
+  'session.readAloud',
   'session.setProject',
   'session.procInfo',
   'project.delete',
@@ -121,6 +123,7 @@ function hasValidControlFields(message) {
       && isString(message.sessionId, MAX_SESSION_ID)
       && (message.placement === 'session.menu' || message.placement === 'terminal.header');
   }
+  if (message.type === 'prompt.cancel') return isString(message.promptId, 200);
   if (message.type === 'prompt.answer') {
     return isString(message.promptId, 200)
       && isString(message.value, MAX_CONTROL_TEXT, true);
@@ -152,7 +155,9 @@ function hasValidControlFields(message) {
   if (message.type === 'transcript.page') {
     return (message.before === undefined
       || (Number.isSafeInteger(message.before) && message.before >= 0))
-      && (message.limit === undefined || isDimension(message.limit, 1, 100));
+      && (message.limit === undefined || isDimension(message.limit, 1, 100))
+      && (message.query === undefined || isString(message.query, 256, true))
+      && hasValidRequestId(message);
   }
   if (message.type === 'content.open') {
     const path = isString(message.path, 4096)
@@ -171,7 +176,8 @@ function hasValidControlFields(message) {
   if (message.type === 'content.close') return isString(message.contentId, MAX_SESSION_ID);
   if (message.type === 'prompt') return isString(message.text, MAX_CONTROL_TEXT);
   if (message.type === 'input') {
-    return typeof message.data === 'string' && message.data.length <= MAX_CONTROL_TEXT;
+    return typeof message.data === 'string' && message.data.length <= MAX_CONTROL_TEXT
+      && (message.userActivity === undefined || typeof message.userActivity === 'boolean');
   }
   if (message.type === 'resize') {
     return isDimension(message.cols, 20, 1000) && isDimension(message.rows, 5, 500);
@@ -186,6 +192,7 @@ function hasValidControlFields(message) {
       && (message.rows === undefined || isDimension(message.rows, 5, 500));
   }
   if (message.type === 'session.mute') return typeof message.muted === 'boolean';
+  if (message.type === 'session.readAloud') return typeof message.enabled === 'boolean';
   if (message.type === 'session.setProject') return isProjectId(message.projectId);
   return message.type === 'session.close' || message.type === 'session.procInfo';
 }

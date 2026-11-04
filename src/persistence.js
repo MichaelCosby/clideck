@@ -75,6 +75,7 @@ function normalizeEntry(value) {
     cols: validDimension(value.cols, 120),
     rows: validDimension(value.rows, 40),
     muted: value.muted === true,
+    readAloud: value.readAloud === true,
     ...(Object.keys(assets).length && { assets }),
     createdAt: value.createdAt || new Date().toISOString(),
     lastActive: value.lastActive || value.createdAt || new Date().toISOString(),
@@ -369,6 +370,7 @@ class SessionPersistence {
       cols: session.cols,
       rows: session.rows,
       muted: session.muted === true,
+      readAloud: session.readAloud === true,
       createdAt: timestamp,
       lastActive: timestamp,
       ...(session.commandId && {

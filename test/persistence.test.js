@@ -88,6 +88,7 @@ test('registry and capped terminal history survive reload', () => {
       cols: 100,
       rows: 30,
       muted: true,
+      readAloud: false,
       createdAt: 'time-1',
       lastActive: 'time-5',
       lastFinal: 'final answer',

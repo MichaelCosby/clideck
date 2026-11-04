@@ -5,7 +5,7 @@ function settings(api) {
     language: api.getSetting('language'),
     normalization: api.getSetting('normalization'),
     quality: api.getSetting('quality'),
-    autoRead: api.getSetting('auto-read') === true,
+    playbackRate: Number(api.getSetting('playback-rate')) || 1,
   };
 }
 
@@ -28,12 +28,11 @@ exports.activate = (api) => {
 
   api.onSettingsChange(() => api.sendToClients('settings', settings(api)));
 
-  api.onEvent('agent.final', (event) => {
-    if (api.getSetting('auto-read') !== true || !event.text) return;
-    api.sendToClients('speak', {
-      text: String(event.text),
-      sessionId: String(event.sessionId || ''),
-      source: 'auto',
-    });
+  // A completion belongs only to the browser that requested it, never every client.
+  api.onClientMessage('auto-read-result', (data, context) => {
+    if (typeof data?.token === 'string' && data.token.length <= 200
+      && ['deferred', 'finished', 'failed'].includes(data.status)) {
+      context.reply('auto-read-result', { token: data.token, status: data.status });
+    }
   });
 };

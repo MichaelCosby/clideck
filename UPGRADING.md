@@ -7,6 +7,29 @@ Updating npm does not replace a process that is already running.
 Requires Node.js 22.12 or newer. The default address is **http://127.0.0.1:4000**.
 `--port` takes precedence over `CLIDECK_PORT`, then `PORT`, then the default.
 
+## Version 2.6
+
+After updating, restart CliDeck when you are ready and refresh the browser.
+Task Manager needs the new engine as well as the new interface. Open its
+bar-chart button beside Plugins to inspect running jobs on macOS or Linux.
+
+The new browser and engine also protect active terminal typing from incoming
+`ask` and `--steer` messages. Protection expires four seconds after the last edit
+or paste, even if a draft remains. If typing interrupts an incoming message after
+its text was pasted, CliDeck cancels its automatic Enter and tells the sender
+delivery was interrupted; the inserted text stays in the terminal for you to review.
+
+Supertonic adds eight voices with previews. Mike now displays as Mika and keeps
+your saved selection. Dov has been removed; an existing Dov selection falls back
+to Female 2. Female 1 and Female 2 retain their original profiles.
+
+Automatic reading now belongs to each session. Use its header speaker button;
+the old global setting is retired and sessions start with reading off. Completed
+replies wait until their session is selected in a visible browser tab. Only the
+latest waiting reply per session is kept, in memory; refreshing or reconnecting clears it.
+Voice selection stays shared. Tables, fenced code/diagrams and display formulas
+are skipped with a short spoken cue, while ordinary prose and lists are read.
+
 ## Update notices
 
 CliDeck checks for updates in the background when the engine starts and periodically

@@ -11,14 +11,24 @@ const VOICE_STYLE_URLS = Object.freeze({
   'female-2': new URL('./public/voices/female-2.json', import.meta.url),
   yara: new URL('./public/voices/yara.json', import.meta.url),
   mike: new URL('./public/voices/mike.json', import.meta.url),
-  dov: new URL('./public/voices/dov.json', import.meta.url),
+  'chun-li': new URL('./public/voices/chun-li.json', import.meta.url),
+  jake: new URL('./public/voices/jake.json', import.meta.url),
+  kabbi: new URL('./public/voices/kabbi.json', import.meta.url),
+  lilly: new URL('./public/voices/lilly.json', import.meta.url),
+  lola: new URL('./public/voices/lola.json', import.meta.url),
+  myers: new URL('./public/voices/myers.json', import.meta.url),
+  nikki: new URL('./public/voices/nikki.json', import.meta.url),
+  transi: new URL('./public/voices/transi.json', import.meta.url),
 });
 const PLAYBACK_CHARS = 1_200;
 const MAX_AUDIO_BYTES = 64 * 1024 * 1024;
 const MAX_WAV_SAMPLES = Math.floor((MAX_AUDIO_BYTES - 44) / 2);
 const DEFAULTS = Object.freeze({
-  voice: 'female-2', shortcut: 'F5', language: 'en', normalization: 'english', quality: 12, autoRead: false,
+  voice: 'female-2', shortcut: 'F5', language: 'en', normalization: 'english', quality: 12,
+  playbackRate: 1,
 });
+
+const playbackRate = value => [1, 1.1, 1.25, 1.5].includes(Number(value)) ? Number(value) : 1;
 
 let preferences = { ...DEFAULTS };
 let runtimePromise = null;
@@ -145,6 +155,8 @@ function audioOptions(cache) {
     mime: 'audio/wav',
     title: 'Supertonic Voice',
     text: cache.sourceText,
+    playbackRate: cache.playbackRate || 1,
+    ...(cache.autoToken ? { autoToken: cache.autoToken } : {}),
     ...(target?.surface && target.sessionId ? {
       readAlong: {
         ...target,
@@ -161,6 +173,7 @@ function audioOptions(cache) {
 function playCached(api, target) {
   if (!speechCache) return false;
   speechCache.target = target;
+  speechCache.playbackRate = playbackRate(preferences.playbackRate);
   api.playAudio(speechCache.wav.slice(0), audioOptions(speechCache));
   return true;
 }
@@ -187,6 +200,7 @@ async function synthesize(engine, sourceText, settings, style, cancelled = () =>
     if (cancelled()) throw new Error('Reading cancelled.');
     const source = sourceText.slice(chunk.start, chunk.end);
     const normalized = await normalizedText(source, settings.normalization);
+    if (!normalized.text.trim()) continue;
     const gap = parts.length ? silenceSamples : 0;
     const result = await engine.textToSpeech.call(
       normalized.text,
@@ -222,7 +236,7 @@ async function synthesize(engine, sourceText, settings, style, cancelled = () =>
   return { audio, cues };
 }
 
-async function speak(api, rawText, target) {
+async function speak(api, rawText, target, autoToken = '') {
   const raw = String(rawText || '');
   const sourceText = raw.trim();
   if (!sourceText) return false;
@@ -234,33 +248,41 @@ async function speak(api, rawText, target) {
     language: preferences.language,
     normalization: preferences.normalization,
     quality: Math.round(preferences.quality),
+    playbackRate: playbackRate(preferences.playbackRate),
   };
   const key = speechKey(sourceText, settings);
-  if (reading?.key === key && targetKey(reading.target) === targetKey(target)) {
+  if (autoToken && reading && !reading.autoToken) return false;
+  if (!autoToken && reading?.key === key && targetKey(reading.target) === targetKey(target)) {
     try { if (await api.toggleAudio?.()) return true; } catch {}
     return false;
   }
   if (reading) { reading = null; api.stopAudio?.(); }
-  if (speechCache?.key === key) return toggleCached(api, key, target);
-  const job = { key, target, sequence: `supertonic-${Date.now()}-${++sequence}` };
+  if (!autoToken && speechCache?.key === key) return toggleCached(api, key, target);
+  const job = { key, target, autoToken, sequence: `supertonic-${Date.now()}-${++sequence}` };
   reading = job;
   const cancelled = () => reading !== job;
   try {
     const engine = await runtime(api);
+    if (cancelled()) return false;
     const style = await voiceStyle(engine, settings.voice);
     if (typeof api.playAudio !== 'function') throw new Error('This CliDeck build does not provide plugin audio playback.');
-    const parts = engine.helper.chunkTextRanges(sourceText, PLAYBACK_CHARS);
+    const { speechBlocks } = await import('./public/speech-blocks.js');
+    if (cancelled()) return false;
+    const parts = speechBlocks(sourceText).flatMap(block => block.notice ? [block]
+      : engine.helper.chunkTextRanges(sourceText.slice(block.start, block.end), PLAYBACK_CHARS)
+        .map(part => ({ start: block.start + part.start, end: block.start + part.end })));
+    if (!parts.length) return false;
     const long = parts.length > 1;
-    if (long && typeof api.playAudioAndWait !== 'function') throw new Error('Refresh CliDeck to enable long-document reading.');
+    if ((long || autoToken) && typeof api.playAudioAndWait !== 'function') throw new Error('Refresh CliDeck to enable automatic and long-document reading.');
     const prepare = (part) => {
       const task = synthesisQueue.then(async () => {
         if (cancelled()) return null;
-        const text = sourceText.slice(part.start, part.end);
+        const text = part.notice || sourceText.slice(part.start, part.end);
         const result = await synthesize(engine, text, settings, style, cancelled);
         return {
-          key, sourceText: text, cues: result.cues,
+          key, sourceText: text, cues: result.cues, autoToken, playbackRate: settings.playbackRate,
           wav: engine.helper.writeWavFile(result.audio, engine.textToSpeech.sampleRate),
-          target: target && {
+          target: !part.notice && target && {
             ...target,
             ...((Number.isInteger(target.sourceOffset) || target.surface === 'terminal')
               && { sourceOffset: (target.sourceOffset || 0) + part.start }),
@@ -278,7 +300,7 @@ async function speak(api, rawText, target) {
       if (cancelled()) return false;
       if (result.error) throw result.error;
       const clip = result.value;
-      if (!long) {
+      if (!long && !autoToken) {
         speechCache = { ...clip, wav: clip.wav.slice(0) };
         api.playAudio(clip.wav, audioOptions(clip));
         return true;
@@ -287,6 +309,7 @@ async function speak(api, rawText, target) {
       if (index + 1 < parts.length) pending = prepare(parts[index + 1]);
       if (!await api.playAudioAndWait(clip.wav, { ...audioOptions(clip), sequence: job.sequence })) return false;
     }
+    if (cancelled()) return false;
     api.stopAudio?.();
     return true;
   } catch (error) {
@@ -324,6 +347,11 @@ function warnTruncated(api, truncated) {
 export async function activate(api) {
   const cleanups = [];
   let removeHotkey = null;
+  let currentAutoToken = '';
+  // The host already supplied saved settings at worker creation. A waiting
+  // reply may arrive before the asynchronous server settings reply.
+  const initial = api.getSettings?.()?.values || {};
+  preferences = { ...DEFAULTS, ...initial, playbackRate: playbackRate(initial['playback-rate']) };
   const bindHotkey = () => {
     removeHotkey?.(); removeHotkey = null;
     if (!preferences.shortcut) return;
@@ -366,9 +394,26 @@ export async function activate(api) {
     bindHotkey();
   }));
   cleanups.push(api.onMessage('speak', async (value) => {
-    const session = await api.getActiveSession();
-    if (value?.sessionId && value.sessionId !== session?.id) return;
-    await speak(api, value?.text, { surface: 'terminal', sessionId: value?.sessionId });
+    const automatic = value?.source === 'auto';
+    const token = automatic && typeof value.token === 'string' ? value.token : '';
+    if (automatic && !token) return; // Old global auto-read events must not bypass session opt-in.
+    if (automatic) currentAutoToken = token;
+    let status = 'failed';
+    try {
+      const session = await api.getActiveSession();
+      if (value?.sessionId && value.sessionId !== session?.id) return;
+      if (automatic && (currentAutoToken !== token || session?.readAloud !== true)) return;
+      if (automatic && reading && !reading.autoToken) { status = 'deferred'; return; }
+      const played = await speak(api, value?.text, { surface: 'terminal', sessionId: value?.sessionId }, token);
+      status = played ? 'finished' : reading && !reading.autoToken ? 'deferred' : 'failed';
+    } finally {
+      if (automatic && currentAutoToken === token) api.send('auto-read-result', { token, status });
+    }
+  }));
+  cleanups.push(api.onMessage('speak-cancel', value => {
+    if (value?.token === currentAutoToken) currentAutoToken = '';
+    if (value?.token && reading?.autoToken === value.token) reading = null;
+    // The host stops only this token's audio; never stop a newer manual read here.
   }));
   cleanups.push(api.registerAction({
     id: 'read-selection',

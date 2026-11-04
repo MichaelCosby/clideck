@@ -83,6 +83,7 @@ function sessionDefinition(v) {
     }
   }
   if (v.muted !== undefined) { requireValid(typeof v.muted === 'boolean'); out.muted = v.muted; }
+  if (v.readAloud !== undefined) { requireValid(typeof v.readAloud === 'boolean'); out.readAloud = v.readAloud; }
   // Assets, terminal output and final replies are not configuration and are not imported.
   return out;
 }

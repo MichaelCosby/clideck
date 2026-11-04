@@ -2,6 +2,7 @@
 // terminal context-menu. Order mirrors v1 [terminals.js:416-470]: Copy / Paste (terminal clipboard),
 // then the session actions, then Delete. Rename, selection and liveness are supplied by the opener
 // via opts, so this module stays decoupled from the terminal (no import cycle).
+import { actionIcon } from "./action-icon.js";
 import { openMenu } from "./menu.js";
 import { store } from "../store.js";
 import { closeSession, setMute, send, setSessionProject, requestProcessInfo, updateConfig } from "../ws.js";
@@ -18,6 +19,7 @@ store.on("session:procInfo", (ev) => {
   if (ev.error) toast.error({ id: "procinfo", title: name, body: ev.error, duration: 4000 });
   else toast.info({ id: "procinfo", title: name, body: `pid ${ev.pid} · RSS ${mb(ev.rssKb)} · VSZ ${mb(ev.vszKb)}`, duration: 6000 });
 });
+import { userInputFrame } from "./user-activity.js";
 
 // THE TERMINAL'S MENU IS NOT THE SESSION'S MENU. On a row you right-click a SESSION, so the menu offers
 // session things — rename, theme, restart, delete. In the terminal you right-click TEXT, with a selection
@@ -34,8 +36,8 @@ export function openTerminalMenu(point, id, opts = {}) {
   const plugin = Array.isArray(opts.pluginItems) && opts.pluginItems.length
     ? [{ separator: true }, ...opts.pluginItems] : [];
   openMenu(point, [
-    { label: "Copy", disabled: !sel, onSelect: (c) => { copyText(sel); c.close(); } },
-    { label: "Paste", disabled: !live, onSelect: (c) => { c.close(); pasteInto(id); } },
+    { label: "Copy", icon: actionIcon("copy"), disabled: !sel, onSelect: (c) => { copyText(sel); c.close(); } },
+    { label: "Paste", icon: actionIcon("paste"), disabled: !live, onSelect: (c) => { c.close(); pasteInto(id); } },
     { label: "Upload file…", disabled: !live, onSelect: (c) => { c.close(); pickAndUpload(); } },
     ...plugin,
   ], {
@@ -82,7 +84,7 @@ function togglePin(id) {
 }
 
 async function pasteInto(id) {
-  try { const t = await navigator.clipboard.readText(); if (t) send({ type: "input", sessionId: id, data: pastePayload(t) }); } catch {}
+  try { const t = await navigator.clipboard.readText(); if (t) send(userInputFrame(id, pastePayload(t))); } catch {}
 }
 
 function baseItems(id, opts) {

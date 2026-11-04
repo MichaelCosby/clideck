@@ -1,3 +1,5 @@
+import { actionIcon } from "./action-icon.js";
+import { initTerminalSearch } from "./terminal-search.js";
 // The right pane: a real, themed xterm terminal you type into directly.
 // Keystrokes go out as {type:'input', sessionId} raw controls. Output events feed
 // term.write(). Focusing a session resets the terminal and rewrites its buffer.
@@ -15,6 +17,7 @@ import { toast } from "./toast.js";
 import { closePromptDropdown, registerTerminalFocus } from "./prompts.js";
 import { attachToTerminal } from "./hotkeys.js";
 import { pastePayload } from "./paste.js";
+import { isEditingKey, userInputFrame } from "./user-activity.js";
 import { uploadFiles } from "./drop.js";
 import { startBounce } from "./bounce.js";
 import { onTerminalTabShown } from "./content-dock.js";
@@ -75,6 +78,8 @@ export function initTerminal() {
   mount = document.getElementById("term");
   if (!window.Terminal) { mount.textContent = "xterm failed to load (/vendor/xterm.js)"; return; }
 
+  if (!window.Unicode11Addon?.Unicode11Addon) { mount.textContent = "Terminal Unicode support failed to load — restart CliDeck and refresh this page."; return; }
+
   term = new window.Terminal({
     fontFamily: FONT_FAMILY, fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT, letterSpacing: 0.3,
     cursorStyle: "block", cursorBlink: true, theme: appliedXterm(store.activeId),
@@ -87,7 +92,10 @@ export function initTerminal() {
       if (window.confirm(`Do you want to navigate to ${uri}?\n\nWARNING: This link could potentially be dangerous`)) openUrl(uri);
     } },
   });
+  term.loadAddon(new window.Unicode11Addon.Unicode11Addon());
+  term.unicode.activeVersion = "11";
   term.open(mount);
+  initTerminalSearch(term);
   installScrollbackPreservation(term);
   onTheme(applyActiveTheme);                    // app light/dark flip re-applies the active session's theme (mode default may change)
   store.on("config", applyActiveTheme);         // a theme-library config change re-colours the open terminal live
@@ -123,7 +131,7 @@ export function initTerminal() {
     openTerminalMenu({ x: e.clientX, y: e.clientY }, s.id, {
       returnFocus: term.textarea || mount,
       selection, live: s.live !== false,
-      pluginItems: pluginActions.map((action) => ({ label: action.label, onSelect: (ctl) => { ctl.close(); runAction(action, action.context); } })),
+      pluginItems: pluginActions.map((action) => ({ label: action.label, icon: actionIcon(action.icon), onSelect: (ctl) => { ctl.close(); runAction(action, action.context); } })),
     });
   });
 
@@ -141,11 +149,23 @@ export function initTerminal() {
       return;
     }
     const bracketedPaste = s?.bracketedPaste ?? term.modes.bracketedPasteMode;
-    if (!s || s.live === false || !text || !bracketedPaste) return;
+    if (!s || s.live === false || !text) return;
+    if (!bracketedPaste) { if (e.isTrusted && e.target === term.textarea) send(userInputFrame(s.id, "")); return; }   // xterm pastes it
     e.preventDefault();
     e.stopPropagation();
-    send({ type: "input", sessionId: s.id, data: pastePayload(text) });
+    send(userInputFrame(s.id, pastePayload(text)));
   }, true);
+
+  // Typing guard: a trusted edit in the terminal's own textarea reports activity before xterm (or the // and @@
+  // pickers) handle the key. IME reports per composition step, since it sends no data until commit; beforeinput
+  // covers native insertion with no key or composition (OS dictation, accessibility tools).
+  const reportEdit = (e) => {
+    const s = store.active();
+    if (!s || s.live === false || e.target !== term.textarea) return;
+    if (!(e.type === "keydown" ? isEditingKey(e) : e.isTrusted && !(e.type === "beforeinput" && e.isComposing))) return;
+    send(userInputFrame(s.id, ""));
+  };
+  for (const type of ["keydown", "beforeinput", "compositionupdate", "compositionend"]) mount.addEventListener(type, reportEdit, true);
 
   // every keystroke → raw input for the focused session (menu digits included).
   // Dormant sessions are read-only: the PTY is gone, so input goes nowhere — drop it locally.
@@ -610,7 +630,7 @@ export function commitTerminalDraft(text, options = {}) {
   const session = store.active();
   if (!text || !sessionId || !session || session.id !== sessionId || session.live === false) return false;
   if (new TextEncoder().encode(text).byteLength > 64 * 1024) return false;
-  send({ type: "input", sessionId, data: pastePayload(text) + (options.submit === true ? "\r" : "") });
+  send(userInputFrame(sessionId, pastePayload(text) + (options.submit === true ? "\r" : "")));
   if (term) term.focus();
   return true;
 }

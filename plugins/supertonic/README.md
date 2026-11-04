@@ -4,9 +4,35 @@ This bundled plugin reads agent replies or selected text with Supertonic 3. Infe
 
 Enabled by default, with **Female 2**, **F5** for reading the selection, **English**,
 **12 quality steps**, and **English technical** text normalization. Automatic reading
-of completed replies is **off**. Existing saved choices are retained.
+of completed replies is **off for each session**. The speaker button in the session
+header controls that session only; voice and pronunciation choices remain shared.
 
-The immutable Supertonic model and ONNX WebAssembly runtime download on first use (about 400 MB combined). CliDeck stores the model in the browser cache for later sessions. WebGPU is preferred, with a WASM fallback. Choose between Female 1, Female 2, Yara, Mike, and Dov, preview them, or set a conflict-safe selection shortcut in Settings > Plugins > Supertonic Voice. Repeating the shortcut for the same text pauses or resumes the cached clip; changed text is synthesized once. English technical normalization programmatically expands numbers, money, dates, time, decimals, and ordinals before applying the vocabulary lexicon.
+An enabled session reads its completed reply while selected in a visible browser tab.
+Replies from other sessions wait until you open them. Only the latest waiting reply
+per session is retained, in browser memory; refreshing or reconnecting clears waiting replies.
+Switching away or turning the switch off stops automatic playback. A reply still
+being prepared waits for your return; one already playing is not restarted.
+Manual reading takes priority. Existing global auto-read preferences are retired;
+enable the sessions you want using their header buttons.
+
+Choose **Default playback speed** in the plugin settings: 1×, 1.1×, 1.25× or 1.5×.
+Each new reading starts at that speed; changing the player speed applies to the
+current reading, including its later chunks.
+
+Markdown tables, fenced code/diagrams and display formulas are replaced by short
+“see it in the conversation” cues. Image and link markup gets a similar cue;
+headings, lists, inline code and other prose keep their readable words. Skipping
+large blocks happens before speech chunking; prose read-along keeps its original
+source offsets. This recognizes common Markdown and terminal box tables, rather
+than every possible document layout.
+
+The immutable Supertonic model and ONNX WebAssembly runtime download on first use (about 400 MB combined). CliDeck stores the model in the browser cache for later sessions. WebGPU is preferred, with a WASM fallback. Choose a voice, preview it, or set a conflict-safe selection shortcut in Settings > Plugins > Supertonic Voice. Repeating the shortcut for the same text pauses or resumes the cached clip; changed text is synthesized once. English technical normalization programmatically expands numbers, money, dates, time, decimals, and ordinals before applying the vocabulary lexicon.
+
+The voices are Female 1 (Tifa), Female 2 (Emma), Yara, Mika, Chun-Li, Jake,
+Kabbi, Lilly, Lola, Myers, Nikki and Transi. Female 1 and Female 2 retain their
+existing profiles and settings. Mike now displays as Mika; saved selections
+continue working. Dov has been removed; a saved Dov selection falls back to
+Female 2. Preview clips are local MP3s and do not load the speech model.
 
 Supertonic supports **Mac and Ubuntu** through the same browser runtime. Use a
 current Chrome/Chromium browser; if WebGPU is unavailable (including on Ubuntu),
@@ -22,6 +48,9 @@ For example, `docs/report.md` becomes “the document path is in our conversatio
 use “the file path is in our conversation”. URLs keep “the URL in our conversation”.
 Paths still require a directory and a file extension (or dotfile); bare filenames
 and extensionless paths stay literal. Turning normalization off disables these replacements.
+Signed amounts keep their meaning: `-$1.30M` is read as “minus one point three million
+dollars,” and `+$0.11M` as “plus zero point one one million dollars.” A leading sign
+must touch the currency symbol, so spaced ranges such as `$5 - $10` stay ranges.
 
 Read-along uses an estimated three-word window that advances one source word at a time. Estimates
 are weighted by normalized speech (so `365` gets the time of "three hundred sixty five") and reset at each

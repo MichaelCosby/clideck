@@ -252,12 +252,12 @@ test('busy and unknown asks do not dispatch', async () => {
   assert.deepEqual(dispatches, []);
 });
 
-test('steering injects once, acknowledges immediately, and dispatches once', () => {
+test('steering injects once, acknowledges delivery, and dispatches once', async () => {
   const session = new FakeSession('target-id', 'Reviewer');
   const dispatches = [];
   const coordinator = new AskCoordinator((event) => dispatches.push(event));
 
-  assert.deepEqual(coordinator.steer(session, 'new constraint', {
+  assert.deepEqual(await coordinator.steer(session, 'new constraint', {
     fromId: 'caller-id', fromName: 'Manager',
   }), { ok: true, steered: true });
   assert.deepEqual(session.steers, ['new constraint']);
