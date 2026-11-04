@@ -4,6 +4,9 @@ const pty = require('node-pty');
 
 let helperChecked = false;
 
+// Claude Code state CliDeck inherits when it is started from inside a Claude session; passed on, it would make
+// every agent CliDeck launches think it is nested in that session. Only the inherited environment is filtered:
+// variables set on purpose in CliDeck (a custom command's environment) reach the agent as given.
 function sanitizeProviderEnv(env) {
   return Object.fromEntries(Object.entries(env || {}).filter(([key]) => {
     const name = key.toUpperCase();
@@ -29,10 +32,7 @@ function ensureHelperExecutable() {
 
 function spawn(file, args, options) {
   ensureHelperExecutable();
-  return pty.spawn(file, args, {
-    ...options,
-    ...(options?.env && { env: sanitizeProviderEnv(options.env) }),
-  });
+  return pty.spawn(file, args, options);
 }
 
 module.exports = { sanitizeProviderEnv, spawn };

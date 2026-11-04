@@ -650,7 +650,7 @@ function agentCard(c, i, avail) {
   card.append(toggleRow("Copy on select", "Copies terminal text to the clipboard as soon as you select it.", !!c.copyOnSelect, (v) => { cmds[i].copyOnSelect = v; scheduleSave(); }));
 
   const env = h("textarea", "set-input mono set-env"); env.value = envText(c.env); env.rows = 2; env.spellcheck = false;
-  env.placeholder = base && base.id === "claude-code" ? "CLAUDE_CONFIG_DIR=/home/you/.claude-work  (a second account; one KEY=value per line)"
+  env.placeholder = base && base.id === "claude-code" ? "CLAUDE_CONFIG_DIR=/home/you/.claude-work or CLAUDE_CODE_USE_VERTEX=1  (one KEY=value per line)"
     : base && base.id === "codex" ? "CODEX_HOME=/home/you/.codex-work  (a second account; one KEY=value per line)"
       : "KEY=value (one per line; invalid lines ignored)";
   env.addEventListener("input", () => { cmds[i].env = parseEnv(env.value); scheduleSave(); });

@@ -23,7 +23,7 @@ const COLORFGBG_BY_THEME = {
 
 function sessionEnvironment(launchEnv, sessionId, port, colorfgbg, serverUrl = `http://127.0.0.1:${port}`) {
   return {
-    ...process.env,
+    ...pty.sanitizeProviderEnv(process.env),
     ...launchEnv,
     PATH: [join(__dirname, 'bin'), augmentedPath(launchEnv?.PATH || process.env.PATH)].join(delimiter),
     TERM: 'xterm-256color',

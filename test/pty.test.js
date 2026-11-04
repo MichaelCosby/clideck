@@ -1,9 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const nativePty = require('node-pty');
-const { spawn } = require('../src/pty');
+const { sessionEnvironment } = require('../src/session');
 
-test('provider PTY environment excludes inherited Claude nesting state', () => {
+test('the session environment drops Claude nesting state inherited by CliDeck', () => {
   const blocked = {
     CLAUDECODE: '1',
     CLAUDE_CODE_ENTRYPOINT: 'cli',
@@ -16,24 +15,34 @@ test('provider PTY environment excludes inherited Claude nesting state', () => {
   const previous = Object.fromEntries(
     [...Object.keys(blocked), 'CLIDECK_PTY_TEST_KEEP'].map((key) => [key, process.env[key]]),
   );
-  const originalSpawn = nativePty.spawn;
-  let captured;
 
   try {
     Object.assign(process.env, blocked, { CLIDECK_PTY_TEST_KEEP: 'kept' });
-    nativePty.spawn = (file, args, options) => {
-      captured = { file, args, options };
-      return {};
-    };
-    spawn('claude', [], { env: { ...process.env } });
+    const env = sessionEnvironment({}, 'session-one', 4000);
 
-    assert.equal(captured.options.env.CLIDECK_PTY_TEST_KEEP, 'kept');
+    assert.equal(env.CLIDECK_PTY_TEST_KEEP, 'kept');
     for (const key of Object.keys(blocked)) {
-      assert.equal(Object.hasOwn(captured.options.env, key), false);
+      assert.equal(Object.hasOwn(env, key), false);
       assert.equal(process.env[key], blocked[key]);
     }
   } finally {
-    nativePty.spawn = originalSpawn;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('Claude variables set on purpose in CliDeck reach the agent, even with the same names leaking in', () => {
+  const previous = { CLAUDECODE: process.env.CLAUDECODE, CLAUDE_CODE_USE_VERTEX: process.env.CLAUDE_CODE_USE_VERTEX };
+  try {
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_USE_VERTEX = 'inherited';
+    const env = sessionEnvironment({ CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_EFFORT: 'high' }, 'session-one', 4000);
+    assert.equal(env.CLAUDE_CODE_USE_VERTEX, '1');
+    assert.equal(env.CLAUDE_EFFORT, 'high');
+    assert.equal(Object.hasOwn(env, 'CLAUDECODE'), false);
+  } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
