@@ -49,7 +49,13 @@ export function openSettings() {
   build();
   offs.push(store.on("archive.status", paintArchiveStatus), store.on("connection", () => { settingsSection("archive")?._syncArchive?.(); paintArchiveStatus(); }));
   offs.push(store.on("engine.update", renderFooter), store.on("engine.restart", renderFooter), store.on("connection", renderFooter));
-  offs.push(store.on("availability", () => { if (cat === "agents") renderBody(); }));
+  // The installed-agents check that opening Settings starts can answer seconds later. Rebuilding the pane then
+  // would remove the button an open "+ Add agent" or icon menu hangs from and close it under the pointer, so the
+  // rebuild waits until that menu closes.
+  offs.push(store.on("availability", () => {
+    if (cat !== "agents") return;
+    if (addHandle || iconHandle) availabilityPending = true; else renderBody();
+  }));
   offs.push(store.on("plugins", () => {
     if (cat !== "plugins") return;
     const active = document.activeElement;
@@ -704,6 +710,8 @@ function renderIconMark(iconBtn, icon) {
 // icon picker — a menu.js popover (13c) hosting the 4-column icon grid, so it shares Escape / outside-click /
 // scroll dismissal with every other menu instead of hand-rolling an outside-click-only listener.
 let iconHandle = null;
+let availabilityPending = false;   // an availability answer arrived while an agents-panel menu was open
+function renderAfterMenu() { if (availabilityPending && overlay && cat === "agents") { availabilityPending = false; renderBody(); } }
 function openIconMenu(anchor, i) {
   if (iconHandle) { iconHandle.close(); return; }   // toggle off on the same trigger
   const grid = h("div", "set-icon-menu");
@@ -712,7 +720,7 @@ function openIconMenu(anchor, i) {
   const term = h("button", "set-icon-cell"); renderIconMark(term, defaultIcon); term.type = "button"; term.title = defaultIcon === "terminal" ? "Terminal" : "Default (" + providerOf(defaultIcon).label + ")"; term.addEventListener("click", () => pick("terminal"));
   grid.append(term);
   for (const p of PROVIDER_LIST) { const cell = h("button", "set-icon-cell " + p.cls); cell.type = "button"; cell.title = p.label; cell.appendChild(p.mark()); cell.addEventListener("click", () => pick(p.id)); grid.append(cell); }
-  iconHandle = openMenu(anchor, [{ render: () => grid }], { align: "start", className: "menu-form", returnFocus: anchor, onClose: () => { iconHandle = null; } });
+  iconHandle = openMenu(anchor, [{ render: () => grid }], { align: "start", className: "menu-form", returnFocus: anchor, onClose: () => { iconHandle = null; renderAfterMenu(); } });
 }
 
 // add-agent menu — the 6 presets (seed a custom command) + Custom (blank). Also a menu.js popover.
@@ -724,7 +732,7 @@ function openAddMenu(anchor) {
   for (const p of PROVIDER_LIST) listEl.append(item(p.label, p.mark(), () => addCommand(p.id)));
   listEl.append(h("div", "set-add-sep"));
   listEl.append(item("Custom", null, () => addCommand(null)));
-  addHandle = openMenu(anchor, [{ render: () => listEl }], { align: "end", className: "menu-form", returnFocus: anchor, onClose: () => { addHandle = null; } });
+  addHandle = openMenu(anchor, [{ render: () => listEl }], { align: "end", className: "menu-form", returnFocus: anchor, onClose: () => { addHandle = null; renderAfterMenu(); } });
 }
 function addCommand(presetId) {
   const p = presetId ? AGENT_PRESETS[presetId] : null;
