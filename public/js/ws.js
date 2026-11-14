@@ -82,6 +82,7 @@ const STALE_AFTER = 3;
 const RETRY_MS = 1500, STALE_RETRY_MS = 4000;
 const STALE_MSG = "Engine is outdated or unreachable — restart the engine (node src/server.js) and refresh.";
 let openedAt = 0, fastCloses = 0, stale = false, healthyT = null;
+let fullResetNext = false;   // set when the engine recovers from stale: it may be a different engine, so start clean
 
 export function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
@@ -301,7 +302,12 @@ export function connectWs() {
 }
 
 function initConnection() {
-  store.reset();               // replay is the full truth of live sessions
+  // The replay is the full truth of the sessions. The first connect (and the one after a stale engine) builds
+  // the store from it; a reconnect keeps what is on screen and lets the replay reconcile it, so a network drop
+  // no longer looks like a page reload.
+  if (store.synced && !fullResetNext) store.resync();
+  else store.reset();
+  fullResetNext = false;
   store.setConnected(true);    // engine replays each live session on connect
   requestConfig();             // pull config (engine replies {type:'config'})
 }
@@ -309,7 +315,7 @@ function initConnection() {
 // probe socket so a fresh reconnect runs the normal path (clean reset + full replay); otherwise just reset the counter.
 function onHealthy() {
   fastCloses = 0;
-  if (stale) { stale = false; store.setStale(false, ""); try { ws.close(); } catch {} }
+  if (stale) { stale = false; fullResetNext = true; store.setStale(false, ""); try { ws.close(); } catch {} }
 }
 
 function scheduleReconnect() { clearTimeout(retry); retry = setTimeout(connectWs, stale ? STALE_RETRY_MS : RETRY_MS); }

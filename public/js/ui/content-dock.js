@@ -108,6 +108,11 @@ export function presentInDock(ev) {
   if (isTombstoned(ev.sessionId, ev.contentId)) return;
   const entry = docks.get(ev.sessionId) || { items: [], activeId: TERMINAL_TAB };
   docks.set(ev.sessionId, entry);
+  // A reconnect keeps the open tabs, and the engine replays each document it holds: the tab is already here.
+  // An unchanged replay is left alone (rebuilding it would reload its iframe); a changed one swaps in place.
+  const same = entry.items.find((it) => it.id === ev.contentId);
+  if (same && ev.replay === true && same.url === ev.url && same.kind === ev.kind && same.name === ev.name) return;
+  if (same && ev.replay === true && !ev.replaces) ev = { ...ev, replaces: ev.contentId };
   let item = ev.replaces ? entry.items.find((it) => it.id === ev.replaces) : null;
   const fresh = !item;
   const viewing = !fresh && entry.activeId === item.id;   // a re-show of the tab on screen stays on screen

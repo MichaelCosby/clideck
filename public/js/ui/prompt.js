@@ -20,7 +20,11 @@ export function initPrompt() {
   store.on("prompt:resolved", onResolved);
   store.on("active", renderActive);
   store.on("session:remove", (id) => { const ev = pending.get(id); if (ev) { promptSession.delete(ev.promptId); pending.delete(id); if (id === store.activeId) renderActive(); } });
-  store.on("reset", () => { pending.clear(); promptSession.clear(); renderActive(); });
+  // The engine does not replay open prompts on connect, and a prompt.resolved sent during a drop is lost, so a
+  // kept card could never be dismissed: a reconnect clears them like a reset.
+  const clear = () => { pending.clear(); promptSession.clear(); renderActive(); };
+  store.on("reset", clear);
+  store.on("resync", clear);
 }
 
 function label(sid) { const s = store.sessions.get(sid); return (s && (s.name || shortId(sid))) || shortId(sid) || "a session"; }

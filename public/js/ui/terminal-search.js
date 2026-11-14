@@ -86,4 +86,5 @@ export function initTerminalSearch(term) {
   }, true);
   store.on("active", () => dismiss());
   store.on("reset", () => dismiss());
+  store.on("resync", () => dismiss());   // the terminal is about to be rewritten, so the matches would point at old rows
 }

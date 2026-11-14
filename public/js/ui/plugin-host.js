@@ -218,10 +218,22 @@ export function initPluginHost() {
   store.on("plugin:message", (message) => runtimes.get(message.pluginId)?.deliver(message.event, message.data, message.requestId));
   store.on("active", paintHeader); store.on("session:update", (id) => { if (id === store.activeId) paintHeader(); });
   // Actions and badges from plugin server parts arrive resolved per session; a run answers on this socket only.
-  store.on("plugin:actions", (ev) => setServerActions(ev.sessionId, ev.actions));
-  store.on("session:badges", (ev) => setServerBadges(ev.sessionId, ev.badges));
+  // A reconnect keeps them on screen. The burst re-sends only non-empty ones, so whatever it did not re-send by
+  // transcript.cache (the end of the burst) is empty now and is cleared then, not wiped up front.
+  let resent = null;   // {actions:Set, badges:Set} of session ids during a reconnect burst
+  store.on("plugin:actions", (ev) => { resent?.actions.add(String(ev.sessionId)); setServerActions(ev.sessionId, ev.actions); });
+  store.on("session:badges", (ev) => { resent?.badges.add(String(ev.sessionId)); setServerBadges(ev.sessionId, ev.badges); });
   store.on("session:remove", (id) => { setServerActions(id, []); setServerBadges(id, []); });
-  store.on("reset", () => { clearServerActions(); clearServerBadges(); });
+  store.on("reset", () => { resent = null; clearServerActions(); clearServerBadges(); });
+  store.on("resync", () => { resent = { actions: new Set(), badges: new Set() }; });
+  store.on("transcripts", () => {
+    if (!resent) return;
+    const { actions, badges } = resent; resent = null;
+    for (const s of store.sessions.values()) {
+      if (!actions.has(s.id)) setServerActions(s.id, []);
+      if (!badges.has(s.id)) setServerBadges(s.id, []);
+    }
+  });
   store.on("plugin:toast", (ev) => {
     const kind = ["success", "warn", "error"].includes(ev.kind) ? ev.kind : "info";
     toast[kind]({ ...(ev.toastId && { id: "plugin-" + ev.pluginId + "-" + ev.toastId }), title: ev.title || ev.pluginId, body: ev.body || "" });

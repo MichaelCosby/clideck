@@ -123,6 +123,7 @@ export function initUpdates() {
       body: ev.message || "CliDeck can't save session history.", duration: 0 });
   });
   store.on("reset", clearStorage);
+  store.on("resync", clearStorage);   // a recovery during the drop was missed; the burst re-sends it if it still fails
   // This page runs the browser code of the engine build it was loaded from. After an update and restart the
   // engine reports a different build on reconnect, and the page keeps running the old code until reloaded.
   let loadedBuild = "";

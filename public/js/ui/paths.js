@@ -89,6 +89,7 @@ function wire() {
   });
   store.on("session:remove", (id) => { cache.delete(id); pendingBySession.delete(id); });
   store.on("reset", () => { cache.clear(); pendingBySession.clear(); });
+  store.on("resync", () => { cache.clear(); pendingBySession.clear(); });   // replies in flight died with the socket
 }
 
 // test seam — the cache is module state and a test must be able to start from empty

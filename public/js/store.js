@@ -7,7 +7,7 @@
 //   session:restartFailed(id, message) · session:startFailed(id, message)
 //   session:wentIdle(id, workMs) · session:dispatch(ev) · content:show(ev) · saved(ok, err) · config() · project:openResult(ev)
 //   dirs:list(ev) · dirs:mkdir(ev) · transcripts() · transcript:append(id) · transcript:page(ev) · availability(data)
-//   active(id|null) · chrome() · filter() · connection(bool) · stale(on, message) · reset()
+//   active(id|null) · chrome() · filter() · connection(bool) · stale(on, message) · reset() · resync({activeFull})
 
 const MAX_BUF = 2 * 1024 * 1024; // 2MB per-session raw output cap
 const TRANSCRIPT_CAP = 50 * 1024; // per-session searchable transcript cap (matches the engine's 50KB cache)
@@ -53,6 +53,15 @@ let pendingLocalCreate = false;     // one-shot: this client just asked to creat
                                     // so a reconnect/replay burst can never consume it, and on a create-error snapshot.
 let restoreId = null;   // the session that was open when the connection dropped: the reconnect burst reopens it
 let connected = false;
+// Reconnect without the wipe. After the first full replay (`synced`), a reconnect keeps every row, the open
+// session and its terminal on screen and lets the engine's replay update them in place — a dropped network
+// used to empty and rebuild the whole UI, which looked like a page reload. The replay leaves out what is empty
+// (no menu, no status, no agent line) and what is gone (a session closed during the gap), so the burst records
+// what it re-announced and transcript.cache — the frame that ends every connect burst — clears the rest.
+let synced = false;
+let resyncing = false;
+let unconfirmed = new Set();        // sessions this burst has not re-announced yet
+let refreshed = new Map();          // sessionId -> Set of "status" | "menu" | "agent" this burst re-sent
 let stale = false, staleMsg = "";   // set when the engine looks outdated/unreachable (repeated instant socket closes)
 let filter = "all";     // 'all' | 'unread'
 let search = "";
@@ -247,6 +256,8 @@ function applyEvent(ev) {
       transcripts.clear();
       const c = (ev.cache && typeof ev.cache === "object") ? ev.cache : {};
       for (const id in c) transcripts.set(id, capLower(c[id]));
+      synced = true;
+      if (resyncing) finishResync();
       // The burst is over. If the session that was open is gone, fall back to the first live one, as on a fresh load.
       if (restoreId) {
         restoreId = null;
@@ -301,6 +312,7 @@ function applyEvent(ev) {
       return;
     }
     const known = sessions.get(ev.sessionId);
+    if (resyncing) unconfirmed.delete(ev.sessionId);
     if (!known) { const s = makeSession(ev); sessions.set(s.id, s); emit("session:add", s.id); }
     else {   // same id re-broadcast — resume flip (live/pid), rename (name), mute, or setProject; update IN PLACE, keep history/buffer/unread
       if (respawned(known, ev)) resetProcessState(known);
@@ -325,6 +337,10 @@ function applyEvent(ev) {
   if (!s) return;                                  // event for a session we don't track
   s.lastActivity = Date.now();
   const active = activeId === s.id;
+  if (resyncing) {
+    const field = ev.type === "status" ? "status" : ev.type === "menu" ? "menu" : ev.type === "agent.update" ? "agent" : "";
+    if (field) { let seen = refreshed.get(s.id); if (!seen) refreshed.set(s.id, seen = new Set()); seen.add(field); }
+  }
   switch (ev.type) {
     case "session.closed":
       s.closed = true; sessions.delete(s.id); transcripts.delete(s.id); emit("session:remove", s.id);
@@ -338,7 +354,8 @@ function applyEvent(ev) {
       s.status = ev.state;
       applySessionTelemetry(s, ev);          // contextUsage and the active model ride the status frame
       if (ev.state === "working" && prev !== "working") s.workStartedAt = Date.now();
-      else if (ev.state === "idle" && prev === "working") emit("session:wentIdle", s.id, Date.now() - (s.workStartedAt || Date.now()));
+      // A turn that ended while we were disconnected is not a live "just finished": no notification for it.
+      else if (ev.state === "idle" && prev === "working" && !resyncing) emit("session:wentIdle", s.id, Date.now() - (s.workStartedAt || Date.now()));
       emit("session:update", s.id);
       break;
     }
@@ -391,6 +408,7 @@ function isNameTaken(scope, name, exceptId) {
 function unreadCount() { let n = 0; for (const s of sessions.values()) if (s.unread > 0) n++; return n; }
 
 function reset() {
+  synced = false; resyncing = false; unconfirmed = new Set(); refreshed = new Map();
   engineUpdate = null; engineRestart = null;
   archive = { enabled: false, directory: "" }; archiveStatus = null;
   if (activeId != null) restoreId = activeId;   // a reset with no open session keeps any earlier pending restore
@@ -398,9 +416,44 @@ function reset() {
   emit("plugins", pluginsList); emit("reset"); emit("chrome");
 }
 
+// A reconnect after a completed replay: keep everything and let the burst reconcile it (see `synced`).
+function resync() {
+  pendingLocalCreate = false; restoreId = null;
+  resyncing = true; unconfirmed = new Set(sessions.keys()); refreshed = new Map();
+  const open = activeId != null ? sessions.get(activeId) : null;
+  const activeFull = !!open && open.historyState === "full";
+  // Output sent while the socket was down never reached us, and a history request in flight died with the old
+  // socket (left "loading", the terminal would drop this session's output for good). Every buffer is re-fetched.
+  for (const s of sessions.values()) { s.historyState = "none"; s.historyRequest = ""; }
+  emit("resync", { activeFull });
+}
+
+function finishResync() {
+  resyncing = false;
+  for (const id of unconfirmed) {   // closed while we were away: the session.closed frame was missed
+    if (!sessions.has(id)) continue;
+    const s = sessions.get(id); s.closed = true;
+    sessions.delete(id); transcripts.delete(id); emit("session:remove", id);
+    if (activeId === id) { activeId = null; emit("active", null); }
+  }
+  unconfirmed = new Set();
+  for (const s of sessions.values()) {   // the replay sends these only when non-empty: unsent means empty now
+    const seen = refreshed.get(s.id) || new Set();
+    let changed = false;
+    if (!seen.has("menu") && (s.menu.length || s.menuContext)) { s.menu = []; s.menuContext = ""; changed = true; }
+    if (!seen.has("status") && s.status != null) { s.status = null; s.workStartedAt = 0; changed = true; }
+    if (!seen.has("agent") && s.latestAgent) { s.latestAgent = ""; changed = true; }
+    if (changed) emit("session:update", s.id);
+  }
+  refreshed = new Map();
+  if (activeId == null) { const first = [...sessions.values()].find((x) => x.live !== false); if (first) select(first.id); }
+  emit("chrome");
+}
+
 export const store = {
   on,
-  applyEvent, select, reset,
+  applyEvent, select, reset, resync,
+  get synced() { return synced; },
   expectLocalCreate() { pendingLocalCreate = true; },   // ws.createSession arms this so the resulting NEW session takes focus (local action only)
   sessions,
   get activeId() { return activeId; },

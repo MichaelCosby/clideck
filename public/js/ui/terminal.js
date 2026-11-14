@@ -227,6 +227,18 @@ export function initTerminal() {
   store.on("chrome", updateEmpty);
   store.on("reset", () => { closePromptDropdown(); term.reset(); applyActiveTheme(); updateHeader(); updateEmpty(); updateScrollBtn(); sentDims.clear(); });
   store.on("session:remove", (id) => sentDims.delete(id));
+  // A reconnect keeps the screen: no wipe and no "Loading…" overlay. The open session's output is re-fetched
+  // quietly (bytes sent during the drop never reached us) and swapped in by session:history when it lands; for a
+  // full-screen agent that reply is the engine's few-KB snapshot of the screen, so the swap is near invisible.
+  store.on("resync", ({ activeFull } = {}) => {
+    sentDims.clear();
+    const s = store.active();
+    if (!s || s.historyState !== "none") return;
+    // Reading back in the scrollback: put that line back where it was once the rewrite lands.
+    try { const b = term.buffer.active; if (b.viewportY < b.baseY) earlierAnchor = { id: s.id, fromBottom: b.baseY - b.viewportY }; } catch {}
+    s.historyState = "loading";
+    s.historyRequest = requestHistory(s.id, activeFull ? undefined : historyPromptsFor(s));   // earlier output loaded stays loaded
+  });
 
   // Buffer row numbers stop meaning what they meant after a reflow or a session change, so a selection anchor
   // minted before one is refused rather than adjusted — see getTerminalSelectionSnapshot.
@@ -234,6 +246,7 @@ export function initTerminal() {
   term.onResize(({ cols }) => { if (cols === epochCols) return; epochCols = cols; bufferEpoch++; });
   store.on("active", () => bufferEpoch++);
   store.on("reset", () => bufferEpoch++);
+  store.on("session:history", () => bufferEpoch++);   // the buffer was rewritten: old row numbers mean nothing
 
   updateHeader(); updateEmpty();
 }
