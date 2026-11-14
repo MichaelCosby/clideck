@@ -36,3 +36,33 @@ test('a dropped connection reconnects without rebuilding the page', async (t) =>
   assert.ok((await screen()).includes('BEFORE_42'), 'the earlier output is still on screen');
   app.assertNoErrors();
 });
+
+// An agent blocked on `clideck prompt` waits for an answer; the question must survive a drop and a reload, or
+// it times out with nobody able to see it.
+test('an open question survives a dropped connection and a reload, and can still be answered', async (t) => {
+  const app = await openApp(t);
+  const { page, server, work } = app;
+  await page.click('#new-btn');
+  await page.locator('.pv-form').waitFor();
+  await page.selectOption('.pv-project-select', '__none__');
+  await page.fill('.pv-path-input', work);
+  await page.fill('.pv-name-input', 'asker');
+  await page.locator('.pv-opt', { hasText: 'shell' }).first().click();
+  await page.locator('.row:has-text("asker")').waitFor();
+  const sessionId = [...server.sessions.keys()][0];
+  const asked = server.promptCoordinator.prompt(sessionId, { question: 'Deploy now?', options: ['Yes', 'No'] }, 60_000);
+  await page.locator('.pcard-q', { hasText: 'Deploy now?' }).waitFor();
+
+  const opened = server.connectionSeq;
+  for (const socket of server.clients) socket.terminate();
+  await waitFor(async () => server.connectionSeq > opened && server.clients.size > 0, 'the page to reconnect');
+  await page.waitForTimeout(500);   // let the reconnect burst finish
+  assert.equal(await page.locator('.pcard-q', { hasText: 'Deploy now?' }).count(), 1, 'the question is still on screen after the drop');
+
+  await page.reload();
+  await page.locator('.pcard-q', { hasText: 'Deploy now?' }).waitFor();
+  await page.locator('.pcard-opt', { hasText: 'Yes' }).click();
+  assert.deepEqual(await asked, { ok: true, value: 'Yes' });
+  await waitFor(async () => (await page.locator('.pcard.show').count()) === 0, 'the card to close');
+  app.assertNoErrors();
+});

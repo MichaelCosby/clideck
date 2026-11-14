@@ -126,6 +126,32 @@ try {
   const skipAns = ws.last("prompt.answer");
   ok("Skip sends prompt.answer with empty marks", skipAns && skipAns.promptId === "p6" && JSON.parse(skipAns.value).marks.length === 0);
 
+  // ── a reconnect keeps open questions; one answered during the drop goes ──
+  store.select("A");
+  store.applyEvent({ type: "transcript.cache", cache: {} });   // the first burst is complete → later connects resync
+  show({ sessionId: "A", promptId: "p7", question: "Which branch?" });
+  document.querySelector(".pcard-input").value = "half-typed";
+  show({ sessionId: "B", promptId: "p8", question: "Still open?" });
+  const toastsBefore = document.querySelectorAll(".toast").length;
+  store.resync();
+  store.applyEvent({ type: "session.created", sessionId: "A", cwd: "/a", name: "alpha", live: true, pid: 1 });
+  store.applyEvent({ type: "session.created", sessionId: "B", cwd: "/b", name: "beta", live: true, pid: 2 });
+  show({ sessionId: "B", promptId: "p8", question: "Still open?", replay: true });   // p7 was answered elsewhere meanwhile
+  ok("a replayed question already shown raises no second toast", document.querySelectorAll(".toast").length === toastsBefore);
+  ok("the open card stays up during the burst, with what was typed", !!card() && document.querySelector(".pcard-input")?.value === "half-typed");
+  store.applyEvent({ type: "transcript.cache", cache: {} });
+  ok("a question the replay did not re-send is dropped at the end of the burst", !card());
+  store.select("B");
+  ok("a question the replay re-sent is kept", !!card() && document.querySelector(".pcard-q").textContent === "Still open?");
+  store.select("A");
+  show({ sessionId: "A", promptId: "p9", question: "Keep typing?" });
+  document.querySelector(".pcard-input").value = "mid-answer";
+  store.resync();
+  store.applyEvent({ type: "session.created", sessionId: "A", cwd: "/a", name: "alpha", live: true, pid: 1 });
+  show({ sessionId: "A", promptId: "p9", question: "Keep typing?", replay: true });
+  store.applyEvent({ type: "transcript.cache", cache: {} });
+  ok("a replayed copy of the open question does not rebuild its card", document.querySelector(".pcard-input")?.value === "mid-answer");
+
   console.log(`\n${fail === 0 ? "✓" : "✗"} ${pass} passed, ${fail} failed`);
 } catch (e) { console.log("THREW", e && e.stack || e); fail++; }
 process.exit(fail === 0 ? 0 : 1);

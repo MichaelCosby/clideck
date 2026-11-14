@@ -1259,6 +1259,7 @@ class HeadlessServer {
     }
     socket.send(JSON.stringify({ type: 'plugins', plugins: this.pluginManager.snapshot() }));
     for (const event of this.pluginActions.connectEvents()) socket.send(JSON.stringify(event));
+    for (const event of this.promptCoordinator.openEvents?.() || []) socket.send(JSON.stringify(event));
     if (this.storageFailures.size) socket.send(JSON.stringify(this.storageEvent()));
     socket.send(JSON.stringify(this.archive.snapshot()));
     socket.send(JSON.stringify({ type: 'transcript.cache', cache: this.transcriptStore.getCache() }));

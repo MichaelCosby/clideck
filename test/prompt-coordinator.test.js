@@ -116,3 +116,51 @@ test('prompt coordinator resolves answers, timeouts, and session cancellation on
     ['prompt-1', 'prompt-2', 'prompt-3'],
   );
 });
+
+test('open questions are offered again; answered ones are not', async () => {
+  let id = 0;
+  const coordinator = new PromptCoordinator(() => {}, { createId: () => `q${++id}` });
+  const first = coordinator.prompt('s1', { question: 'Ship it?', options: ['Yes', 'No'] }, 1000);
+  coordinator.prompt('s2', { annotate: { contentId: 'c1', url: '/content/c1', name: 'shot.png' } }, 1000);
+  assert.deepEqual(coordinator.openEvents(), [
+    { type: 'prompt.show', sessionId: 's1', promptId: 'q1', question: 'Ship it?', options: ['Yes', 'No'], replay: true },
+    { type: 'prompt.show', sessionId: 's2', promptId: 'q2', annotate: { contentId: 'c1', url: '/content/c1', name: 'shot.png' }, replay: true },
+  ]);
+  coordinator.answer('q1', 'Yes');
+  await first;
+  assert.deepEqual(coordinator.openEvents().map((event) => event.promptId), ['q2']);
+  coordinator.cancel('q2');
+  assert.deepEqual(coordinator.openEvents(), []);
+});
+
+// A browser that connects after a question was asked (a reload, or a reconnect after a network drop) must see it,
+// inside the connect burst, or the agent waits out its timeout on a question nobody can see.
+test('a browser that connects gets the questions still waiting, before the burst ends', async (t) => {
+  const { mkdtempSync, rmSync } = require('fs');
+  const { tmpdir } = require('os');
+  const { join } = require('path');
+  const WebSocket = require('ws');
+  const { HeadlessServer } = require('../src/server');
+  const dataDir = mkdtempSync(join(tmpdir(), 'clideck-prompt-replay-'));
+  const server = new HeadlessServer({ port: 0, dataDir, autoSaveMs: 0 });
+  t.after(async () => { await server.close(); rmSync(dataDir, { recursive: true, force: true }); });
+  const { url } = await server.listen();
+  const burst = () => new Promise((resolve, reject) => {
+    const socket = new WebSocket(url), seen = [];
+    socket.on('message', (raw) => {
+      const event = JSON.parse(raw);
+      seen.push(event);
+      if (event.type === 'transcript.cache') { socket.close(); resolve(seen); }
+    });
+    socket.on('error', reject);
+  });
+  const asked = server.promptCoordinator.prompt('agent-1', { question: 'Which branch?', options: [] }, 60_000);
+  const events = await burst();
+  const shown = events.find((event) => event.type === 'prompt.show');
+  assert.equal(shown?.question, 'Which branch?');
+  assert.equal(shown.replay, true);
+  assert.ok(events.indexOf(shown) < events.findIndex((event) => event.type === 'transcript.cache'));
+  server.promptCoordinator.answer(shown.promptId, 'main');
+  assert.deepEqual(await asked, { ok: true, value: 'main' });
+  assert.equal((await burst()).some((event) => event.type === 'prompt.show'), false);
+});

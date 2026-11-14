@@ -75,15 +75,23 @@ class PromptCoordinator {
         resolve(result);
       };
       const timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), timeoutMs);
-      this.active.set(promptId, { sessionId, timer, finish });
+      const event = { type: 'prompt.show', sessionId, promptId, ...fields };
+      this.active.set(promptId, { sessionId, timer, finish, event });
       let ids = this.bySession.get(sessionId);
       if (!ids) {
         ids = new Set();
         this.bySession.set(sessionId, ids);
       }
       ids.add(promptId);
-      this.emit({ type: 'prompt.show', sessionId, promptId, ...fields });
+      this.emit(event);
     });
+  }
+
+  // The questions still waiting for an answer, as the prompt.show frames that opened them. A browser that
+  // connects (a reload, or a reconnect after a network drop) gets these, or the agent would wait out its timeout
+  // on a question nobody can see.
+  openEvents() {
+    return [...this.active.values()].map((pending) => ({ ...pending.event, replay: true }));
   }
 
   answer(promptId, value) {

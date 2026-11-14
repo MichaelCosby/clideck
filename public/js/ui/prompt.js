@@ -12,6 +12,7 @@ import { openAnnotate, closeAnnotate, annotateOpenFor } from "./annotate.js";
 
 const ASK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.2 9a2.8 2.8 0 0 1 5.5.8c0 1.9-2.8 2.5-2.8 2.5"/><path d="M12 17h.01"/></svg>';
 const pending = new Map();        // sessionId -> ev (the full prompt.show)
+let replayed = null;              // promptIds a reconnect burst re-sent (null outside one)
 const promptSession = new Map();  // promptId  -> sessionId
 let card = null, returnFocus = null;
 
@@ -20,17 +21,33 @@ export function initPrompt() {
   store.on("prompt:resolved", onResolved);
   store.on("active", renderActive);
   store.on("session:remove", (id) => { const ev = pending.get(id); if (ev) { promptSession.delete(ev.promptId); pending.delete(id); if (id === store.activeId) renderActive(); } });
-  // The engine does not replay open prompts on connect, and a prompt.resolved sent during a drop is lost, so a
-  // kept card could never be dismissed: a reconnect clears them like a reset.
-  const clear = () => { pending.clear(); promptSession.clear(); renderActive(); };
-  store.on("reset", clear);
-  store.on("resync", clear);
+  // The engine replays every open prompt on connect. A reload starts empty and gets them back; a reconnect keeps
+  // the cards up and, at the end of the burst, drops the ones the replay did not re-send: they were answered or
+  // timed out during the drop, and that prompt.resolved never reached us.
+  store.on("reset", () => { replayed = null; pending.clear(); promptSession.clear(); renderActive(); });
+  store.on("resync", () => { replayed = new Set(); });
+  store.on("transcripts", () => {
+    if (!replayed) return;
+    const kept = replayed; replayed = null;
+    let repaint = false;
+    for (const [promptId, sid] of [...promptSession]) {
+      if (kept.has(promptId)) continue;
+      promptSession.delete(promptId);
+      if (pending.get(sid)?.promptId === promptId) { pending.delete(sid); if (sid === store.activeId) repaint = true; }
+      if (annotateOpenFor() === promptId) closeAnnotate();
+    }
+    if (repaint) renderActive();   // only when the open card went: a repaint rebuilds it and loses typed text
+  });
 }
 
 function label(sid) { const s = store.sessions.get(sid); return (s && (s.name || shortId(sid))) || shortId(sid) || "a session"; }
 
 function onShow(ev) {
   if (!ev || !ev.promptId) return;
+  if (replayed) replayed.add(ev.promptId);
+  // A reconnect re-sending a question already on screen changes nothing: rebuilding the card would throw away
+  // an answer being typed into it.
+  if (promptSession.has(ev.promptId)) return;
   pending.set(ev.sessionId, ev);
   promptSession.set(ev.promptId, ev.sessionId);
   if (ev.sessionId === store.activeId) renderActive();
