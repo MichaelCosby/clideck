@@ -1341,6 +1341,17 @@ body.resizing iframe { pointer-events:none; } /* Embedded documents must not tak
   --md-page: var(--surface-1);
   --md-rule: color-mix(in srgb, var(--border) 82%, transparent);
 }
+/* Light is NOT the dark page with paler ink. There the ground came out within 2% of the gray chrome and the
+   panels (code, tables, callouts) a shade DARKER than it, so a panel read as nothing (1.02:1); body copy sat
+   at --dim 5.8:1 and --faint (table heads, figures, markers) fell to 3.65:1, under AA. The light document is
+   a white page on the gray chrome, panels a cool tint on it, and its two quieter inks darkened inside the
+   document only (10.7:1 and 5.3:1 on white); the rest of the app keeps its own. */
+:root[data-theme="light"] :is(.md-shell, .cd-render, .md) {
+  --md-ground:#ffffff;
+  --md-page:#f6f8fa;
+  --md-rule:rgba(28,24,20,.13);
+}
+:root[data-theme="light"] .md { --dim:#3b3e45; --faint:#686b72; }
 .md-shell, .cd-render:has(.md), .md-view { background:var(--md-ground); }
 .md-view { min-height:100%; }
 /* ── CONTENT LANES ──────────────────────────────────────────────────────────────────────────────────
