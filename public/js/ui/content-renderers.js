@@ -207,7 +207,9 @@ function parseBlocks(lines, root, seen) {
       i++;
       const pre = h("pre", "md-code"); const code = h("code");
       if (lang) { code.className = "lang-" + lang; pre.dataset.lang = lang; }
-      code.textContent = buf.join("\n"); pre.appendChild(code); root.appendChild(pre); continue;
+      code.textContent = buf.join("\n"); pre.appendChild(code); root.appendChild(pre);
+      if (lang) highlightCode(code, lang);
+      continue;
     }
     if (BLANK_RE.test(line)) { i++; continue; }
     const hd = line.match(/^(#{1,6})\s+(.*)$/);
@@ -461,5 +463,40 @@ function ensureMermaid() {
     head.appendChild(s);
   });
   return _mermaidP;
+}
+// Syntax highlighting for fenced code, the same lazy pattern as mermaid: the engine serves highlight.js's
+// common-languages UMD build at /vendor/highlight.js → window.hljs, injected once on the first fence with a
+// language. The block renders plain at once and gains colour when the library arrives; if it never does, it
+// stays plain. Only a fence with a language the library KNOWS is highlighted: no auto-detection (GitHub leaves
+// a bare fence plain too, and guessing is slow and often wrong), and never highlightElement, which logs a
+// console error for an unknown language. hljs escapes the code, so its output is safe to assign as HTML, and
+// it only wraps the same text in spans: the read-along index sees identical text before and after.
+const MAX_HIGHLIGHT_CHARS = 100 * 1024;           // a pasted log in a fence must not freeze the dock
+function highlightCode(code, info) {
+  const lang = String(info).trim().split(/\s+/)[0].toLowerCase();
+  const text = code.textContent;
+  if (!lang || text.length > MAX_HIGHLIGHT_CHARS) return;
+  ensureHljs().then((hljs) => {
+    if (!hljs || !hljs.getLanguage(lang) || code.textContent !== text) return;
+    try {
+      code.innerHTML = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+      code.classList.add("hljs");
+    } catch {}
+  }).catch(() => {});
+}
+let _hljsP = null;
+function ensureHljs() {
+  if (typeof window !== "undefined" && window.hljs) return Promise.resolve(window.hljs);
+  if (_hljsP) return _hljsP;
+  _hljsP = new Promise((resolve) => {
+    const head = (typeof document !== "undefined" && (document.head || document.documentElement)) || null;
+    if (!head || !head.appendChild || typeof document.createElement !== "function") { resolve(null); return; }
+    const s = document.createElement("script");
+    s.src = "/vendor/highlight.js"; s.async = true;
+    s.onload = () => resolve((typeof window !== "undefined" && window.hljs) || null);
+    s.onerror = () => resolve(null);
+    head.appendChild(s);
+  });
+  return _hljsP;
 }
 function hashCode(s) { let h = 0; s = String(s || ""); for (let k = 0; k < s.length; k++) { h = (h << 5) - h + s.charCodeAt(k); h |= 0; } return h; }

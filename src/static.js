@@ -8,11 +8,16 @@ const MERMAID_JS = resolve(
   dirname(require.resolve('mermaid/package.json')),
   'dist/mermaid.min.js',
 );
+// Syntax highlighting is optional. A checkout updated with `git pull` but not `npm ci` must still start, so a
+// missing package only means /vendor/highlight.js 404s and code blocks stay plain.
+let HIGHLIGHT_JS = null;
+try { HIGHLIGHT_JS = require.resolve('@highlightjs/cdn-assets/highlight.min.js'); } catch {}
 const VENDOR_FILES = new Map([
   ['/vendor/xterm.js', XTERM_JS],
   ['/vendor/addon-unicode11.js', require.resolve('@xterm/addon-unicode11')],
   ['/vendor/xterm.css', resolve(dirname(XTERM_JS), '../css/xterm.css')],
   ['/vendor/mermaid.js', MERMAID_JS],
+  ...(HIGHLIGHT_JS ? [['/vendor/highlight.js', HIGHLIGHT_JS]] : []),
 ]);
 const CONTENT_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],

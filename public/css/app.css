@@ -1477,6 +1477,38 @@ h5.md-h { margin:1.9em 0 .45em; font-size:.94em; font-weight:650; color:var(--di
 .md-code[data-lang]::before { content:attr(data-lang); position:absolute; top:9px; right:12px;
   font-family:var(--mono); font-size:9.5px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); opacity:.65; }
 .md-code code { display:block; background:none; border:0; padding:0; font-size:12.5px; line-height:1.7; color:var(--text); font-variant-ligatures:none; tab-size:2; }
+/* Syntax colours: GitHub's palettes (the reference people read code in), as tokens so a theme switch recolours
+   without re-highlighting. No stock hljs theme: those don't follow data-theme and paint their own background
+   over the panel. Every ink holds AA on its panel (light on #f6f8fa: keyword 5.0, comment 5.7, others 6.9+;
+   dark on --surface-1: comment 5.4, others 6.3+). */
+.md-code {
+  --hl-kw:#ff7b72; --hl-title:#d2a8ff; --hl-const:#79c0ff; --hl-str:#a5d6ff; --hl-builtin:#ffa657;
+  --hl-comment:#9198a1; --hl-tag:#7ee787; --hl-bullet:#f2cc60;
+  --hl-add:#aff5b4; --hl-add-bg:#033a16; --hl-del:#ffdcd7; --hl-del-bg:#67060c;
+}
+:root[data-theme="light"] .md-code {
+  --hl-kw:#cf222e; --hl-title:#6639ba; --hl-const:#0550ae; --hl-str:#0a3069; --hl-builtin:#953800;
+  --hl-comment:#59636e; --hl-tag:#116329; --hl-bullet:#953800;
+  --hl-add:#116329; --hl-add-bg:#dafbe1; --hl-del:#82071e; --hl-del-bg:#ffebe9;
+}
+.md-code :is(.hljs-doctag, .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_) { color:var(--hl-kw); }
+.md-code :is(.hljs-title, .hljs-title.class_, .hljs-title.function_) { color:var(--hl-title); }
+.md-code :is(.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-variable,
+  .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id) { color:var(--hl-const); }
+.md-code :is(.hljs-regexp, .hljs-string, .hljs-meta .hljs-string) { color:var(--hl-str); }
+.md-code .hljs-meta .hljs-keyword { color:var(--hl-kw); }
+.md-code :is(.hljs-built_in, .hljs-symbol) { color:var(--hl-builtin); }
+.md-code :is(.hljs-comment, .hljs-code, .hljs-formula) { color:var(--hl-comment); font-style:italic; }
+.md-code :is(.hljs-name, .hljs-quote, .hljs-selector-tag, .hljs-selector-pseudo) { color:var(--hl-tag); }
+.md-code .hljs-subst { color:var(--text); }
+.md-code .hljs-section { color:var(--hl-const); font-weight:650; }
+.md-code .hljs-bullet { color:var(--hl-bullet); }
+.md-code .hljs-emphasis { font-style:italic; }
+.md-code .hljs-strong { font-weight:650; }
+/* a whole-line wash, as GitHub draws it: hljs ends the span before the newline, so it can fill the line */
+.md-code :is(.hljs-addition, .hljs-deletion) { display:inline-block; min-width:100%; }
+.md-code .hljs-addition { color:var(--hl-add); background:var(--hl-add-bg); }
+.md-code .hljs-deletion { color:var(--hl-del); background:var(--hl-del-bg); }
 
 /* ── Blockquote as a CALLOUT PANEL: accent spine, page-white ground, optional mono label from "> **Note**". ── */
 .md-quote { margin:0 0 1.4em; padding:16px 20px; border:1px solid var(--md-rule); border-left:3px solid var(--md-tone, var(--accent));
