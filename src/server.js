@@ -46,6 +46,7 @@ const { ServerLock } = require('./server-lock');
 const { alreadyRunningLine, nonLoopbackWarning, startupBanner, notifyUpdate } = require('./startup');
 const { TranscriptStore } = require('./transcript-store');
 const { TaskManager } = require('./task-manager');
+const { AskMetrics } = require('./ask-metrics');
 const { SessionArchive } = require('./session-archive');
 const { MAX_UPLOAD_BYTES, UploadError, saveUpload } = require('./upload');
 const { checkCommandAvailability } = require('./availability');
@@ -222,6 +223,7 @@ class HeadlessServer {
       persistence: this.persistence,
       sessions: this.sessions,
     });
+    this.askMetrics = new AskMetrics({ dataDir: this.persistence.dataDir });
     this.askCoordinator = options.askCoordinator
       || new AskCoordinator((event) => this.broadcast(event));
     this.promptCoordinator = options.promptCoordinator
@@ -1885,6 +1887,11 @@ class HeadlessServer {
   }
 
   async handleAsk(req, res) {
+    this.askMetrics.observe(res);
+    return this.handleAskInner(req, res);
+  }
+
+  async handleAskInner(req, res) {
     if (!isLoopbackAddress(req.socket?.remoteAddress)) {
       sendJson(res, 403, { ok: false, error: 'local_only' });
       return;
@@ -1903,6 +1910,12 @@ class HeadlessServer {
       sendJson(res, 400, { ok: false, error: 'invalid_request' });
       return;
     }
+    this.askMetrics.note(res, {
+      steer: request.steer === true,
+      target: request.target,
+      from: request.callerSessionId || null,
+      text: request.text,
+    });
 
     const entries = this.persistence.list();
     const caller = request.callerSessionId
@@ -1915,6 +1928,7 @@ class HeadlessServer {
       });
       return;
     }
+    if (caller) this.askMetrics.note(res, { fromName: caller.entry.name || '' });
     const candidates = caller
       ? entries.filter((entry) => entry.id !== caller.entry.id)
       : entries;
