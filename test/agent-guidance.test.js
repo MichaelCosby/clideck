@@ -55,3 +55,19 @@ test('the engine applies the configured level and defaults to minimal', () => {
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('plugin guide text sits before the command lines, stays within the budget and is dropped when guidance is off', () => {
+  const guides = [{ pluginId: 'deck', pluginName: 'Session Status', guide: 'End every reply with the status line.' }];
+  const guide = createAgentSessionGuide(plugin, { name: 'Michael' }, 'minimal', guides);
+  assert.match(guide, /Plugin Session Status: End every reply with the status line\./);
+  assert.ok(guide.indexOf('Plugin Session Status') < guide.indexOf('Plugin System Monitor'));
+  assert.ok(guide.indexOf('About the user') < guide.indexOf('Plugin Session Status'), 'the profile still comes first');
+  assert.equal(createAgentSessionGuide(plugin, {}, 'off', guides), '');
+  assert.equal(createAgentSessionGuide([], {}, 'full', []), AGENT_SESSION_GUIDE);
+
+  const huge = Array.from({ length: 12 }, (_, i) => ({ pluginName: `P${i}`, guide: 'y'.repeat(1000) }));
+  assert.ok(Buffer.byteLength(createAgentSessionGuide(plugin, { name: 'Michael' }, 'full', huge)) <= 6 * 1024);
+  const skipsTooLong = createAgentSessionGuide([], {}, 'full', [{ pluginName: 'Big', guide: 'z'.repeat(9000) }, { pluginName: 'Small', guide: 'fits' }]);
+  assert.match(skipsTooLong, /Plugin Small: fits/);
+  assert.doesNotMatch(skipsTooLong, /Plugin Big/);
+});

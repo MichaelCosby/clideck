@@ -504,6 +504,7 @@ class HeadlessServer {
         this.pluginManager.publicCommands(),
         config.about,
         config.agentGuidance || DEFAULT_AGENT_GUIDANCE,
+        this.pluginManager.publicGuides(),
       ),
     };
   }

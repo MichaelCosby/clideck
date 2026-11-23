@@ -107,6 +107,30 @@ test('an unreadable plugin stays a failed inventory row without breaking healthy
   }
 });
 
+test('a plugin manifest may carry guide text, and only enabled ready plugins contribute it', async () => {
+  const root = tempDir('clideck-plugin-guide-');
+  const bundledDir = join(root, 'bundled');
+  mkdirSync(bundledDir, { recursive: true });
+  writePlugin(bundledDir, { ...baseManifest, guide: '  End each reply with\n  a status line.  ' });
+  assert.equal(readPluginManifest(join(bundledDir, 'echo-tool')).guide, 'End each reply with a status line.');
+  assert.equal(readPluginManifest(writePlugin(tempDir('clideck-plugin-noguide-'), baseManifest)).guide, '');
+  for (const guide of [42, 'x'.repeat(1001)]) {
+    const dir = writePlugin(tempDir('clideck-plugin-badguide-'), { ...baseManifest, guide });
+    assert.throws(() => readPluginManifest(dir), /identity fields are invalid/);
+  }
+  const manager = new PluginManager({ dataDir: join(root, 'data'), bundledDir });
+  try {
+    await manager.start();
+    assert.deepEqual(manager.publicGuides(), [{ pluginId: 'echo-tool', pluginName: 'Echo Tool', guide: 'End each reply with a status line.' }]);
+    await manager.setEnabled('echo-tool', false);
+    assert.deepEqual(manager.publicGuides(), [], 'a disabled plugin adds nothing');
+    assert.equal(JSON.stringify(manager.snapshot()).includes('status line'), false, 'the text is not sent to browsers');
+  } finally {
+    await manager.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('plugin manifests validate stable identities, commands, and settings', () => {
   const root = tempDir('clideck-plugin-manifest-');
   const dir = writePlugin(root, baseManifest);

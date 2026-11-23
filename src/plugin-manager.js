@@ -502,6 +502,13 @@ class PluginManager {
       })));
   }
 
+  // Instruction text enabled plugins ask to have in every agent's CliDeck guide.
+  publicGuides() {
+    return [...this.records.values()]
+      .filter((record) => record.enabled && record.status === 'ready' && record.manifest.guide)
+      .map((record) => ({ pluginId: record.manifest.id, pluginName: record.manifest.name, guide: record.manifest.guide }));
+  }
+
   viewerType(pluginId, kind, mime) {
     const record = this.records.get(String(pluginId || ''));
     if (!record || !record.enabled || record.error) return null;

@@ -53,6 +53,14 @@ The optional manifest boolean `enabledByDefault` controls initial activation
 A saved enabled/disabled choice always takes precedence, just as saved setting
 values take precedence over setting defaults.
 
+A plugin whose commands rely on a convention agents must follow can add
+`"guide"` to the manifest: plain text of up to 1000 characters that CliDeck
+includes in the instructions it gives agents, as `Plugin <name>: <text>`, ahead
+of the plugin's command lines. It applies to agents started while the plugin is
+enabled and ready, and not at all when the user turns agent guidance off.
+Agents already running keep the instructions they started with. Keep it to what
+an agent must do; command descriptions still say what each command does.
+
 ## Backend
 
 `server.js` exports one activation function. Errors are contained in the

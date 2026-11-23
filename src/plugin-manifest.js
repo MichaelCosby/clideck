@@ -12,6 +12,7 @@ const MAX_MANIFEST_BYTES = 128 * 1024;
 const MAX_COMMANDS = 64;
 const MAX_SETTINGS = 100;
 const MAX_VIEWERS = 32;
+const MAX_GUIDE_CHARS = 1000;
 const MIME_RE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/;
 
 class PluginManifestError extends Error {
@@ -193,6 +194,7 @@ function readPluginManifest(directory, options = {}) {
     || !Number.isInteger(value.apiVersion)
     || (value.enabledByDefault !== undefined && typeof value.enabledByDefault !== 'boolean')
     || (value.description !== undefined && !string(value.description, 1000, true))
+    || (value.guide !== undefined && !string(value.guide, MAX_GUIDE_CHARS, true))
     || (value.icon !== undefined && !string(value.icon, 500))) {
     fail('invalid_manifest', 'Plugin identity fields are invalid.');
   }
@@ -210,6 +212,7 @@ function readPluginManifest(directory, options = {}) {
     enabledByDefault: value.enabledByDefault !== false,
     description: String(value.description || '').trim(),
     icon: String(value.icon || '').trim(),
+    guide: String(value.guide || '').replace(/\s+/g, ' ').trim(),
     commands,
     settings,
     viewers,

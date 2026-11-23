@@ -20,7 +20,7 @@ When you write a document meant for the user to read, such as a plan or report, 
 Ask the user a question in CliDeck: \`clideck prompt "<question>" --options "A,B"\`; request feedback on an image: \`clideck annotate <image-file>\`.
 If the clideck command is missing, use \`${nodeCli}\` instead. Full help: \`clideck --help\`.`;
 
-function createAgentSessionGuide(pluginCommands = [], about = {}, level = 'full') {
+function createAgentSessionGuide(pluginCommands = [], about = {}, level = 'full', pluginGuides = []) {
   if (level === 'off') return '';
   const base = level === 'minimal' ? MINIMAL_GUIDE : `CliDeck session tools (when CLIDECK_SESSION_ID is set):
 You are one session in a CliDeck project. At the start of project work and before choosing a peer, refresh the team with \`clideck agents\`: it identifies you and current-project sessions, with idle/working/dormant status and exact ask addresses. Dormant means stopped; a saved session is not a required team role. Use \`clideck agents --all\` for other projects. Lists are snapshots: refresh after a failed contact or team change; never rely on old handoff names or ask the user to revive a session before checking current peers. Session names can indicate roles; confirm unclear responsibilities with the peer. Follow the user's assigned role and coordinate file ownership before parallel edits; peers share the working files. Only stop test processes you started, using their exact child handles or verified PIDs; never broad name, pattern, or port-based cleanup.
@@ -37,6 +37,12 @@ Keep a normal ask running for its stdout answer (--timeout is a number plus s, m
   let guide = base;
   const profile = profileContext(about, MAX_GUIDE_BYTES - Buffer.byteLength(base) - 1);
   if (profile) guide += `\n${profile}`;
+  // A plugin's own instructions come before the command lines, so a long command list cannot crowd them out.
+  for (const entry of pluginGuides.slice(0, 12)) {
+    const line = `Plugin ${entry.pluginName}: ${entry.guide}`.replace(/\s+/g, ' ');
+    if (Buffer.byteLength(`${guide}\n${line}`) > MAX_GUIDE_BYTES) continue;
+    guide += `\n${line}`;
+  }
   for (const command of pluginCommands.slice(0, 24)) {
     const line = `Plugin ${command.pluginName}: \`clideck ${command.usage}\` — ${command.description}`
       .replace(/\s+/g, ' ');
