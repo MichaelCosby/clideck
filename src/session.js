@@ -90,6 +90,10 @@ class AgentSession extends EventEmitter {
     this.startOutput = '';
     this.inputSeen = false;
     this.sessionStarted = !this.provider.requiresSessionStart;
+    // A Claude session that never receives a counting SessionStart hook would stay status-less forever and be
+    // refused by every ask and steer. A settled empty prompt that outlasts this grace is proof enough it is up.
+    this.startupPromptGraceMs = options.startupPromptGraceMs ?? 10000;
+    this.startupPromptTimer = null;
     this.submitTimer = null;
     this.submitRetryTimer = null;
     this.promptSubmitDelay = options.promptSubmitDelay
@@ -389,8 +393,12 @@ class AgentSession extends EventEmitter {
       else if (hadMenu && (this.turnOpen || this.backgroundAgents > 0) && this.status === 'idle') this.setStatus('working');
     }
 
-    if (this.sessionStarted && this.status === null && hasInputPrompt(lines)) {
-      this.setStatus('idle');
+    if (this.status === null) {
+      if (this.sessionStarted) {
+        if (hasInputPrompt(lines)) this.setStatus('idle');
+      } else {
+        this.watchUnstartedPrompt(lines);
+      }
     }
 
     if (!this.turnOpen) return;
@@ -399,6 +407,24 @@ class AgentSession extends EventEmitter {
     if (!candidate || candidate === this.baselineCandidate || candidate === this.lastUpdate) return;
     this.lastUpdate = candidate;
     this.emitAgentUpdate(candidate);
+  }
+
+  watchUnstartedPrompt(lines) {
+    const settled = this.provider.screen.hasSettledPrompt;
+    if (!settled?.(lines)) {
+      clearTimeout(this.startupPromptTimer);
+      this.startupPromptTimer = null;
+      return;
+    }
+    if (this.startupPromptTimer) return;
+    this.startupPromptTimer = setTimeout(() => {
+      this.startupPromptTimer = null;
+      if (this.closed || this.sessionStarted || this.status !== null) return;
+      if (!settled(this.screen.lines())) return;
+      this.sessionStarted = true;
+      this.analyzeScreen();
+    }, this.startupPromptGraceMs);
+    this.startupPromptTimer.unref?.();
   }
 
   handleOutput(data) {
@@ -550,6 +576,11 @@ class AgentSession extends EventEmitter {
         this.sessionStarted = true;
         this.analyzeScreen();
         if (this.provider.id === 'codex' && !this.turnOpen) this.setStatus('idle');
+      } else {
+        // A compaction proves the session is up, even if it is the only start hook this process ever sent. It must
+        // not move a session that already has a status: the compaction can land mid-turn.
+        this.sessionStarted = true;
+        if (this.status === null) this.analyzeScreen();
       }
       return;
     }
@@ -848,6 +879,7 @@ class AgentSession extends EventEmitter {
     clearTimeout(this.submitTimer);
     clearTimeout(this.submitRetryTimer);
     clearTimeout(this.activityTimer);
+    clearTimeout(this.startupPromptTimer);
     this.killTerminal();
     return this.closedPromise;
   }
@@ -869,6 +901,7 @@ class AgentSession extends EventEmitter {
     clearTimeout(this.submitTimer);
     clearTimeout(this.submitRetryTimer);
     clearTimeout(this.activityTimer);
+    clearTimeout(this.startupPromptTimer);
     clearTimeout(this.closeKillTimer);
     this.closeKillTimer = null;
     this.stopContextMonitor();

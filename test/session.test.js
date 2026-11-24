@@ -951,3 +951,68 @@ test('Claude expanded paste echoes match only complete paired native markers', (
     assert.deepEqual(messages, [text]);
   } finally { session.handleExit(0, null); }
 });
+
+test('a compaction-only start still leaves a session at its prompt idle, not status-less', () => {
+  const session = claudeSession();
+  session.terminal = { write() {} };
+  try {
+    session.screen.write('Compacted while idle\r\n\r\n❯ \r\n');
+    session.analyzeScreen();
+    assert.equal(session.status, null, 'no hook yet: still waiting for the agent');
+    session.handleHook('session-start', { source: 'compact' });
+    assert.equal(session.sessionStarted, true);
+    assert.equal(session.status, 'idle');
+  } finally {
+    session.handleExit(0, null);
+  }
+});
+
+test('a compaction never moves a session that already has a status', () => {
+  const session = claudeSession();
+  session.terminal = { write() {} };
+  try {
+    session.handleHook('session-start', { source: 'startup' });
+    session.handleHook('start', { turn_id: 't1' });
+    session.screen.write('❯ \r\n');
+    session.handleHook('session-start', { source: 'compact' });
+    assert.equal(session.status, 'working');
+  } finally {
+    session.handleExit(0, null);
+  }
+});
+
+test('a settled empty prompt with no start hook at all becomes idle after the grace', async () => {
+  const session = new AgentSession({ provider: getProvider('claude-code'), port: 4100, startupPromptGraceMs: 20 });
+  session.terminal = { write() {} };
+  try {
+    session.screen.write('Resumed\r\n\r\n❯ \r\n');
+    session.analyzeScreen();
+    assert.equal(session.status, null, 'not immediately: a startup screen may show a prompt too');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(session.sessionStarted, true);
+    assert.equal(session.status, 'idle');
+  } finally {
+    session.handleExit(0, null);
+  }
+});
+
+test('the startup grace is cancelled when the prompt goes away or the session closes', async () => {
+  const gone = new AgentSession({ provider: getProvider('claude-code'), port: 4100, startupPromptGraceMs: 20 });
+  gone.terminal = { write() {} };
+  gone.screen.write('❯ \r\n');
+  gone.analyzeScreen();
+  gone.screen = new Screen();
+  gone.screen.write('Loading the agent\r\n');
+  gone.analyzeScreen();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(gone.status, null);
+  gone.handleExit(0, null);
+
+  const closing = new AgentSession({ provider: getProvider('claude-code'), port: 4100, startupPromptGraceMs: 20 });
+  closing.terminal = { write() {} };
+  closing.screen.write('❯ \r\n');
+  closing.analyzeScreen();
+  closing.handleExit(0, null);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(closing.status, null);
+});
