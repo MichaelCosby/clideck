@@ -82,6 +82,7 @@ class AskMetrics {
         fromName: meta.fromName || null,
         target: meta.target || null,
         chars: meta.chars ?? null,
+        targetState: meta.targetState || null,
         hash: meta.hash || null,
         preview: meta.preview || null,
         status: meta.status ?? null,

@@ -24,7 +24,7 @@ test('records a refusal with its error code', () => {
   const { m } = setup();
   const res = fakeRes();
   m.observe(res);
-  m.note(res, { target: 'a/b', steer: false, from: 's1', fromName: 'Reviewer', text: 'hello' });
+  m.note(res, { target: 'a/b', steer: false, from: 's1', fromName: 'Reviewer', text: 'hello', targetState: { status: null, sessionStarted: false } });
   res.statusCode = 409;
   res.end(JSON.stringify({ ok: false, error: 'busy' }));
   const [e] = lines(m);
@@ -34,6 +34,7 @@ test('records a refusal with its error code', () => {
   assert.equal(e.mode, 'ask');
   assert.equal(e.fromName, 'Reviewer');
   assert.equal(e.chars, 5);
+  assert.deepEqual(e.targetState, { status: null, sessionStarted: false });
 });
 
 test('records a client that disconnects before the response', () => {

@@ -98,6 +98,20 @@ function sendJson(res, statusCode, body) {
   res.end(JSON.stringify(body));
 }
 
+// What the availability checks looked at, so a refusal can be explained afterwards. Metrics only.
+function askTargetState(session, coordinator) {
+  if (!session) return null;
+  return {
+    status: session.status ?? null,
+    sessionStarted: session.sessionStarted ?? null,
+    turnOpen: Boolean(session.turnOpen),
+    menu: session.menu?.length || 0,
+    closeRequested: Boolean(session.closeRequested),
+    closed: Boolean(session.closed),
+    askActive: Boolean(coordinator.isActive(session.id)),
+  };
+}
+
 function sendPromptResult(res, result) {
   if (result.ok) {
     sendJson(res, 200, result);
@@ -1959,6 +1973,7 @@ class HeadlessServer {
     const available = request.steer
       ? availableSteerSession(resolved.entry, this.sessions, this.askCoordinator)
       : availableAskSession(resolved.entry, this.sessions, this.askCoordinator);
+    this.askMetrics.note(res, { targetState: askTargetState(this.sessions.get(resolved.entry.id), this.askCoordinator) });
     if (available.error) {
       sendJson(res, 409, {
         ok: false,
